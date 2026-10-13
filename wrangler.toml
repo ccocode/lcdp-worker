@@ -1,0 +1,19 @@
+# edge-api Worker 配置。演示环境全免费额度内运行；生产环境切换新账号后重建资源并回填 id。
+name = "lcdp-edge-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# 入口 A（app 域名）：静态托管 + 轻 Worker。api 域名直达 Tunnel 不经 Worker（双入口拓扑，见架构文档第 5 节）。
+# KV 仅放小配置/特性开关（免费版写 1000 次/天），绑定 id 在 provision 后回填。
+# [env.demo]
+# [[env.demo.kv_namespaces]]
+# binding = "CONFIG_KV"
+# id = "<provision 后回填>"
+#
+# [env.production]
+# [[env.production.kv_namespaces]]
+# binding = "CONFIG_KV"
+# id = "<生产账号 provision 后回填>"
+
+[vars]
+ENVIRONMENT = "demo"
