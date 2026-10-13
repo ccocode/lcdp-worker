@@ -1,0 +1,22 @@
+{
+  "name": "lcdp-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare 侧：edge-api Worker、wrangler 环境配置、资源 provision 脚本（账号切换时整体重部署的部分）",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:demo": "wrangler deploy --env demo",
+    "deploy:production": "wrangler deploy --env production",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@lcdp/schema": "0.1.0",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.99.0"
+  }
+}
