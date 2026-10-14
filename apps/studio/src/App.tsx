@@ -1,0 +1,785 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  ConfigProvider,
+  Form,
+  Input,
+  Layout,
+  List,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+  message as antdMessage,
+} from "antd";
+import zhCN from "antd/locale/zh_CN";
+import type { DataSchema, Entity, Field, FieldType } from "@naka1205/schema";
+import type { AppInfo, DesignData, UserInfo } from "./api.js";
+import { ApiError, api, getStoredUser, storeSession } from "./api.js";
+
+/**
+ * 设计台（M2 最小版）：数据模型设计器 + 发布/版本/回滚。
+ * 草稿经 api 保存到平台（kind='data_draft'），发布时服务端做增量迁移并留版本快照，
+ * 运行态即时读取新发布版本；页面/流程设计器与设计态 Agent 在后续里程碑接入。
+ */
+
+const FIELD_TYPES: { value: FieldType; label: string }[] = [
+  { value: "string", label: "短文本" },
+  { value: "text", label: "长文本" },
+  { value: "int", label: "整数" },
+  { value: "decimal", label: "小数/金额" },
+  { value: "boolean", label: "布尔" },
+  { value: "date", label: "日期" },
+  { value: "datetime", label: "日期时间" },
+  { value: "enum", label: "枚举" },
+  { value: "ref", label: "引用其他实体" },
+  { value: "file", label: "文件" },
+  { value: "image", label: "图片" },
+  { value: "json", label: "JSON" },
+];
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export default function App() {
+  const [user, setUser] = useState<UserInfo | null>(() => getStoredUser());
+  const [designing, setDesigning] = useState<string | null>(null);
+
+  const logout = () => {
+    storeSession(null, null);
+    setUser(null);
+    setDesigning(null);
+  };
+
+  return (
+    <ConfigProvider locale={zhCN}>
+      {!user ? (
+        <LoginView onLoggedIn={setUser} />
+      ) : designing ? (
+        <Designer
+          appId={designing}
+          onBack={() => setDesigning(null)}
+          onLogout={logout}
+          user={user}
+        />
+      ) : (
+        <AppsView user={user} onLogout={logout} onOpen={setDesigning} />
+      )}
+    </ConfigProvider>
+  );
+}
+
+function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (values: { username: string; password: string }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.login(values.username.trim(), values.password);
+      onLoggedIn(res.user);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#f5f5f5",
+      }}
+    >
+      <Card style={{ width: 360 }}>
+        <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
+          LCDP Studio · 设计台
+        </Typography.Title>
+        <Typography.Paragraph
+          type="secondary"
+          style={{ fontSize: 13, marginBottom: 20 }}
+        >
+          以管理员账号登录，设计数据模型并发布到运行态
+        </Typography.Paragraph>
+        {error && (
+          <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+        )}
+        <Form
+          layout="vertical"
+          initialValues={{ username: "admin" }}
+          onFinish={(v) => void submit(v)}
+        >
+          <Form.Item
+            label="用户名"
+            name="username"
+            rules={[{ required: true, message: "请输入用户名" }]}
+          >
+            <Input autoComplete="username" />
+          </Form.Item>
+          <Form.Item
+            label="密码"
+            name="password"
+            rules={[{ required: true, message: "请输入密码" }]}
+          >
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block loading={busy}>
+            登录
+          </Button>
+        </Form>
+      </Card>
+    </div>
+  );
+}
+
+function AppsView({
+  user,
+  onLogout,
+  onOpen,
+}: {
+  user: UserInfo;
+  onLogout: () => void;
+  onOpen: (appId: string) => void;
+}) {
+  const [apps, setApps] = useState<AppInfo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .apps()
+      .then(setApps)
+      .catch((err) => setError(errText(err)));
+  }, []);
+
+  return (
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "36px 24px" }}>
+      <div
+        style={{ display: "flex", alignItems: "flex-start", marginBottom: 24 }}
+      >
+        <div>
+          <Typography.Title level={3} style={{ margin: 0 }}>
+            设计台 · 我的应用
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            {user.username}（{user.role}）· 选择一个应用进入模型设计器
+          </Typography.Text>
+        </div>
+        <div style={{ flex: 1 }} />
+        <Button onClick={onLogout}>退出登录</Button>
+      </div>
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+      )}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+          gap: 16,
+        }}
+      >
+        {apps.map((app) => (
+          <Card key={app.id} hoverable onClick={() => onOpen(app.id)}>
+            <Card.Meta
+              title={app.name}
+              description={`场景：${app.scenario ?? "—"} · 点击进入设计器`}
+            />
+          </Card>
+        ))}
+      </div>
+      {apps.length === 0 && !error && (
+        <Typography.Text type="secondary">
+          暂无应用（先完成平台初始化）
+        </Typography.Text>
+      )}
+    </div>
+  );
+}
+
+/** 枚举选项的文本表示：每项 value:label，逗号分隔（label 可省略） */
+function optionsToText(field: Field): string {
+  return (field.options ?? [])
+    .map((o) => (o.label === o.value ? o.value : `${o.value}:${o.label}`))
+    .join(", ");
+}
+
+function textToOptions(text: string): { value: string; label: string }[] {
+  return text
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const [v, l] = item.split(/[:：]/);
+      const value = (v ?? "").trim();
+      return { value, label: (l ?? v ?? "").trim() || value };
+    })
+    .filter((o) => o.value);
+}
+
+let seq = 0;
+function newField(): Field {
+  seq += 1;
+  return {
+    key: `field_${seq}`,
+    label: "新字段",
+    type: "string",
+    required: false,
+    unique: false,
+    indexed: false,
+    sensitive: false,
+  };
+}
+
+function Designer({
+  appId,
+  user,
+  onBack,
+  onLogout,
+}: {
+  appId: string;
+  user: UserInfo;
+  onBack: () => void;
+  onLogout: () => void;
+}) {
+  const [design, setDesign] = useState<DesignData | null>(null);
+  const [working, setWorking] = useState<DataSchema | null>(null);
+  const [baseline, setBaseline] = useState<string>("");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<string[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishNote, setPublishNote] = useState("");
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const d = await api.design(appId);
+      setDesign(d);
+      const initial = d.draft ?? d.published?.schema ?? null;
+      setWorking(initial ? (JSON.parse(JSON.stringify(initial)) as DataSchema) : null);
+      setBaseline(initial ? JSON.stringify(initial) : "");
+      setSelectedKey((prev) =>
+        prev && initial?.entities.some((e) => e.key === prev)
+          ? prev
+          : (initial?.entities[0]?.key ?? null),
+      );
+      setNewKeys(new Set());
+    } catch (err) {
+      setError(errText(err));
+    }
+  }, [appId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const dirty = useMemo(
+    () => (working ? JSON.stringify(working) !== baseline : false),
+    [working, baseline],
+  );
+
+  const update = (fn: (draft: DataSchema) => void) => {
+    setWorking((prev) => {
+      if (!prev) return prev;
+      const next = JSON.parse(JSON.stringify(prev)) as DataSchema;
+      fn(next);
+      return next;
+    });
+  };
+
+  const entity: Entity | null = useMemo(
+    () => working?.entities.find((e) => e.key === selectedKey) ?? null,
+    [working, selectedKey],
+  );
+
+  const saveDraft = async () => {
+    if (!working) return;
+    setBusy("save");
+    setError(null);
+    setIssues([]);
+    try {
+      const res = await api.saveDraft(appId, working);
+      setWorking(res.draft);
+      setBaseline(JSON.stringify(res.draft));
+      void antdMessage.success("草稿已保存");
+    } catch (err) {
+      setError(errText(err));
+      if (err instanceof ApiError && err.issues) setIssues(err.issues);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const publish = async () => {
+    setBusy("publish");
+    setError(null);
+    try {
+      const res = await api.publish(appId, publishNote || undefined);
+      setPublishOpen(false);
+      setPublishNote("");
+      void antdMessage.success(`已发布 v${res.version}`);
+      Modal.success({
+        title: `发布成功 · v${res.version}`,
+        content:
+          res.changes.length > 0
+            ? `本次发布执行的迁移：${res.changes.join("；")}`
+            : "本次发布无表结构变更（仅模型元数据变化）。运行态已切换到新版本。",
+      });
+      await load();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rollback = async (version: number) => {
+    setBusy("rollback");
+    setError(null);
+    try {
+      await api.rollback(appId, version);
+      void antdMessage.success(`已回滚到 v${version}，运行态即时生效`);
+      await load();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (error && !design) {
+    return (
+      <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+        <Button onClick={onBack}>返回应用列表</Button>
+      </div>
+    );
+  }
+  if (!design || !working) {
+    return (
+      <div style={{ padding: 80, textAlign: "center" }}>
+        <Spin size="large" tip="正在加载设计器…" />
+      </div>
+    );
+  }
+
+  const updateEntity = (patch: Partial<Entity>) => {
+    if (!entity) return;
+    update((d) => {
+      const e = d.entities.find((x) => x.key === entity.key);
+      if (e) Object.assign(e, patch);
+    });
+  };
+
+  const updateField = (idx: number, patch: Partial<Field>) => {
+    if (!entity) return;
+    update((d) => {
+      const e = d.entities.find((x) => x.key === entity.key);
+      if (e?.fields[idx]) Object.assign(e.fields[idx], patch);
+    });
+  };
+
+  const moveField = (idx: number, dir: -1 | 1) => {
+    if (!entity) return;
+    update((d) => {
+      const e = d.entities.find((x) => x.key === entity.key);
+      if (!e) return;
+      const j = idx + dir;
+      if (j < 0 || j >= e.fields.length) return;
+      const tmp = e.fields[idx]!;
+      e.fields[idx] = e.fields[j]!;
+      e.fields[j] = tmp;
+    });
+  };
+
+  return (
+    <Layout style={{ minHeight: "100vh" }}>
+      <Layout.Header
+        style={{
+          background: "#fff",
+          borderBottom: "1px solid #f0f0f0",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "0 20px",
+        }}
+      >
+        <Typography.Title level={5} style={{ margin: 0 }}>
+          {design.app.name}
+        </Typography.Title>
+        <Tag color="blue">
+          当前发布 v{design.published?.version ?? "—"}
+        </Tag>
+        {design.draft && !dirty && <Tag>有已保存草稿待发布</Tag>}
+        {dirty && <Tag color="orange">有未保存修改</Tag>}
+        <div style={{ flex: 1 }} />
+        <Button onClick={onBack}>← 应用列表</Button>
+        <Button
+          onClick={() =>
+            window.open(`https://coode.cc.cd/#/app/${encodeURIComponent(appId)}`, "_blank")
+          }
+        >
+          在运行态打开
+        </Button>
+        <Button loading={busy === "save"} disabled={!dirty} onClick={() => void saveDraft()}>
+          保存草稿
+        </Button>
+        <Button
+          type="primary"
+          disabled={dirty || !design.draft}
+          onClick={() => setPublishOpen(true)}
+        >
+          发布
+        </Button>
+        <Button onClick={onLogout}>退出（{user.username}）</Button>
+      </Layout.Header>
+
+      <Layout>
+        <Layout.Sider theme="light" width={230} style={{ borderRight: "1px solid #f0f0f0", padding: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+            <Typography.Text strong>数据实体</Typography.Text>
+            <div style={{ flex: 1 }} />
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              onClick={() => {
+                seq += 1;
+                const key = `entity_${seq}`;
+                update((d) => {
+                  d.entities.push({
+                    key,
+                    label: "新实体",
+                    fields: [
+                      { key: "name", label: "名称", type: "string", required: true, unique: false, indexed: false, sensitive: false },
+                    ],
+                  });
+                });
+                setNewKeys((prev) => new Set(prev).add(key));
+                setSelectedKey(key);
+              }}
+            >
+              新增实体
+            </Button>
+          </div>
+          <List
+            size="small"
+            dataSource={working.entities}
+            renderItem={(e) => (
+              <List.Item
+                onClick={() => setSelectedKey(e.key)}
+                style={{
+                  cursor: "pointer",
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  background: e.key === selectedKey ? "#e6f4ff" : undefined,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 600 }}>{e.label}</div>
+                  <div style={{ color: "#9ca3af", fontSize: 12 }}>
+                    {e.key} · {e.fields.length} 字段
+                    {e.parentField ? " · 子表" : ""}
+                  </div>
+                </div>
+              </List.Item>
+            )}
+          />
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 16 }}>
+            发布只做增量迁移：新实体建表、新字段加列，不删表不删列；回滚换回旧 Schema 即可，数据不丢。
+          </Typography.Paragraph>
+        </Layout.Sider>
+
+        <Layout.Content style={{ padding: 20, background: "#fff", minWidth: 0 }}>
+          {error && (
+            <Alert
+              type="error"
+              message={error}
+              description={
+                issues.length > 0 ? issues.join("；") : undefined
+              }
+              style={{ marginBottom: 12 }}
+              closable
+              onClose={() => setError(null)}
+            />
+          )}
+          {entity ? (
+            <>
+              <Space size={16} wrap style={{ marginBottom: 8 }}>
+                <span>
+                  实体标识 key：
+                  <Input
+                    style={{ width: 180, marginLeft: 8 }}
+                    value={entity.key}
+                    disabled={!newKeys.has(entity.key)}
+                    onChange={(ev) => {
+                      const key = ev.target.value;
+                      updateEntity({ key });
+                      setSelectedKey(key);
+                      setNewKeys((prev) => {
+                        const next = new Set(prev);
+                        next.delete(entity.key);
+                        next.add(key);
+                        return next;
+                      });
+                    }}
+                  />
+                </span>
+                <span>
+                  显示名：
+                  <Input
+                    style={{ width: 180, marginLeft: 8 }}
+                    value={entity.label}
+                    onChange={(ev) => updateEntity({ label: ev.target.value })}
+                  />
+                </span>
+                <span>
+                  父实体字段（子表）：
+                  <Select
+                    style={{ width: 200, marginLeft: 8 }}
+                    allowClear
+                    placeholder="无（独立实体）"
+                    value={entity.parentField}
+                    onChange={(v) => updateEntity({ parentField: v })}
+                    options={entity.fields
+                      .filter((f) => f.type === "ref")
+                      .map((f) => ({ value: f.key, label: `${f.label}（${f.key}）` }))}
+                  />
+                </span>
+                <Popconfirm
+                  title="删除该实体？"
+                  description="仅从模型中移除；已建的物理表与数据保留（发布为增量迁移，不删表）。"
+                  onConfirm={() => {
+                    update((d) => {
+                      d.entities = d.entities.filter((x) => x.key !== entity.key);
+                    });
+                    setSelectedKey(working.entities.find((x) => x.key !== entity.key)?.key ?? null);
+                  }}
+                >
+                  <Button danger>删除实体</Button>
+                </Popconfirm>
+              </Space>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                提示：已有实体的 key 不可改（改名等于新实体）；字段改 key 相当于新增字段，旧列保留。
+              </Typography.Paragraph>
+              <Table<Field>
+                size="small"
+                rowKey={(_, idx) => String(idx)}
+                pagination={false}
+                dataSource={entity.fields}
+                columns={[
+                  {
+                    title: "字段 key",
+                    width: 150,
+                    render: (_, f, idx) => (
+                      <Input
+                        size="small"
+                        value={f.key}
+                        onChange={(ev) => updateField(idx, { key: ev.target.value })}
+                      />
+                    ),
+                  },
+                  {
+                    title: "显示名",
+                    width: 130,
+                    render: (_, f, idx) => (
+                      <Input
+                        size="small"
+                        value={f.label}
+                        onChange={(ev) => updateField(idx, { label: ev.target.value })}
+                      />
+                    ),
+                  },
+                  {
+                    title: "类型",
+                    width: 150,
+                    render: (_, f, idx) => (
+                      <Select
+                        size="small"
+                        style={{ width: "100%" }}
+                        value={f.type}
+                        options={FIELD_TYPES}
+                        onChange={(v) => updateField(idx, { type: v })}
+                      />
+                    ),
+                  },
+                  {
+                    title: "必填",
+                    width: 60,
+                    render: (_, f, idx) => (
+                      <Switch
+                        size="small"
+                        checked={Boolean(f.required)}
+                        onChange={(v) => updateField(idx, { required: v })}
+                      />
+                    ),
+                  },
+                  {
+                    title: "敏感",
+                    width: 60,
+                    render: (_, f, idx) => (
+                      <Switch
+                        size="small"
+                        checked={Boolean(f.sensitive)}
+                        onChange={(v) => updateField(idx, { sensitive: v })}
+                      />
+                    ),
+                  },
+                  {
+                    title: "引用实体 / 枚举选项",
+                    render: (_, f, idx) =>
+                      f.type === "ref" ? (
+                        <Select
+                          size="small"
+                          style={{ width: "100%" }}
+                          placeholder="选择被引用实体"
+                          value={f.refEntity}
+                          onChange={(v) => updateField(idx, { refEntity: v })}
+                          options={working.entities.map((e) => ({
+                            value: e.key,
+                            label: `${e.label}（${e.key}）`,
+                          }))}
+                        />
+                      ) : f.type === "enum" ? (
+                        <Input
+                          size="small"
+                          placeholder="值:标签, 值2:标签2"
+                          defaultValue={optionsToText(f)}
+                          onBlur={(ev) =>
+                            updateField(idx, { options: textToOptions(ev.target.value) })
+                          }
+                        />
+                      ) : (
+                        <Typography.Text type="secondary">—</Typography.Text>
+                      ),
+                  },
+                  {
+                    title: "操作",
+                    width: 150,
+                    render: (_, __, idx) => (
+                      <Space size={4}>
+                        <Button size="small" onClick={() => moveField(idx, -1)}>
+                          上移
+                        </Button>
+                        <Button size="small" onClick={() => moveField(idx, 1)}>
+                          下移
+                        </Button>
+                        <Button
+                          size="small"
+                          danger
+                          onClick={() =>
+                            update((d) => {
+                              const e = d.entities.find((x) => x.key === entity.key);
+                              if (e) e.fields = e.fields.filter((_, i) => i !== idx);
+                            })
+                          }
+                        >
+                          删除
+                        </Button>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+              <Button
+                style={{ marginTop: 12 }}
+                onClick={() =>
+                  update((d) => {
+                    const e = d.entities.find((x) => x.key === entity.key);
+                    if (e) e.fields.push(newField());
+                  })
+                }
+              >
+                添加字段
+              </Button>
+
+              <Typography.Title level={5} style={{ marginTop: 28 }}>
+                版本历史
+              </Typography.Title>
+              <Table
+                size="small"
+                rowKey="version"
+                pagination={false}
+                dataSource={design.versions}
+                columns={[
+                  {
+                    title: "版本",
+                    width: 90,
+                    render: (_, v) => (
+                      <span>
+                        v{v.version} {v.current && <Tag color="green">当前</Tag>}
+                      </span>
+                    ),
+                  },
+                  { title: "说明", dataIndex: "note", render: (t: string | null) => t ?? "—" },
+                  { title: "发布人", dataIndex: "publishedBy", width: 100, render: (t: string | null) => t ?? "—" },
+                  {
+                    title: "发布时间",
+                    dataIndex: "publishedAt",
+                    width: 180,
+                    render: (t: string) => new Date(t).toLocaleString("zh-CN"),
+                  },
+                  { title: "实体数", dataIndex: "entityCount", width: 80 },
+                  {
+                    title: "操作",
+                    width: 100,
+                    render: (_, v) =>
+                      v.current ? (
+                        <Typography.Text type="secondary">—</Typography.Text>
+                      ) : (
+                        <Popconfirm
+                          title={`回滚到 v${v.version}？`}
+                          description="运行态将立即切换到该版本模型；物理表只增不减，数据不丢。当前草稿会被清除。"
+                          onConfirm={() => void rollback(v.version)}
+                        >
+                          <Button size="small" loading={busy === "rollback"}>
+                            回滚
+                          </Button>
+                        </Popconfirm>
+                      ),
+                  },
+                ]}
+              />
+            </>
+          ) : (
+            <Typography.Text type="secondary">
+              从左侧选择一个实体开始设计，或新增实体。
+            </Typography.Text>
+          )}
+        </Layout.Content>
+      </Layout>
+
+      <Modal
+        open={publishOpen}
+        title={`发布新版本（当前发布为 v${design.published?.version ?? "—"}，新版本号发布时生成）`}
+        onCancel={() => setPublishOpen(false)}
+        onOk={() => void publish()}
+        confirmLoading={busy === "publish"}
+        okText="确认发布"
+      >
+        <Typography.Paragraph>
+          发布将基于**已保存的草稿**执行增量迁移并切换运行态。迁移只增不减，发布后可随时在版本历史中回滚。
+        </Typography.Paragraph>
+        <Input
+          placeholder="版本说明（可选，如：新增合同实体）"
+          value={publishNote}
+          onChange={(e) => setPublishNote(e.target.value)}
+        />
+      </Modal>
+    </Layout>
+  );
+}
