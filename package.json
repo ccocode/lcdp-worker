@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@lcdp/schema": "0.1.0",
+    "@naka1205/schema": "0.1.0",
     "hono": "^4.6.14"
   },
   "devDependencies": {
