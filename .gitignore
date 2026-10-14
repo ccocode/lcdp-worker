@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.turbo/
+*.tsbuildinfo
 .wrangler/
 .dev.vars
 .dev.vars.*
