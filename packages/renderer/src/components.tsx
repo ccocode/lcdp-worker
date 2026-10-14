@@ -7,6 +7,8 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type { ComponentNode, Entity, PageSchema } from "@naka1205/schema";
+import { Alert, Button, Space, Table } from "antd";
+import type { TableProps } from "antd";
 import type {
   RendererContextValue,
   Row,
@@ -77,6 +79,8 @@ export function DataTable({ node }: NodeProps) {
   const [labels, setLabels] = useState<Record<string, Record<string, string>>>(
     {},
   );
+  // 每个被引实体的标签映射是否已就绪（成功或失败都算就绪，失败时回退显示原始值）
+  const [labelsDone, setLabelsDone] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     if (!entity) return;
@@ -119,19 +123,29 @@ export function DataTable({ node }: NodeProps) {
             ...prev,
             [refKey]: Object.fromEntries(opts.map((o) => [o.value, o.label])),
           }));
+          setLabelsDone((prev) => ({ ...prev, [refKey]: true }));
         })
-        .catch(() => {});
+        .catch(() => {
+          if (alive) setLabelsDone((prev) => ({ ...prev, [refKey]: true }));
+        });
     }
     return () => {
       alive = false;
     };
   }, [ctx.adapter, refEntitiesKey]);
 
-  if (!entity) return <div style={styles.error}>数据源未绑定实体</div>;
-  const columns = entity.fields.slice(0, 7);
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
 
-  const cellText = (row: Row, field: (typeof columns)[number]): string => {
+  const fields = entity.fields.slice(0, 7);
+  // 可见列涉及的被引实体标签尚未全部就绪时不渲染数据行，
+  // 避免把原始 ID 当成最终内容闪现（映射到达后才出首屏）
+  const pendingRefs = fields
+    .filter((f) => f.type === "ref" && f.refEntity)
+    .map((f) => f.refEntity!)
+    .filter((k, i, a) => a.indexOf(k) === i && !labelsDone[k]);
+  const labelsPending = pendingRefs.length > 0;
+
+  const cellText = (row: Row, field: (typeof fields)[number]): string => {
     const v = row[field.key];
     if (v === null || v === undefined || v === "") return "—";
     if (field.type === "boolean") return v === true ? "是" : "否";
@@ -141,84 +155,58 @@ export function DataTable({ node }: NodeProps) {
     return String(v);
   };
 
+  const tableColumns: TableProps<Row>["columns"] = [
+    { title: "ID", dataIndex: "id", key: "__id", width: 120 },
+    ...fields.map((f) => ({
+      title: f.label,
+      dataIndex: f.key,
+      key: f.key,
+      ellipsis: true,
+      render: (_: unknown, row: Row) => cellText(row, f),
+    })),
+  ];
+
   return (
     <div>
-      <div style={styles.toolbar}>
+      <Space style={{ marginBottom: 12 }}>
         {formRoute && (
-          <button
-            style={styles.btnPrimary}
+          <Button
+            type="primary"
             onClick={() => ctx.adapter.navigate(formRoute)}
           >
             新建{entity.label}
-          </button>
+          </Button>
         )}
-        <button style={styles.btn} onClick={() => void load()}>
-          刷新
-        </button>
-        <div style={styles.spacer} />
-        {loading && <span style={{ color: "#6b7280" }}>加载中…</span>}
-      </div>
-      {error && <div style={styles.error}>{error}</div>}
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            <th style={styles.th}>ID</th>
-            {columns.map((f) => (
-              <th key={f.key} style={styles.th}>
-                {f.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={String(row.id)}
-              style={formRoute ? styles.rowHover : undefined}
-              onClick={() => {
-                if (formRoute) {
-                  ctx.adapter.navigate(
-                    `${formRoute}?id=${encodeURIComponent(String(row.id))}`,
-                  );
-                }
-              }}
-            >
-              <td style={styles.td}>{String(row.id)}</td>
-              {columns.map((f) => (
-                <td key={f.key} style={styles.td}>
-                  {cellText(row, f)}
-                </td>
-              ))}
-            </tr>
-          ))}
-          {rows.length === 0 && !loading && (
-            <tr>
-              <td style={styles.td} colSpan={columns.length + 1}>
-                <div style={styles.empty}>暂无数据</div>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      <div style={styles.pager}>
-        <span>
-          共 {total} 条 · 第 {pageIdx + 1} / {pageCount} 页
-        </span>
-        <button
-          style={styles.btn}
-          disabled={pageIdx <= 0}
-          onClick={() => setPageIdx((p) => Math.max(0, p - 1))}
-        >
-          上一页
-        </button>
-        <button
-          style={styles.btn}
-          disabled={pageIdx + 1 >= pageCount}
-          onClick={() => setPageIdx((p) => p + 1)}
-        >
-          下一页
-        </button>
-      </div>
+        <Button onClick={() => void load()}>刷新</Button>
+      </Space>
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+      )}
+      <Table<Row>
+        rowKey={(r) => String(r.id)}
+        columns={tableColumns}
+        dataSource={labelsPending ? [] : rows}
+        loading={loading || labelsPending}
+        locale={{ emptyText: "暂无数据" }}
+        pagination={{
+          current: pageIdx + 1,
+          pageSize,
+          total,
+          showSizeChanger: false,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p) => setPageIdx(p - 1),
+        }}
+        onRow={(row) => ({
+          onClick: () => {
+            if (formRoute) {
+              ctx.adapter.navigate(
+                `${formRoute}?id=${encodeURIComponent(String(row.id))}`,
+              );
+            }
+          },
+          style: formRoute ? { cursor: "pointer" } : undefined,
+        })}
+      />
     </div>
   );
 }
@@ -314,21 +302,21 @@ function ChildEditor({
                 </td>
               ))}
               <td style={styles.childTd}>
-                <button
-                  style={styles.btn}
+                <Button
+                  size="small"
                   onClick={() => onChange(rows.filter((_, i) => i !== idx))}
                 >
                   删除
-                </button>
+                </Button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
       <div style={{ marginTop: 8 }}>
-        <button style={styles.btn} onClick={() => onChange([...rows, {}])}>
+        <Button onClick={() => onChange([...rows, {}])}>
           添加{child.label}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -386,7 +374,42 @@ export function EntityForm({ node }: NodeProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!entity) return <div style={styles.error}>数据源未绑定实体</div>;
+  // 父单总金额自动汇总：父实体带 total 类 decimal 字段、且子实体带 amount 字段时，
+  // 总额由明细小计之和驱动——表单内实时联动，保存时按最终明细再核算一次
+  const rollupField = entity?.fields.find(
+    (f) => f.type === "decimal" && /total/i.test(f.key),
+  );
+  const amountChildren = children.filter((c) =>
+    c.fields.some((f) => f.key === "amount"),
+  );
+  const rollupActive = Boolean(rollupField && amountChildren.length > 0);
+  const sumChildren = useCallback(
+    (rowsByChild: Record<string, Row[]>): number => {
+      let sum = 0;
+      for (const c of amountChildren) {
+        for (const row of rowsByChild[c.key] ?? []) {
+          const a = Number(row.amount);
+          if (Number.isFinite(a)) sum += a;
+        }
+      }
+      return Math.round(sum * 100) / 100;
+    },
+    // amountChildren 由 entity 决定，同页内不变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [entity?.key],
+  );
+
+  useEffect(() => {
+    if (!rollupActive || !rollupField) return;
+    const total = sumChildren(childRows);
+    setValues((prev) =>
+      prev[rollupField.key] === total
+        ? prev
+        : { ...prev, [rollupField.key]: total },
+    );
+  }, [childRows, rollupActive, rollupField, sumChildren]);
+
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
   if (loading) return <div style={styles.empty}>加载中…</div>;
 
   const save = async () => {
@@ -394,6 +417,9 @@ export function EntityForm({ node }: NodeProps) {
     setError(null);
     try {
       const payload = buildPayload(entity, values);
+      if (rollupActive && rollupField) {
+        payload[rollupField.key] = sumChildren(childRows);
+      }
       const missing = missingRequired(entity, payload);
       if (missing.length) throw new Error(`缺少必填字段：${missing.join("、")}`);
       const saved = isEdit
@@ -453,11 +479,13 @@ export function EntityForm({ node }: NodeProps) {
 
   return (
     <div style={styles.form}>
-      {error && <div style={styles.error}>{error}</div>}
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+      )}
       {isEdit && (
         <div style={styles.formRow}>
           <div style={styles.label}>ID</div>
-          <div style={{ paddingTop: 7, fontSize: 14 }}>{id}</div>
+          <div style={{ paddingTop: 5, fontSize: 14 }}>{id}</div>
         </div>
       )}
       {entity.fields.map((f) => (
@@ -466,12 +494,15 @@ export function EntityForm({ node }: NodeProps) {
             {f.label}
             {f.required && <span style={styles.required}> *</span>}
           </div>
-          <FieldInput
-            field={f}
-            value={values[f.key]}
-            onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
-            adapter={ctx.adapter}
-          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <FieldInput
+              field={f}
+              value={values[f.key]}
+              onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
+              adapter={ctx.adapter}
+              readOnly={rollupActive && f.key === rollupField?.key}
+            />
+          </div>
         </div>
       ))}
       {children.map((child) => (
@@ -485,17 +516,17 @@ export function EntityForm({ node }: NodeProps) {
         />
       ))}
       <div style={{ ...styles.toolbar, marginTop: 20 }}>
-        <button style={styles.btnPrimary} disabled={saving} onClick={() => void save()}>
-          {saving ? "保存中…" : "保存"}
-        </button>
-        <button style={styles.btn} onClick={() => ctx.adapter.navigate(listRoute)}>
+        <Button type="primary" loading={saving} onClick={() => void save()}>
+          保存
+        </Button>
+        <Button onClick={() => ctx.adapter.navigate(listRoute)}>
           返回列表
-        </button>
+        </Button>
         <div style={styles.spacer} />
         {isEdit && (
-          <button style={styles.btnDanger} onClick={() => void remove()}>
+          <Button danger onClick={() => void remove()}>
             删除
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -520,7 +551,7 @@ function NodeView({
 }) {
   const Comp = registry.get(node.type);
   if (!Comp) {
-    return <div style={styles.error}>未注册的组件类型：{node.type}</div>;
+    return <Alert type="error" message={`未注册的组件类型：${node.type}`} />;
   }
   return (
     <Comp node={node}>

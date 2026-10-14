@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  ConfigProvider,
+  Form,
+  Input,
+  Layout,
+  Menu,
+  Spin,
+  Typography,
+  message as antdMessage,
+} from "antd";
+import zhCN from "antd/locale/zh_CN";
 import { SchemaRenderer } from "@lcdp/renderer";
 import type { AppInfo, Snapshot, UserInfo } from "./api.js";
 import { api, getStoredUser, makeAdapter, storeSession } from "./api.js";
@@ -7,6 +20,7 @@ import { api, getStoredUser, makeAdapter, storeSession } from "./api.js";
 /**
  * 运行态应用壳（M1）：登录 -> 应用列表 -> 进入应用后按快照的 PageSchema 渲染。
  * 路由用 hash（Pages 静态托管免改写规则）：#/app/<appId><页面路由>?id=<记录id>
+ * 界面统一走 Ant Design 组件（与设计文档的 UI 选型一致）。
  */
 
 interface Route {
@@ -34,25 +48,15 @@ function useHashRoute(): Route {
   return route;
 }
 
-interface Toast {
-  message: string;
-  kind: "ok" | "error";
+/** 全局消息提示（适配器的 notify 契约实现，模块级稳定引用） */
+function notify(message: string, kind: "ok" | "error" = "ok"): void {
+  if (kind === "error") void antdMessage.error(message);
+  else void antdMessage.success(message);
 }
-
-const shell = {
-  fontFamily: "system-ui, -apple-system, sans-serif",
-  color: "#111827",
-} as const;
 
 export default function App() {
   const route = useHashRoute();
   const [user, setUser] = useState<UserInfo | null>(() => getStoredUser());
-  const [toast, setToast] = useState<Toast | null>(null);
-
-  const notify = (message: string, kind: "ok" | "error" = "ok") => {
-    setToast({ message, kind });
-    window.setTimeout(() => setToast(null), 3600);
-  };
 
   const logout = () => {
     storeSession(null, null);
@@ -65,7 +69,7 @@ export default function App() {
   const inPath = match?.[2] ?? "/";
 
   return (
-    <div style={shell}>
+    <ConfigProvider locale={zhCN}>
       {!user ? (
         <LoginView
           onLoggedIn={(u) => {
@@ -74,7 +78,7 @@ export default function App() {
           }}
         />
       ) : !appId ? (
-        <AppsView user={user} onLogout={logout} notify={notify} />
+        <AppsView user={user} onLogout={logout} />
       ) : (
         <AppView
           appId={appId}
@@ -82,44 +86,21 @@ export default function App() {
           params={route.params}
           user={user}
           onLogout={logout}
-          notify={notify}
         />
       )}
-      {toast && (
-        <div
-          style={{
-            position: "fixed",
-            left: "50%",
-            bottom: 28,
-            transform: "translateX(-50%)",
-            background: toast.kind === "error" ? "#991b1b" : "#065f46",
-            color: "#fff",
-            padding: "10px 18px",
-            borderRadius: 8,
-            fontSize: 14,
-            boxShadow: "0 6px 24px rgba(0,0,0,.25)",
-            zIndex: 50,
-          }}
-        >
-          {toast.message}
-        </div>
-      )}
-    </div>
+    </ConfigProvider>
   );
 }
 
 function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const submit = async (values: { username: string; password: string }) => {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.login(username.trim(), password);
+      const res = await api.login(values.username.trim(), values.password);
       onLoggedIn(res.user);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -129,104 +110,62 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
   };
 
   return (
-    <main
+    <div
       style={{
         minHeight: "100vh",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f9fafb",
+        background: "#f5f5f5",
       }}
     >
-      <form
-        onSubmit={submit}
-        style={{
-          width: 340,
-          background: "#fff",
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: 28,
-          boxShadow: "0 8px 30px rgba(0,0,0,.06)",
-        }}
-      >
-        <h1 style={{ fontSize: 20, margin: "0 0 4px" }}>LCDP Runtime · 运行态</h1>
-        <p style={{ color: "#6b7280", fontSize: 13, margin: "0 0 20px" }}>
-          登录后进入已发布应用（管理员账号在初始化向导中设置）
-        </p>
-        <label style={{ display: "block", fontSize: 14, marginBottom: 12 }}>
-          用户名
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            style={loginInput}
-            autoComplete="username"
-          />
-        </label>
-        <label style={{ display: "block", fontSize: 14, marginBottom: 16 }}>
-          密码
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={loginInput}
-            autoComplete="current-password"
-          />
-        </label>
-        {error && (
-          <div
-            style={{
-              background: "#fef2f2",
-              border: "1px solid #fecaca",
-              color: "#991b1b",
-              borderRadius: 6,
-              padding: "8px 12px",
-              fontSize: 13,
-              marginBottom: 14,
-            }}
-          >
-            {error}
-          </div>
-        )}
-        <button
-          type="submit"
-          disabled={busy}
-          style={{
-            width: "100%",
-            padding: "9px 0",
-            borderRadius: 8,
-            border: "1px solid #2563eb",
-            background: "#2563eb",
-            color: "#fff",
-            fontSize: 15,
-            cursor: "pointer",
-          }}
+      <Card style={{ width: 360 }}>
+        <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
+          LCDP Runtime · 运行态
+        </Typography.Title>
+        <Typography.Paragraph
+          type="secondary"
+          style={{ fontSize: 13, marginBottom: 20 }}
         >
-          {busy ? "登录中…" : "登录"}
-        </button>
-      </form>
-    </main>
+          登录后进入已发布应用（管理员账号在初始化向导中设置）
+        </Typography.Paragraph>
+        {error && (
+          <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+        )}
+        <Form
+          layout="vertical"
+          initialValues={{ username: "admin" }}
+          onFinish={(v) => void submit(v)}
+        >
+          <Form.Item
+            label="用户名"
+            name="username"
+            rules={[{ required: true, message: "请输入用户名" }]}
+          >
+            <Input autoComplete="username" />
+          </Form.Item>
+          <Form.Item
+            label="密码"
+            name="password"
+            rules={[{ required: true, message: "请输入密码" }]}
+          >
+            <Input.Password autoComplete="current-password" />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block loading={busy}>
+            登录
+          </Button>
+        </Form>
+      </Card>
+    </div>
   );
 }
-
-const loginInput = {
-  display: "block",
-  width: "100%",
-  marginTop: 6,
-  padding: "8px 10px",
-  border: "1px solid #d1d5db",
-  borderRadius: 6,
-  fontSize: 14,
-  boxSizing: "border-box",
-} as const;
 
 function AppsView({
   user,
   onLogout,
-  notify,
 }: {
   user: UserInfo;
   onLogout: () => void;
-  notify: (message: string, kind?: "ok" | "error") => void;
 }) {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -240,29 +179,31 @@ function AppsView({
         setError(msg);
         notify(msg, "error");
       });
-  }, [notify]);
+  }, []);
 
   return (
-    <main style={{ maxWidth: 960, margin: "0 auto", padding: "36px 24px" }}>
-      <header
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "36px 24px" }}>
+      <div
         style={{
           display: "flex",
-          alignItems: "center",
+          alignItems: "flex-start",
           marginBottom: 24,
         }}
       >
         <div>
-          <h1 style={{ fontSize: 22, margin: 0 }}>我的应用</h1>
-          <p style={{ color: "#6b7280", fontSize: 13, margin: "4px 0 0" }}>
+          <Typography.Title level={3} style={{ margin: 0 }}>
+            我的应用
+          </Typography.Title>
+          <Typography.Text type="secondary">
             {user.username}（{user.role}）· 选择一个应用进入运行态
-          </p>
+          </Typography.Text>
         </div>
         <div style={{ flex: 1 }} />
-        <button onClick={onLogout} style={ghostBtn}>
-          退出登录
-        </button>
-      </header>
-      {error && <div style={errorBox}>{error}</div>}
+        <Button onClick={onLogout}>退出登录</Button>
+      </div>
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+      )}
       <div
         style={{
           display: "grid",
@@ -271,53 +212,28 @@ function AppsView({
         }}
       >
         {apps.map((app) => (
-          <button
+          <Card
             key={app.id}
+            hoverable
             onClick={() => {
               window.location.hash = `#/app/${encodeURIComponent(app.id)}`;
             }}
-            style={{
-              textAlign: "left",
-              background: "#fff",
-              border: "1px solid #e5e7eb",
-              borderRadius: 12,
-              padding: 20,
-              cursor: "pointer",
-              boxShadow: "0 2px 10px rgba(0,0,0,.04)",
-            }}
           >
-            <div style={{ fontSize: 16, fontWeight: 600 }}>{app.name}</div>
-            <div style={{ color: "#6b7280", fontSize: 13, marginTop: 6 }}>
-              场景：{app.scenario ?? "—"}
-            </div>
-          </button>
+            <Card.Meta
+              title={app.name}
+              description={`场景：${app.scenario ?? "—"}`}
+            />
+          </Card>
         ))}
-        {apps.length === 0 && !error && (
-          <p style={{ color: "#9ca3af" }}>暂无应用（先完成平台初始化）</p>
-        )}
       </div>
-    </main>
+      {apps.length === 0 && !error && (
+        <Typography.Text type="secondary">
+          暂无应用（先完成平台初始化）
+        </Typography.Text>
+      )}
+    </div>
   );
 }
-
-const ghostBtn = {
-  padding: "6px 14px",
-  borderRadius: 6,
-  border: "1px solid #d1d5db",
-  background: "#fff",
-  cursor: "pointer",
-  fontSize: 14,
-} as const;
-
-const errorBox = {
-  background: "#fef2f2",
-  border: "1px solid #fecaca",
-  color: "#991b1b",
-  borderRadius: 6,
-  padding: "8px 12px",
-  fontSize: 14,
-  marginBottom: 12,
-} as const;
 
 function AppView({
   appId,
@@ -325,14 +241,12 @@ function AppView({
   params,
   user,
   onLogout,
-  notify,
 }: {
   appId: string;
   inPath: string;
   params: Record<string, string>;
   user: UserInfo;
   onLogout: () => void;
-  notify: (message: string, kind?: "ok" | "error") => void;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -355,27 +269,28 @@ function AppView({
         },
         notify,
       ),
-    [appId, notify],
+    [appId],
   );
 
   if (error) {
     return (
-      <main style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
-        <div style={errorBox}>{error}</div>
-        <button
-          style={ghostBtn}
+      <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+        <Button
           onClick={() => {
             window.location.hash = "#/";
           }}
         >
           返回应用列表
-        </button>
-      </main>
+        </Button>
+      </div>
     );
   }
   if (!snapshot) {
     return (
-      <main style={{ padding: 40, color: "#6b7280" }}>正在加载应用…</main>
+      <div style={{ padding: 80, textAlign: "center" }}>
+        <Spin size="large" tip="正在加载应用…" />
+      </div>
     );
   }
 
@@ -393,62 +308,57 @@ function AppView({
   };
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
-      <aside
-        style={{
-          width: 208,
-          flexShrink: 0,
-          borderRight: "1px solid #e5e7eb",
-          background: "#f9fafb",
-          padding: "20px 14px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-        }}
+    <Layout style={{ minHeight: "100vh" }}>
+      <Layout.Sider
+        theme="light"
+        width={220}
+        style={{ borderRight: "1px solid #f0f0f0" }}
       >
-        <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>
-          {snapshot.app.name}
-        </div>
-        <div style={{ color: "#9ca3af", fontSize: 12, marginBottom: 14 }}>
-          LCDP Runtime
-        </div>
-        {listPages.map((page) => (
-          <button
-            key={page.id}
-            onClick={() => {
-              window.location.hash = `#/app/${encodeURIComponent(appId)}${page.route}`;
-            }}
-            style={{
-              textAlign: "left",
-              padding: "8px 10px",
-              borderRadius: 7,
-              border: "1px solid transparent",
-              background:
-                current?.route === page.route ? "#e0e7ff" : "transparent",
-              cursor: "pointer",
-              fontSize: 14,
-            }}
-          >
-            {navLabel(page)}
-          </button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <button
-          style={{ ...ghostBtn, textAlign: "left" }}
-          onClick={() => {
-            window.location.hash = "#/";
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            height: "100%",
+            padding: "20px 12px",
+            gap: 8,
+            boxSizing: "border-box",
           }}
         >
-          ← 应用列表
-        </button>
-        <button
-          style={{ ...ghostBtn, textAlign: "left", marginTop: 6 }}
-          onClick={onLogout}
-        >
-          退出（{user.username}）
-        </button>
-      </aside>
-      <main style={{ flex: 1, padding: "24px 28px", minWidth: 0 }}>
+          <div style={{ padding: "0 8px" }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>
+              {snapshot.app.name}
+            </div>
+            <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 2 }}>
+              LCDP Runtime
+            </div>
+          </div>
+          <Menu
+            mode="inline"
+            selectedKeys={current ? [current.route] : []}
+            style={{ borderInlineEnd: "none", background: "transparent" }}
+            items={listPages.map((page) => ({
+              key: page.route,
+              label: navLabel(page),
+            }))}
+            onClick={({ key }) => {
+              window.location.hash = `#/app/${encodeURIComponent(appId)}${key}`;
+            }}
+          />
+          <div style={{ flex: 1 }} />
+          <Button
+            block
+            onClick={() => {
+              window.location.hash = "#/";
+            }}
+          >
+            ← 应用列表
+          </Button>
+          <Button block onClick={onLogout}>
+            退出（{user.username}）
+          </Button>
+        </div>
+      </Layout.Sider>
+      <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
         {current ? (
           <SchemaRenderer
             page={current}
@@ -457,9 +367,11 @@ function AppView({
             params={params}
           />
         ) : (
-          <div style={{ color: "#9ca3af" }}>页面不存在：{inPath}</div>
+          <Typography.Text type="secondary">
+            页面不存在：{inPath}
+          </Typography.Text>
         )}
-      </main>
-    </div>
+      </Layout.Content>
+    </Layout>
   );
 }
