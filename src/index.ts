@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 
 /**
- * Edge API（入口 A 轻逻辑，架构文档第 5 节）：
- * 登录态校验、按已发布 Schema 快照做路由分发、公开数据只读缓存。
- * 业务 API 走 api 域名经 Tunnel 直达 core-api，不经此 Worker——
- * 免费额度耗尽时仅边缘能力降级，核心业务不受影响。
- * 本 Worker 禁止承载任何唯一数据（铁律：事实源在服务器 PostgreSQL）。
+ * Edge API（统一入口网关，架构文档第 5 节）：
+ * 公开流量统一经此 Worker：鉴权前置、按已发布 Schema 快照做路由分发、
+ * 公开数据边缘缓存，其余请求经 Tunnel 回源服务器 core-api / agent。
+ * 本 Worker 保持薄网关，禁止沉淀业务逻辑与业务事实数据——核心能力与
+ * 业务事实的权威源都在服务器 platform 服务（PostgreSQL）；此处只存
+ * 派生副本与边缘运营数据，且建库由 platform 声明驱动（见架构文档第 10 节）。
  */
 type Env = {
   ENVIRONMENT: string;
