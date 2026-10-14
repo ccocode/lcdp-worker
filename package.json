@@ -1,1 +1,23 @@
-ewogICJuYW1lIjogImxjZHAtd29ya2VyIiwKICAidmVyc2lvbiI6ICIwLjEuMCIsCiAgInByaXZhdGUiOiB0cnVlLAogICJwYWNrYWdlTWFuYWdlciI6ICJwbnBtQDkuMTUuMCIsCiAgImRlc2NyaXB0aW9uIjogIkNsb3VkZmxhcmUg5L6n77yaZWRnZS1hcGkgV29ya2Vy44CBd3JhbmdsZXIg546v5aKD6YWN572u44CB6LWE5rqQIHByb3Zpc2lvbiDohJrmnKzvvIjotKblj7fliIfmjaLml7bmlbTkvZPph43pg6jnvbLnmoTpg6jliIbvvIkiLAogICJ0eXBlIjogIm1vZHVsZSIsCiAgInNjcmlwdHMiOiB7CiAgICAiZGV2IjogIndyYW5nbGVyIGRldiIsCiAgICAiZGVwbG95OmRlbW8iOiAid3JhbmdsZXIgZGVwbG95IC0tZW52IGRlbW8iLAogICAgImRlcGxveTpwcm9kdWN0aW9uIjogIndyYW5nbGVyIGRlcGxveSAtLWVudiBwcm9kdWN0aW9uIiwKICAgICJ0eXBlY2hlY2siOiAidHNjIC1wIHRzY29uZmlnLmpzb24gLS1ub0VtaXQiCiAgfSwKICAiZGVwZW5kZW5jaWVzIjogewogICAgIkBuYWthMTIwNS9zY2hlbWEiOiAiMC4xLjAiLAogICAgImhvbm8iOiAiXjQuNi4xNCIKICB9LAogICJkZXZEZXBlbmRlbmNpZXMiOiB7CiAgICAiQGNsb3VkZmxhcmUvd29ya2Vycy10eXBlcyI6ICJeNC4yMDI0MTIxOC4wIiwKICAgICJ0eXBlc2NyaXB0IjogIl41LjcuMiIsCiAgICAid3JhbmdsZXIiOiAiXjMuOTkuMCIKICB9Cn0K
+{
+  "name": "lcdp-worker",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "description": "Cloudflare 侧：edge-api Worker、wrangler 环境配置、资源 provision 脚本（账号切换时整体重部署的部分）",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy:demo": "wrangler deploy --env demo",
+    "deploy:production": "wrangler deploy --env production",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@naka1205/schema": "0.1.0",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.99.0"
+  }
+}
