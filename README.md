@@ -17,7 +17,7 @@ wrangler.toml 网关 Worker 配置
 ```
 
 设计约束（见 platform 仓最终架构文档第 5、10、11 节）：
-- 统一入口：公开流量经 edge-api 网关鉴权前置、路由转发，再经 Tunnel 回源服务器 core-api / agent；api 直连域名仅作内部通道。网关保持薄，不沉淀业务逻辑。
+- 统一入口：公开流量经 edge-api 网关鉴权前置、路由转发，再经 Tunnel 回源服务器 api / agent；api 直连域名仅作内部通道。网关保持薄，不沉淀业务逻辑。
 - 数据归属：业务事实的权威源在服务器 PostgreSQL；本侧 D1/KV/R2 只装派生副本与边缘运营数据，且建库一律由 platform 资源声明驱动、本仓 provision 只负责执行，禁止独立建库。
 - `@naka1205/schema` 按固定版本从 GitHub Packages 依赖（platform 仓发布），不走 workspace 引用。
 - Cloudflare Token 只存本仓 GitHub Environments，绝不进入 platform 仓。

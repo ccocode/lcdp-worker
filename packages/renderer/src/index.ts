@@ -18,7 +18,7 @@ export function registerComponent(
 
 /**
  * 渲染入口（骨架）：后续按 PageSchema.root 递归渲染组件树，
- * 数据源在运行时经 core-api 拉取，权限裁剪在服务端完成。
+ * 数据源在运行时经 api 拉取，权限裁剪在服务端完成。
  */
 export function resolveRootNode(page: PageSchema): ComponentNode {
   return page.root;
