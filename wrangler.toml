@@ -3,8 +3,10 @@ name = "lcdp-edge-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
-# 入口 A（app 域名）：静态托管 + 轻 Worker。api 域名直达 Tunnel 不经 Worker（双入口拓扑，见架构文档第 5 节）。
-# KV 仅放小配置/特性开关（免费版写 1000 次/天），绑定 id 在 provision 后回填。
+# 统一入口网关（见架构文档第 5 节）：公开流量经本 Worker 鉴权前置、路由转发，
+# 回源请求经 Tunnel 调服务器 core-api；api 直连域名仅作内部通道（回源与运维，终端不直连）。
+# KV/D1 只装配置、特性开关与边缘运营数据（免费版 KV 写 1000 次/天），且建库一律由 platform
+# 资源声明驱动、本仓 provision 只负责执行；绑定 id 在 provision 后回填。
 # [env.demo]
 # [[env.demo.kv_namespaces]]
 # binding = "CONFIG_KV"
