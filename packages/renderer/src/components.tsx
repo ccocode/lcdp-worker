@@ -697,6 +697,7 @@ function useAggregateValue(
   useEffect(() => {
     if (!entity || !fn) return;
     let alive = true;
+    setError(null);
     ctx.adapter
       .aggregate(entity.key, {
         fn,
@@ -704,7 +705,10 @@ function useAggregateValue(
         filters: JSON.parse(filtersSig) as Record<string, string>,
       })
       .then((v) => {
-        if (alive) setValue(v);
+        if (alive) {
+          setValue(v);
+          setError(null);
+        }
       })
       .catch((err) => {
         if (alive) setError(errText(err));
