@@ -1,5 +1,16 @@
-import type { DataSchema, PageSchema } from "@naka1205/schema";
-import type { ListResult, Row, RuntimeAdapter, SelectOption } from "@lcdp/renderer";
+import type {
+  DataSchema,
+  PageSchema,
+  PermissionSchema,
+  PublicPolicy,
+} from "@naka1205/schema";
+import type {
+  EntityAccess,
+  ListResult,
+  Row,
+  RuntimeAdapter,
+  SelectOption,
+} from "@lcdp/renderer";
 
 /**
  * 平台 api 客户端（M1 阶段前端直连 service.coode.cc.cd；
@@ -25,6 +36,11 @@ export interface AppInfo {
   scenario: string | null;
 }
 
+/** 当前用户在本应用的有效访问摘要（服务端按角色计算，前端透传渲染器做呈现门控） */
+export interface MyAccess {
+  entities: Record<string, EntityAccess>;
+}
+
 export interface Snapshot {
   app: AppInfo;
   data: DataSchema;
@@ -33,12 +49,33 @@ export interface Snapshot {
   appConfig: { theme: Record<string, unknown> } | null;
   /** 当前发布版本号（未发布为 null） */
   version: number | null;
+  /** 已发布的权限配置（未发布权限时为 null → 旧行为全权） */
+  permissions: PermissionSchema | null;
+  /** 当前用户的有效访问摘要（透传渲染器 access 做呈现门控） */
+  myAccess: MyAccess | null;
 }
 
 /** 入口解析结果：当前域名命中的入口与其装配的应用（顺序即呈现顺序） */
 export interface EntryResult {
   entry: { id: string; name: string } | null;
   apps: AppInfo[];
+}
+
+/** 公开（匿名）入口解析结果：primary 为入口首个应用的公开面（无公开页时为 null） */
+export interface PublicEntryResult {
+  entry: { id: string; name: string } | null;
+  apps: AppInfo[];
+  primary: {
+    appId: string;
+    name: string;
+    /** 仅含公开策略声明的页面（已发布设计页 ∪ 派生页中 route ∈ public.pages 者） */
+    pages: PageSchema[];
+    /** 仅含公开可读/公开表单涉及的实体定义 */
+    data: DataSchema;
+    appConfig: { theme: Record<string, unknown> } | null;
+    /** 公开策略（决定哪些实体可读、哪些可提交表单） */
+    public: PublicPolicy;
+  } | null;
 }
 
 export function getToken(): string | null {
@@ -103,6 +140,12 @@ export const api = {
   async entry(host: string): Promise<EntryResult> {
     return apiFetch<EntryResult>(
       `/entry/current?host=${encodeURIComponent(host)}`,
+    );
+  },
+  /** 匿名解析入口的公开面（未登录时先调：有公开页则渲染公开外壳） */
+  async publicEntry(host: string): Promise<PublicEntryResult> {
+    return apiFetch<PublicEntryResult>(
+      `/public/entry?host=${encodeURIComponent(host)}`,
     );
   },
   data: {
@@ -208,6 +251,74 @@ export function makeAdapter(
     remove: (entity, id) => api.data.remove(appId, entity, id),
     options: async (entity): Promise<SelectOption[]> => {
       const res = await api.data.list(appId, entity, { limit: 200 });
+      return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
+    },
+    navigate,
+    notify,
+  };
+}
+
+/**
+ * 公开（匿名）适配器：读走 /public 数据接口（服务端按公开策略整形），
+ * 写只允许提交公开表单——落入待审区而非业务表，create 返回合成行让表单走完成功路径；
+ * 修改/删除一律拒绝（公开访问不可改既有数据）。
+ */
+export function makePublicAdapter(
+  appId: string,
+  navigate: (to: string) => void,
+  notify: (message: string, kind?: "ok" | "error") => void,
+): RuntimeAdapter {
+  const base = `/public/apps/${encodeURIComponent(appId)}`;
+  const list = async (
+    entity: string,
+    params?: {
+      limit?: number;
+      offset?: number;
+      filters?: Record<string, string>;
+      sort?: { field: string; dir: "asc" | "desc" };
+    },
+  ): Promise<ListResult> => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    if (params?.sort) qs.set("sort", `${params.sort.field}:${params.sort.dir}`);
+    for (const [k, v] of Object.entries(params?.filters ?? {})) qs.set(k, v);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiFetch<ListResult>(
+      `${base}/data/${encodeURIComponent(entity)}${suffix}`,
+    );
+  };
+  return {
+    list,
+    aggregate: () => {
+      throw new Error("公开访问不支持聚合查询");
+    },
+    get: async (entity, id) => {
+      try {
+        const res = await apiFetch<{ row: Row }>(
+          `${base}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+        );
+        return res.row;
+      } catch {
+        return null;
+      }
+    },
+    create: async (entity, data) => {
+      const res = await apiFetch<{ ok: boolean; id: string }>(
+        `${base}/submit/${encodeURIComponent(entity)}`,
+        { method: "POST", body: JSON.stringify({ body: data }) },
+      );
+      // 提交进待审区而非业务表：合成一行回给表单（id 为待审记录 id），成功提示由外壳改写
+      return { ...data, id: res.id };
+    },
+    update: () => {
+      throw new Error("公开访问不可修改");
+    },
+    remove: () => {
+      throw new Error("公开访问不可修改");
+    },
+    options: async (entity): Promise<SelectOption[]> => {
+      const res = await list(entity, { limit: 200 });
       return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
     },
     navigate,

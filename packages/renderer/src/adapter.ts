@@ -49,6 +49,14 @@ export interface RuntimeAdapter {
   notify(message: string, kind?: "ok" | "error"): void;
 }
 
+/** 当前用户对单个实体的有效访问（宿主按登录身份裁剪后透传；服务端为权威，前端仅做呈现门控） */
+export interface EntityAccess {
+  /** 可执行动作：read / create / update / delete */
+  actions: string[];
+  /** 字段 key → 访问级：hidden / masked / readonly / readwrite */
+  fields: Record<string, string>;
+}
+
 /** 渲染上下文：当前页、宿主适配器与页面参数（如表单页的 id） */
 export interface RendererContextValue {
   adapter: RuntimeAdapter;
@@ -57,6 +65,8 @@ export interface RendererContextValue {
   params: Record<string, string>;
   /** 当前渲染设备：组件树按此读取布局变体（node.layout[device]） */
   device: "desktop" | "mobile";
+  /** 权限门控（可选）：实体 key → 有效访问；缺省时不做任何门控（设计器预览等场景行为不变） */
+  access?: Record<string, EntityAccess>;
   /** 设计模式（设计器画布专用）：节点可点选，选中态由宿主管理 */
   design?: {
     selectedId?: string;

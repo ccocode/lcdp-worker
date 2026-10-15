@@ -6,6 +6,7 @@ export function resolveRootNode(page: PageSchema): ComponentNode {
 }
 
 export type {
+  EntityAccess,
   ListResult,
   RendererContextValue,
   Row,

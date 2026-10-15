@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -15,9 +15,21 @@ import {
 import type { MenuProps } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { SchemaRenderer } from "@lcdp/renderer";
-import type { PageSchema } from "@naka1205/schema";
-import type { EntryResult, Snapshot, UserInfo } from "./api.js";
-import { api, getStoredUser, makeAdapter, storeSession } from "./api.js";
+import type { EntityAccess } from "@lcdp/renderer";
+import type { DataSchema, PageSchema } from "@naka1205/schema";
+import type {
+  EntryResult,
+  PublicEntryResult,
+  Snapshot,
+  UserInfo,
+} from "./api.js";
+import {
+  api,
+  getStoredUser,
+  makeAdapter,
+  makePublicAdapter,
+  storeSession,
+} from "./api.js";
 
 /**
  * 运行态应用壳（M3 入口模型）：运行态是单一解释器，呈现中没有「应用」概念。
@@ -95,7 +107,9 @@ export default function App() {
   return (
     <ConfigProvider locale={zhCN}>
       {!user ? (
-        <LoginView
+        <AnonGate
+          route={route}
+          device={device}
           onLoggedIn={(u) => {
             setUser(u);
             // 预览深链（设计台打开）登录后保留原路径，其余回入口首页
@@ -196,6 +210,176 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
   );
 }
 
+/**
+ * 未登录门面：先匿名解析当前入口的公开面——有公开页则渲染公开外壳，
+ * 无公开页（或用户点「登录」、或预览深链）时显示登录页；公开面查询失败也回落登录页。
+ */
+function AnonGate({
+  route,
+  device,
+  onLoggedIn,
+}: {
+  route: Route;
+  device: Device;
+  onLoggedIn: (user: UserInfo) => void;
+}) {
+  const [pub, setPub] = useState<PublicEntryResult | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .publicEntry(window.location.host)
+      .then((r) => {
+        if (alive) {
+          setPub(r);
+          setLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (alive) setLoaded(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!loaded) {
+    return (
+      <div style={{ padding: 80, textAlign: "center" }}>
+        <Spin size="large" tip="正在加载…" />
+      </div>
+    );
+  }
+  const primary = pub?.primary ?? null;
+  if (
+    primary &&
+    primary.pages.length > 0 &&
+    !showLogin &&
+    !route.path.startsWith("/app/")
+  ) {
+    return (
+      <PublicShell
+        primary={primary}
+        inPath={route.path}
+        params={route.params}
+        device={device}
+        onLogin={() => setShowLogin(true)}
+      />
+    );
+  }
+  return <LoginView onLoggedIn={onLoggedIn} />;
+}
+
+/**
+ * 公开外壳（匿名访客）：顶栏应用名 + 登录按钮；菜单走与登录外壳同一套页面 menu 装配；
+ * 内容由公开适配器渲染（服务端按公开策略整形数据）、应用主题同样生效。
+ */
+function PublicShell({
+  primary,
+  inPath,
+  params,
+  device,
+  onLogin,
+}: {
+  primary: NonNullable<PublicEntryResult["primary"]>;
+  inPath: string;
+  params: Record<string, string>;
+  device: Device;
+  onLogin: () => void;
+}) {
+  const goPage = useCallback((to: string) => {
+    window.location.hash = `#${to}`;
+  }, []);
+  // 公开表单提交在渲染器内走既有「保存成功」提示路径，这里改写为待审口径
+  const publicNotify = useCallback(
+    (message: string, kind: "ok" | "error" = "ok") => {
+      notify(message === "保存成功" ? "已提交，等待审核" : message, kind);
+    },
+    [],
+  );
+  const adapter = useMemo(
+    () => makePublicAdapter(primary.appId, goPage, publicNotify),
+    [primary.appId, goPage, publicNotify],
+  );
+
+  const menu = assembleMenu(primary.pages, primary.data.entities);
+  const current = resolveCurrentPage(primary.pages, menu, inPath);
+  const token = themeTokenOf(primary.appConfig);
+
+  // 呈现门控与公开策略对齐：可读实体只读、公开表单实体可新建，避免露出无权入口（服务端仍强制）
+  const access = useMemo(() => {
+    const entities: Record<string, EntityAccess> = {};
+    for (const e of primary.data.entities) {
+      entities[e.key] = {
+        actions: primary.public.forms.includes(e.key)
+          ? ["read", "create"]
+          : ["read"],
+        fields: {},
+      };
+    }
+    return entities;
+  }, [primary]);
+
+  return (
+    <ConfigProvider locale={zhCN} theme={{ token }}>
+      <Layout style={{ minHeight: "100vh" }}>
+        <Layout.Header
+          style={{
+            background: "#fff",
+            borderBottom: "1px solid #f0f0f0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "0 20px",
+          }}
+        >
+          <span style={{ fontWeight: 700, fontSize: 15 }}>{primary.name}</span>
+          <Button type="primary" onClick={onLogin}>
+            登录
+          </Button>
+        </Layout.Header>
+        <Layout>
+          <Layout.Sider
+            theme="light"
+            width={220}
+            style={{ borderRight: "1px solid #f0f0f0" }}
+          >
+            <Menu
+              mode="inline"
+              selectedKeys={current ? [current.route] : []}
+              style={{
+                borderInlineEnd: "none",
+                background: "transparent",
+                marginTop: 12,
+              }}
+              items={menu.items}
+              onClick={({ key }) => goPage(key)}
+            />
+          </Layout.Sider>
+          <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
+            {current ? (
+              <SchemaRenderer
+                page={current}
+                dataSchema={primary.data}
+                adapter={adapter}
+                params={params}
+                device={device}
+                access={access}
+              />
+            ) : (
+              <Typography.Text type="secondary">
+                页面不存在：{inPath}
+              </Typography.Text>
+            )}
+          </Layout.Content>
+        </Layout>
+      </Layout>
+    </ConfigProvider>
+  );
+}
+
 /** 入口视图：按当前域名解析入口，取其装配的首个应用进入系统壳 */
 function EntryView({
   inPath,
@@ -279,6 +463,101 @@ interface MenuPage {
   group?: string;
 }
 
+interface AssembledMenu {
+  items: MenuProps["items"];
+  menuPages: MenuPage[];
+  listPages: PageSchema[];
+}
+
+/**
+ * 菜单组装（登录外壳与公开外壳共用同一逻辑）：
+ * 页面 menu 声明优先；无任何页面声明 menu 时回退旧逻辑（列表页 + 实体名）。
+ */
+function assembleMenu(
+  pages: PageSchema[],
+  entities: DataSchema["entities"],
+): AssembledMenu {
+  const menuPages: MenuPage[] = pages
+    .filter((p) => p.menu && !p.menu.hidden)
+    .map((p) => ({
+      page: p,
+      label: p.menu!.label,
+      order: p.menu!.order ?? 0,
+      group: p.menu!.group,
+    }))
+    .sort((a, b) => a.order - b.order);
+  const listPages = pages.filter((p) =>
+    p.root.children?.some((ch) => ch.type === "DataTable"),
+  );
+
+  const navLabel = (page: PageSchema): string => {
+    const ref = page.dataSources[0]?.ref;
+    const entity = entities.find((e) => e.key === ref);
+    return entity?.label ?? page.name;
+  };
+
+  let items: MenuProps["items"];
+  if (menuPages.length > 0) {
+    // 分组项在其首个成员的位置出现一次，组内保持 order 顺序
+    const arr: NonNullable<MenuProps["items"]> = [];
+    const seenGroups = new Set<string>();
+    for (const mp of menuPages) {
+      if (!mp.group) {
+        arr.push({ key: mp.page.route, label: mp.label });
+        continue;
+      }
+      if (seenGroups.has(mp.group)) continue;
+      seenGroups.add(mp.group);
+      arr.push({
+        type: "group",
+        key: `group:${mp.group}`,
+        label: mp.group,
+        children: menuPages
+          .filter((g) => g.group === mp.group)
+          .map((g) => ({ key: g.page.route, label: g.label })),
+      });
+    }
+    items = arr;
+  } else {
+    items = listPages.map((page) => ({
+      key: page.route,
+      label: navLabel(page),
+    }));
+  }
+  return { items, menuPages, listPages };
+}
+
+/** 当前页解析：根路径落到首个菜单页，其次 route='/' 的页，再次首个列表页 */
+function resolveCurrentPage(
+  pages: PageSchema[],
+  menu: AssembledMenu,
+  inPath: string,
+): PageSchema | undefined {
+  if (inPath === "/") {
+    return (
+      menu.menuPages[0]?.page ??
+      pages.find((p) => p.route === "/") ??
+      menu.listPages[0]
+    );
+  }
+  return pages.find((p) => p.route === inPath);
+}
+
+/** 主题令牌：应用配置里的 colorPrimary / borderRadius 注入 antd 主题 */
+function themeTokenOf(appConfig: {
+  theme: Record<string, unknown>;
+} | null): { colorPrimary?: string; borderRadius?: number } {
+  const themeCfg = appConfig?.theme ?? {};
+  const token: { colorPrimary?: string; borderRadius?: number } = {};
+  if (typeof themeCfg.colorPrimary === "string") {
+    token.colorPrimary = themeCfg.colorPrimary;
+  }
+  if (typeof themeCfg.borderRadius === "number") {
+    token.borderRadius = themeCfg.borderRadius;
+  }
+  return token;
+}
+
 function AppView({
   appId,
   inPath,
@@ -349,71 +628,9 @@ function AppView({
     );
   }
 
-  // 菜单组装：页面 menu 声明优先；无任何页面声明 menu 时回退旧逻辑（列表页 + 实体名）
-  const menuPages: MenuPage[] = snapshot.pages
-    .filter((p) => p.menu && !p.menu.hidden)
-    .map((p) => ({
-      page: p,
-      label: p.menu!.label,
-      order: p.menu!.order ?? 0,
-      group: p.menu!.group,
-    }))
-    .sort((a, b) => a.order - b.order);
-  const listPages = snapshot.pages.filter((p) =>
-    p.root.children?.some((ch) => ch.type === "DataTable"),
-  );
-
-  const navLabel = (page: PageSchema): string => {
-    const ref = page.dataSources[0]?.ref;
-    const entity = snapshot.data.entities.find((e) => e.key === ref);
-    return entity?.label ?? page.name;
-  };
-
-  let menuItems: MenuProps["items"];
-  if (menuPages.length > 0) {
-    // 分组项在其首个成员的位置出现一次，组内保持 order 顺序
-    const items: NonNullable<MenuProps["items"]> = [];
-    const seenGroups = new Set<string>();
-    for (const mp of menuPages) {
-      if (!mp.group) {
-        items.push({ key: mp.page.route, label: mp.label });
-        continue;
-      }
-      if (seenGroups.has(mp.group)) continue;
-      seenGroups.add(mp.group);
-      items.push({
-        type: "group",
-        key: `group:${mp.group}`,
-        label: mp.group,
-        children: menuPages
-          .filter((g) => g.group === mp.group)
-          .map((g) => ({ key: g.page.route, label: g.label })),
-      });
-    }
-    menuItems = items;
-  } else {
-    menuItems = listPages.map((page) => ({
-      key: page.route,
-      label: navLabel(page),
-    }));
-  }
-
-  const current =
-    inPath === "/"
-      ? (menuPages[0]?.page ??
-        snapshot.pages.find((p) => p.route === "/") ??
-        listPages[0])
-      : snapshot.pages.find((p) => p.route === inPath);
-
-  // 主题令牌：应用配置里的 colorPrimary / borderRadius 注入 antd 主题
-  const themeCfg = snapshot.appConfig?.theme ?? {};
-  const token: { colorPrimary?: string; borderRadius?: number } = {};
-  if (typeof themeCfg.colorPrimary === "string") {
-    token.colorPrimary = themeCfg.colorPrimary;
-  }
-  if (typeof themeCfg.borderRadius === "number") {
-    token.borderRadius = themeCfg.borderRadius;
-  }
+  const menu = assembleMenu(snapshot.pages, snapshot.data.entities);
+  const current = resolveCurrentPage(snapshot.pages, menu, inPath);
+  const token = themeTokenOf(snapshot.appConfig);
 
   return (
     <ConfigProvider locale={zhCN} theme={{ token }}>
@@ -455,7 +672,7 @@ function AppView({
               mode="inline"
               selectedKeys={current ? [current.route] : []}
               style={{ borderInlineEnd: "none", background: "transparent" }}
-              items={menuItems}
+              items={menu.items}
               onClick={({ key }) => goPage(key)}
             />
             <div style={{ flex: 1 }} />
@@ -472,6 +689,7 @@ function AppView({
               adapter={adapter}
               params={params}
               device={device}
+              access={snapshot.myAccess?.entities}
             />
           ) : (
             <Typography.Text type="secondary">

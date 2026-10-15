@@ -271,10 +271,15 @@ export function DataTable({ node }: NodeProps) {
     })),
   ];
 
+  // 权限门控：宿主透传了 access 且本实体无 create 动作时隐藏新建按钮（服务端仍为权威强制）
+  const canCreate =
+    !ctx.access ||
+    (ctx.access[entity.key]?.actions.includes("create") ?? false);
+
   return (
     <div>
       <Space style={{ marginBottom: 12 }}>
-        {formRoute && (
+        {formRoute && canCreate && (
           <Button
             type="primary"
             onClick={() => ctx.adapter.navigate(formRoute)}
@@ -593,23 +598,31 @@ export function EntityForm({ node }: NodeProps) {
           <div style={{ paddingTop: 5, fontSize: 14 }}>{id}</div>
         </div>
       )}
-      {entity.fields.map((f) => (
-        <div key={f.key} style={styles.formRow}>
-          <div style={styles.label}>
-            {f.label}
-            {f.required && <span style={styles.required}> *</span>}
+      {entity.fields.map((f) => {
+        // 权限门控：hidden 字段不渲染；readonly/masked 渲染为禁用控件（masked 值已由服务端脱敏，原样展示）
+        const fieldAccess = ctx.access?.[entity.key]?.fields?.[f.key];
+        if (fieldAccess === "hidden") return null;
+        const locked = fieldAccess === "readonly" || fieldAccess === "masked";
+        return (
+          <div key={f.key} style={styles.formRow}>
+            <div style={styles.label}>
+              {f.label}
+              {f.required && <span style={styles.required}> *</span>}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <FieldInput
+                field={f}
+                value={values[f.key]}
+                onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
+                adapter={ctx.adapter}
+                readOnly={
+                  locked || (rollupActive && f.key === rollupField?.key)
+                }
+              />
+            </div>
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <FieldInput
-              field={f}
-              value={values[f.key]}
-              onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
-              adapter={ctx.adapter}
-              readOnly={rollupActive && f.key === rollupField?.key}
-            />
-          </div>
-        </div>
-      ))}
+        );
+      })}
       {children.map((child) => (
         <ChildEditor
           key={child.key}
@@ -848,6 +861,10 @@ export function Detail({ node }: NodeProps) {
         .map((k) => entity.fields.find((f) => f.key === k))
         .filter((f): f is Field => Boolean(f))
     : entity.fields;
+  // 权限门控：hidden 字段不展示（服务端响应整形已删除该键，此处再兜一层）
+  const visibleFields = fields.filter(
+    (f) => ctx.access?.[entity.key]?.fields?.[f.key] !== "hidden",
+  );
   const listRoute =
     typeof node.props?.listRoute === "string" ? node.props.listRoute : null;
 
@@ -863,7 +880,7 @@ export function Detail({ node }: NodeProps) {
       )}
       <Descriptions bordered column={1} size="middle">
         <Descriptions.Item label="ID">{String(row.id)}</Descriptions.Item>
-        {fields.map((f) => (
+        {visibleFields.map((f) => (
           <Descriptions.Item key={f.key} label={f.label}>
             {formatCellValue(
               f,
@@ -1026,6 +1043,8 @@ export interface SchemaRendererProps {
   params?: Record<string, string>;
   /** 渲染设备（决定组件树读取哪一版布局变体），默认桌面端 */
   device?: "desktop" | "mobile";
+  /** 权限门控（可选）：实体 key → 有效访问；缺省时组件不做任何门控 */
+  access?: RendererContextValue["access"];
   /** 设计模式（设计器画布）：节点可点选并回显选中态 */
   design?: RendererContextValue["design"];
   /** 自定义注册表（默认注册中心 v1；设计器可注入更多组件） */
@@ -1039,13 +1058,14 @@ export function SchemaRenderer({
   adapter,
   params = {},
   device = "desktop",
+  access,
   design,
   registry,
 }: SchemaRendererProps) {
   const reg = registry ?? createDefaultRegistry();
   return (
     <RendererContext.Provider
-      value={{ adapter, dataSchema, page, params, device, design }}
+      value={{ adapter, dataSchema, page, params, device, access, design }}
     >
       <NodeView node={page.root} registry={reg} />
     </RendererContext.Provider>

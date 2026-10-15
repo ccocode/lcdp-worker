@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@naka1205/schema": "0.2.0",
+    "@naka1205/schema": "0.3.0",
     "antd": "^5.27.0",
     "dayjs": "^1.11.13"
   },
