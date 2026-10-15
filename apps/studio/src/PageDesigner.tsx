@@ -502,6 +502,8 @@ export default function PageDesigner({
   } | null>(null);
   const dropRef = useRef<{ targetId: string; pos: DropPos; axis: "x" | "y" } | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
+  /** 拖拽落点辅助器：贴在目标边缘的方位徽标（↑上方 / ↓下方 / ←左侧 / →右侧 / 移入内部） */
+  const hintRef = useRef<HTMLDivElement | null>(null);
   const paintedRef = useRef<{ el: HTMLElement; boxShadow: string; outline: string } | null>(null);
   /** 拖拽刚结束时吞掉随之而来的 click / 画布 onSelect，避免双重插入或选中被改 */
   const suppressClickRef = useRef(false);
@@ -543,6 +545,57 @@ export default function PageDesigner({
       el.style.boxShadow = "inset 0 3px 0 0 #1677ff";
     } else {
       el.style.boxShadow = "inset 0 -3px 0 0 #1677ff";
+    }
+  };
+
+  /** 落点辅助器文案：把 before/after/inside 翻译成用户看得懂的方位（按流向轴区分左右与上下） */
+  const dropHintText = (pos: DropPos, axis: "x" | "y"): string => {
+    if (pos === "inside") return "移入内部";
+    if (axis === "x") return pos === "before" ? "← 移到左侧" : "→ 移到右侧";
+    return pos === "before" ? "↑ 移到上方" : "↓ 移到下方";
+  };
+
+  /** 显示落点辅助器：徽标锚在目标元素对应边缘的外侧（inside 时居中），随落点实时跟随 */
+  const showDropHint = (targetId: string, pos: DropPos, axis: "x" | "y") => {
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
+    const el = wrap.querySelector<HTMLElement>(`[data-node-id="${targetId}"]`);
+    if (!el) return;
+    let hint = hintRef.current;
+    if (!hint) {
+      hint = document.createElement("div");
+      hint.style.cssText =
+        "position:fixed;z-index:10000;pointer-events:none;padding:3px 10px;" +
+        "background:#1677ff;color:#fff;border-radius:999px;font-size:12px;line-height:18px;" +
+        "white-space:nowrap;transform:translate(-50%,-50%);" +
+        "box-shadow:0 4px 14px rgba(0,0,0,0.28)";
+      document.body.appendChild(hint);
+      hintRef.current = hint;
+    }
+    const rect = el.getBoundingClientRect();
+    let x = rect.left + rect.width / 2;
+    let y = rect.top + rect.height / 2;
+    if (pos === "before") {
+      if (axis === "x") x = rect.left - 42;
+      else y = rect.top - 16;
+    } else if (pos === "after") {
+      if (axis === "x") x = rect.right + 42;
+      else y = rect.bottom + 16;
+    }
+    hint.textContent = dropHintText(pos, axis);
+    hint.style.left = `${x}px`;
+    hint.style.top = `${y}px`;
+    hint.style.display = "block";
+  };
+
+  const hideDropHint = () => {
+    if (hintRef.current) hintRef.current.style.display = "none";
+  };
+
+  const removeDropHint = () => {
+    if (hintRef.current) {
+      hintRef.current.remove();
+      hintRef.current = null;
     }
   };
 
@@ -656,6 +709,10 @@ export default function PageDesigner({
           "transform:translate(-50%,-140%);box-shadow:0 4px 14px rgba(0,0,0,0.25)";
         document.body.appendChild(ghost);
         ghostRef.current = ghost;
+        // 拖拽进行中全局禁选：指针划过画布/面板时浏览器会把沿途文字刷蓝全选，干扰落点判断
+        document.body.style.userSelect = "none";
+        document.body.style.setProperty("-webkit-user-select", "none");
+        window.getSelection()?.removeAllRanges();
       }
       const ghost = ghostRef.current;
       if (ghost) {
@@ -665,7 +722,12 @@ export default function PageDesigner({
       const drop = resolveDropTarget(e.clientX, e.clientY);
       dropRef.current = drop;
       clearPaint();
-      if (drop) paintDrop(drop.targetId, drop.pos, drop.axis);
+      if (drop) {
+        paintDrop(drop.targetId, drop.pos, drop.axis);
+        showDropHint(drop.targetId, drop.pos, drop.axis);
+      } else {
+        hideDropHint();
+      }
     };
     const endDrag = (commit: boolean) => {
       const drag = dragRef.current;
@@ -674,6 +736,9 @@ export default function PageDesigner({
         ghostRef.current.remove();
         ghostRef.current = null;
       }
+      removeDropHint();
+      document.body.style.userSelect = "";
+      document.body.style.removeProperty("-webkit-user-select");
       clearPaint();
       if (drag.active) {
         suppressClickRef.current = true;
@@ -1574,6 +1639,8 @@ export default function PageDesigner({
             minHeight: 0,
             flexShrink: 0,
             background: "#fff",
+            userSelect: "none",
+            WebkitUserSelect: "none",
           }}
         >
           <div style={{ padding: "10px 12px 0" }}>
@@ -1781,7 +1848,13 @@ export default function PageDesigner({
           <div
             ref={canvasWrapRef}
             onPointerDown={onCanvasPointerDown}
-            style={{ flex: 1, overflow: "auto", padding: 16 }}
+            style={{
+              flex: 1,
+              overflow: "auto",
+              padding: 16,
+              userSelect: "none",
+              WebkitUserSelect: "none",
+            }}
           >
             {currentPage ? (
               <div
