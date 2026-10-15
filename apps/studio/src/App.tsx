@@ -29,6 +29,7 @@ import { ApiError, api, getStoredUser, storeSession } from "./api.js";
 import PageDesigner from "./PageDesigner.js";
 import Permissions from "./Permissions.js";
 import WorkflowDesigner from "./WorkflowDesigner.js";
+import Copilot from "./Copilot.js";
 
 /**
  * 设计台（M3 起，M4 增权限页签，M5 增流程页签）：数据模型设计器 + 页面设计器 + 流程设计器 + 权限 + 应用设置 + 发布/版本/回滚。
@@ -274,6 +275,8 @@ function Designer({
   const [publishOpen, setPublishOpen] = useState(false);
   /** 流程图设计器上报的校验问题（M5.1）；非空时阻断保存草稿（服务端也会拒绝） */
   const [wfIssues, setWfIssues] = useState<string[]>([]);
+  /** 设计态 AI Copilot 抽屉（M6） */
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [publishNote, setPublishNote] = useState("");
 
   const load = useCallback(async () => {
@@ -882,6 +885,9 @@ function Designer({
         {wfIssues.length > 0 && (
           <Tag color="red">流程校验未通过（{wfIssues.length}）</Tag>
         )}
+        <Button type="primary" ghost onClick={() => setCopilotOpen(true)}>
+          ✦ AI 助手
+        </Button>
         <Button
           loading={busy === "save"}
           disabled={!dirty || wfIssues.length > 0}
@@ -993,6 +999,13 @@ function Designer({
           onChange={(e) => setPublishNote(e.target.value)}
         />
       </Modal>
+
+      <Copilot
+        appId={appId}
+        open={copilotOpen}
+        onClose={() => setCopilotOpen(false)}
+        onApplied={() => void load()}
+      />
     </Layout>
   );
 }

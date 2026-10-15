@@ -119,6 +119,65 @@ export interface DesignData {
   versions: VersionInfo[];
 }
 
+// ---------------------------------------------------------- 设计态 AI（M6 Copilot 提案）
+
+/** 提案状态：生成中 / 待确认 / 生成失败 / 已应用 / 已丢弃（与 api platform_ai_proposals 对齐） */
+export type ProposalStatus =
+  | "generating"
+  | "ready"
+  | "failed"
+  | "applied"
+  | "discarded";
+
+/** Diff 条目类型（本期切片：仅增量操作，无删除/改类型等破坏性操作） */
+export type ProposalChangeKind =
+  | "addEntity"
+  | "addField"
+  | "updateField"
+  | "addPage";
+
+/**
+ * Diff 条目：由 api 对「基线包 vs 候选合并包」确定性求差产生（非 LLM 编造），
+ * Studio 只负责勾选，应用语义（冲突 400、未勾选不落库）在 api 侧。
+ */
+export interface ProposalChange {
+  id: string;
+  section: "data" | "pages";
+  kind: ProposalChangeKind;
+  entity?: string;
+  field?: string;
+  pageId?: string;
+  label: string;
+  payload?: unknown;
+}
+
+/** 七步管线的单步日志（agent 回填：步骤名 + 详情，如检索命中数、修复次数） */
+export interface ProposalLogEntry {
+  step?: string;
+  title?: string;
+  detail?: string;
+  message?: string;
+}
+
+export interface Proposal {
+  id: string;
+  appId?: string;
+  username?: string;
+  prompt: string;
+  status: ProposalStatus;
+  summary: string | null;
+  /** 求差结果；生成中/失败时为 null。列表接口带 changes（不含 candidate 全文） */
+  changes: ProposalChange[] | null;
+  error: string | null;
+  /** 步骤日志：字符串或结构化条目，UI 归一化后回填到七步进度 */
+  log?: (string | ProposalLogEntry)[] | null;
+  /** 已应用的条目 id（status=applied 时供标注，不可重复应用） */
+  appliedChangeIds?: string[] | null;
+  createdAt: string;
+  updatedAt?: string;
+  appliedAt?: string | null;
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -223,6 +282,43 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ version }),
     });
+  },
+
+  // ---------------------------------------------------------- 设计态 AI Copilot（/apps/:appId/copilot，M6）
+  /** 发起生成：立即返回提案 id（status=generating），生成在 api 后台跑（≤240s），用 copilotProposal 轮询 */
+  async copilotGenerate(
+    appId: string,
+    prompt: string,
+  ): Promise<{ id: string }> {
+    return apiFetch(`/apps/${encodeURIComponent(appId)}/copilot/generate`, {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    });
+  },
+  /** 最近提案列表（含 changes 与 summary，不含 candidate 全文） */
+  async copilotProposals(appId: string): Promise<Proposal[]> {
+    const res = await apiFetch<{ proposals: Proposal[] }>(
+      `/apps/${encodeURIComponent(appId)}/copilot/proposals`,
+    );
+    return res.proposals;
+  },
+  /** 单条提案全量（轮询状态 / 查看历史 Diff） */
+  async copilotProposal(appId: string, pid: string): Promise<Proposal> {
+    const res = await apiFetch<{ proposal?: Proposal } & Proposal>(
+      `/apps/${encodeURIComponent(appId)}/copilot/proposals/${encodeURIComponent(pid)}`,
+    );
+    return res.proposal ?? res;
+  },
+  /** 把勾选的 Diff 条目应用到设计草稿（服务端全量复检，不过则 400 不落库） */
+  async copilotApply(
+    appId: string,
+    pid: string,
+    changeIds: string[],
+  ): Promise<{ ok: boolean; applied?: number }> {
+    return apiFetch(
+      `/apps/${encodeURIComponent(appId)}/copilot/proposals/${encodeURIComponent(pid)}/apply`,
+      { method: "POST", body: JSON.stringify({ changeIds }) },
+    );
   },
 
   // ---------------------------------------------------------- 用户管理（/admin/users，限 admin）
