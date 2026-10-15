@@ -19,11 +19,13 @@ import { SchemaRenderer } from "@lcdp/renderer";
 import type { EntityAccess } from "@lcdp/renderer";
 import type { DataSchema, PageSchema } from "@naka1205/schema";
 import type {
+  AssistantContext,
   EntryResult,
   PublicEntryResult,
   Snapshot,
   UserInfo,
 } from "./api.js";
+import AssistantPanel from "./AssistantPanel.js";
 import {
   api,
   getStoredUser,
@@ -654,6 +656,24 @@ function AppView({
   const menu = assembleMenu(snapshot.pages, snapshot.data.entities);
   const current = resolveCurrentPage(snapshot.pages, menu, inPath);
   const token = themeTokenOf(snapshot.appConfig);
+  /**
+   * 助手页面上下文（尽力推导）：派生实体路由（/e/<entity>[/form]）直接给 entityKey；
+   * 设计页取其首个数据源绑定的实体；记录 id 取页面参数 id（编辑表单/详情页）。
+   */
+  const assistantContext: AssistantContext = (() => {
+    const ctx: AssistantContext = { path: inPath };
+    const derived = inPath.match(/^\/e\/([^/]+)(?:\/form)?\/?$/);
+    if (derived) ctx.entityKey = decodeURIComponent(derived[1]!);
+    if (current) {
+      ctx.pageName = current.name;
+      if (!ctx.entityKey) {
+        const ref = current.dataSources?.[0]?.ref;
+        if (ref) ctx.entityKey = ref;
+      }
+    }
+    if (params.id) ctx.recordId = params.id;
+    return ctx;
+  })();
   /** 菜单顶部固定「待办中心」（外壳级视图，key 与页面路由同走 goPage 的 hash 切换） */
   const menuItems: MenuProps["items"] = [
     {
@@ -743,6 +763,11 @@ function AppView({
           )}
         </Layout.Content>
       </Layout>
+      <AssistantPanel
+        appId={appId}
+        context={assistantContext}
+        navigate={goPage}
+      />
     </ConfigProvider>
   );
 }

@@ -122,7 +122,7 @@ export const componentCatalog: Array<{
     type: "AgentChat",
     label: "智能助手",
     category: "智能",
-    description: "运行态智能助手面板（占位，后续里程碑接入对话能力）",
+    description: "运行态智能助手入口：点击打开对话面板（查数据、办业务、制度问答）",
     make: (id) => ({
       id,
       type: "AgentChat",

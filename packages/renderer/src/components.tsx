@@ -487,6 +487,76 @@ export function EntityForm({ node }: NodeProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // M7 助手回填（fillForm）：运行态新建表单挂载时，读取助手面板确认后写入的一次性预填
+  // （sessionStorage `lcdp.fill.<entity>` = { values, items }），预填主表字段与子表行后立即清除。
+  // 仅新建（非编辑）、非设计态生效，不影响普通空表单与编辑既有记录的流程；
+  // 已在本表单页时由宿主派发 lcdp:fill-form 事件触发再次读取（无需重新挂载）。
+  const applyAssistantFill = useCallback(() => {
+    if (!entity || isEdit || ctx.design) return;
+    let raw: string | null = null;
+    try {
+      raw = window.sessionStorage.getItem(`lcdp.fill.${entity.key}`);
+      if (raw) window.sessionStorage.removeItem(`lcdp.fill.${entity.key}`);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw) as {
+        values?: Row;
+        items?: Record<string, Row[]> | Row[];
+      };
+      if (data.values && typeof data.values === "object") {
+        setValues((prev) => ({ ...prev, ...data.values }));
+      }
+      if (data.items) {
+        // items 两种形态：按子实体 key 分组的对象，或单子表时的行数组（归入第一个子实体）
+        const byChild: Record<string, Row[]> = {};
+        if (Array.isArray(data.items)) {
+          const first = children[0];
+          if (first) byChild[first.key] = data.items;
+        } else {
+          for (const [k, rows] of Object.entries(data.items)) {
+            if (Array.isArray(rows)) byChild[k] = rows;
+          }
+        }
+        // 子表行带数量与单价但缺小计时补算（与 ChildEditor 的联动口径一致，保证父单总额汇总正确）
+        for (const child of children) {
+          const rows = byChild[child.key];
+          if (!rows || !child.fields.some((f) => f.key === "amount")) continue;
+          byChild[child.key] = rows.map((r) => {
+            if (r.amount !== undefined && r.amount !== null) return r;
+            const q = Number(r.quantity);
+            const p = Number(r.unit_price);
+            return Number.isFinite(q) && Number.isFinite(p)
+              ? { ...r, amount: Math.round(q * p * 100) / 100 }
+              : r;
+          });
+        }
+        if (Object.keys(byChild).length > 0) {
+          setChildRows((prev) => ({ ...prev, ...byChild }));
+        }
+      }
+    } catch {
+      // 预填数据损坏时忽略，保持空表单
+    }
+    // children 由 entity 决定，同页内不变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity?.key, isEdit, ctx.design]);
+
+  useEffect(() => {
+    applyAssistantFill();
+  }, [applyAssistantFill]);
+
+  useEffect(() => {
+    const onFill = (e: Event) => {
+      const ent = (e as CustomEvent<{ entity?: string }>).detail?.entity;
+      if (!ent || ent === entity?.key) applyAssistantFill();
+    };
+    window.addEventListener("lcdp:fill-form", onFill);
+    return () => window.removeEventListener("lcdp:fill-form", onFill);
+  }, [applyAssistantFill, entity?.key]);
+
   // 父单总金额自动汇总：父实体带 total 类 decimal 字段、且子实体带 amount 字段时，
   // 总额由明细小计之和驱动——表单内实时联动，保存时按最终明细再核算一次
   const rollupField = entity?.fields.find(
@@ -948,16 +1018,39 @@ export function ImageBlock({ node }: NodeProps) {
   );
 }
 
-/** 智能助手占位：运行态 Agent 在后续里程碑接入，先占位保证页面可引用 */
+/**
+ * 智能助手（M7）：渲染器保持宿主无关——
+ * 设计态（ctx.design）渲染预览卡，说明发布后的形态；
+ * 运行态渲染入口卡，「打开助手」按钮派发全局事件 lcdp:open-assistant，
+ * 由运行态外壳（runtime App）监听并打开全局对话抽屉（对话面板本体在宿主侧实现）。
+ */
 export function AgentChat({ node }: NodeProps) {
+  const ctx = useRendererCtx();
   const title =
     typeof node.props?.title === "string" ? node.props.title : "智能助手";
+  if (ctx.design) {
+    return (
+      <Card title={title}>
+        <Typography.Paragraph type="secondary">
+          运行态智能助手入口：页面发布后，用户点击卡片按钮打开对话面板，可查数据、办业务、问制度。
+        </Typography.Paragraph>
+        <Input disabled placeholder="输入问题或业务指令…" />
+      </Card>
+    );
+  }
   return (
     <Card title={title}>
       <Typography.Paragraph type="secondary">
-        运行态智能助手将在后续里程碑接入
+        有问题或要办的事，直接问我：查数据、建单据、查制度都可以。
       </Typography.Paragraph>
-      <Input disabled placeholder="输入问题或业务指令…" />
+      <Button
+        type="primary"
+        onClick={() =>
+          window.dispatchEvent(new CustomEvent("lcdp:open-assistant"))
+        }
+      >
+        打开助手
+      </Button>
     </Card>
   );
 }

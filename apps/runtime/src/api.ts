@@ -159,6 +159,63 @@ export interface FlowStartable {
   records: Row[];
 }
 
+/** 助手对话的页面上下文（外壳按当前路由尽力推导，服务端仅作提示） */
+export interface AssistantContext {
+  /** 当前页路由（应用内路径，如 /e/purchase_order 或设计页 route） */
+  path: string;
+  pageName?: string;
+  entityKey?: string;
+  recordId?: string;
+}
+
+/** 制度问答引用（租户知识库片段，UI 渲染为来源 chips） */
+export interface AssistantCitation {
+  docTitle: string;
+  snippet: string;
+}
+
+/** 待确认写动作（助手消息携带；确认/取消都经服务端确定性执行，LLM 不在执行环内） */
+export interface AssistantPendingAction {
+  /** createRecord / fillForm / flowStart / flowAct / flowUrge 等 */
+  kind: string;
+  summary: string;
+  fields: { label: string; value: unknown }[];
+  /** 已确认或已取消后为 true，UI 渲染为禁用态 */
+  handled?: boolean;
+}
+
+export interface AssistantMessage {
+  id: string;
+  role: "user" | "assistant" | string;
+  text: string;
+  citations?: AssistantCitation[];
+  pendingAction?: AssistantPendingAction;
+  /** generating / done / failed 等（生成中消息轮询未结束） */
+  status?: string;
+  createdAt?: string;
+}
+
+export interface AssistantConversation {
+  id: string;
+  title?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** fillForm 执行指令：前端写 sessionStorage 后跳派生表单回填（不直接落库） */
+export interface AssistantFillForm {
+  entity: string;
+  values: Row;
+  items?: Record<string, Row[]> | Row[];
+}
+
+export interface AssistantConfirmResult {
+  ok: boolean;
+  executed: boolean;
+  fillForm?: AssistantFillForm;
+  message?: string;
+}
+
 /** 公开（匿名）入口解析结果：primary 为入口首个应用的公开面（无公开页时为 null） */
 export interface PublicEntryResult {
   entry: { id: string; name: string } | null;
@@ -401,6 +458,73 @@ export const api = {
       return apiFetch<FlowInstanceDetail>(
         `/apps/${encodeURIComponent(appId)}/flow/instances/${encodeURIComponent(instanceId)}`,
       );
+    },
+  },
+  /** 运行态助手（M7）：异步回合制——发送立即返回，助手消息经轮询会话详情取回 */
+  assistant: {
+    /** 发送一条消息：立即返回会话与用户消息 id；同会话同时只允许一条生成中（409） */
+    async chat(
+      appId: string,
+      body: {
+        conversationId?: string;
+        text: string;
+        context: AssistantContext;
+      },
+    ): Promise<{ conversationId: string; messageId: string }> {
+      return apiFetch(
+        `/apps/${encodeURIComponent(appId)}/assistant/chat`,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+    },
+    /** 我的会话列表（倒序，首条即最近会话） */
+    async conversations(appId: string): Promise<AssistantConversation[]> {
+      const res = await apiFetch<{ conversations: AssistantConversation[] }>(
+        `/apps/${encodeURIComponent(appId)}/assistant/conversations`,
+      );
+      return res.conversations;
+    },
+    /** 会话全量消息（含引用与待确认动作），轮询靠它 */
+    async conversation(
+      appId: string,
+      conversationId: string,
+    ): Promise<{ conversation: AssistantConversation; messages: AssistantMessage[] }> {
+      return apiFetch(
+        `/apps/${encodeURIComponent(appId)}/assistant/conversations/${encodeURIComponent(conversationId)}`,
+      );
+    },
+    /** 确认/取消一条待确认写动作；fillForm 类返回回填指令由前端执行 */
+    async confirmAction(
+      appId: string,
+      messageId: string,
+      decision: "confirm" | "cancel",
+    ): Promise<AssistantConfirmResult> {
+      const res = await apiFetch<
+        AssistantConfirmResult & {
+          navigate?: string;
+          prefill?: { values?: Row; items?: Record<string, Row[]> | Row[] };
+        }
+      >(
+        `/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
+        { method: "POST", body: JSON.stringify({ decision }) },
+      );
+      // 兼容契约形态 { navigate: '#/e/<entity>/form', prefill }：归一化为 fillForm
+      if (!res.fillForm && res.prefill) {
+        const m =
+          typeof res.navigate === "string"
+            ? res.navigate.match(/\/e\/([^/]+)\/form/)
+            : null;
+        if (m) {
+          return {
+            ...res,
+            fillForm: {
+              entity: decodeURIComponent(m[1]!),
+              values: res.prefill.values ?? {},
+              items: res.prefill.items,
+            },
+          };
+        }
+      }
+      return res;
     },
   },
 };

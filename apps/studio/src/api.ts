@@ -61,9 +61,59 @@ export interface FragmentDef {
   root: ComponentNode;
 }
 
+/** 智能体配置（M7，设计包 agents 段）：运行态助手的名称/人设/工具开关/回合上限 */
+export interface AgentsConfig {
+  assistant: {
+    name: string;
+    persona: string;
+    tools: { query: boolean; create: boolean; flow: boolean; kb: boolean };
+    /** 单回合内工具循环上限（1..12，默认 6） */
+    maxTurns: number;
+    /** 写操作策略：本期唯一值 confirm（任何写先经用户确认卡片） */
+    writePolicy: "confirm";
+  };
+}
+
+/** agents 段缺失时的客户端默认值（与服务端默认口径一致） */
+export function defaultAgentsConfig(): AgentsConfig {
+  return {
+    assistant: {
+      name: "应用助理",
+      persona: "",
+      tools: { query: true, create: true, flow: true, kb: true },
+      maxTurns: 6,
+      writePolicy: "confirm",
+    },
+  };
+}
+
+/** 把任意来源的 agents 段归一化为完整配置（缺字段补默认，保证编辑器受控渲染） */
+export function normalizeAgents(input: AgentsConfig | null | undefined): AgentsConfig {
+  const d = defaultAgentsConfig().assistant;
+  const a = input?.assistant;
+  if (!a) return defaultAgentsConfig();
+  return {
+    assistant: {
+      name: typeof a.name === "string" && a.name ? a.name : d.name,
+      persona: typeof a.persona === "string" ? a.persona : d.persona,
+      tools: {
+        query: a.tools?.query ?? d.tools.query,
+        create: a.tools?.create ?? d.tools.create,
+        flow: a.tools?.flow ?? d.tools.flow,
+        kb: a.tools?.kb ?? d.tools.kb,
+      },
+      maxTurns:
+        typeof a.maxTurns === "number" && a.maxTurns >= 1 && a.maxTurns <= 12
+          ? Math.round(a.maxTurns)
+          : d.maxTurns,
+      writePolicy: "confirm",
+    },
+  };
+}
+
 /**
- * 设计包视图（M3 起，M4 增 permissions，M5 增 workflows）：
- * 数据模型 + 设计页面 + 应用配置 + 片段库 + 权限配置 + 流程定义。
+ * 设计包视图（M3 起，M4 增 permissions，M5 增 workflows，M7 增 agents）：
+ * 数据模型 + 设计页面 + 应用配置 + 片段库 + 权限配置 + 流程定义 + 智能体配置。
  * pages/fragments/permissions/workflows 为 null 表示该部分尚未建立
  * （页面全走服务端自动派生；未建权限时登录用户全权，见 M4 契约 §2）。
  */
@@ -74,6 +124,7 @@ export interface BundleView {
   fragments: FragmentDef[] | null;
   permissions: PermissionSchema | null;
   workflows: WorkflowSchema[] | null;
+  agents: AgentsConfig | null;
 }
 
 /** 平台用户（管理台口径，不含密码哈希） */
@@ -255,7 +306,7 @@ export const api = {
   async design(appId: string): Promise<DesignData> {
     return apiFetch<DesignData>(`/apps/${encodeURIComponent(appId)}/design`);
   },
-  /** 保存整个设计包为草稿（数据模型 + 页面 + 主题 + 片段 + 权限 + 流程），返回服务端归一化后的草稿 */
+  /** 保存整个设计包为草稿（数据模型 + 页面 + 主题 + 片段 + 权限 + 流程 + 智能体），返回服务端归一化后的草稿 */
   async saveDraft(
     appId: string,
     bundle: BundleView,
