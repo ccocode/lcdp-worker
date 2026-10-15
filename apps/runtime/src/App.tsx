@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Badge,
   Button,
   Card,
   ConfigProvider,
@@ -30,6 +31,7 @@ import {
   makePublicAdapter,
   storeSession,
 } from "./api.js";
+import FlowCenter from "./FlowCenter.js";
 
 /**
  * 运行态应用壳（M3 入口模型）：运行态是单一解释器，呈现中没有「应用」概念。
@@ -38,6 +40,7 @@ import {
  * 路由用 hash（Pages 静态托管免改写规则）：
  *   入口模式  #<页面路由>?<页面参数>
  *   预览模式  #/app/<appId><页面路由>?<页面参数>（设计台「在运行态打开」兼容）
+ *   待办中心  #/flow（外壳级视图，入口/预览模式均可达，侧边菜单顶部固定入口）
  * 界面统一走 Ant Design 组件（与设计文档的 UI 选型一致）。
  */
 
@@ -581,6 +584,8 @@ function AppView({
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 待办数（侧边菜单 Badge）：挂载时拉一次，失败静默为 0；待办中心内动作后由其回告刷新 */
+  const [todoCount, setTodoCount] = useState(0);
 
   useEffect(() => {
     setSnapshot(null);
@@ -590,6 +595,24 @@ function AppView({
       .then(setSnapshot)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [appId]);
+
+  useEffect(() => {
+    let alive = true;
+    api.flow
+      .todos(appId)
+      .then((tasks) => {
+        if (alive) setTodoCount(tasks.length);
+      })
+      .catch(() => {
+        // 待办数仅作角标提示，拉取失败不打扰主流程
+      });
+    return () => {
+      alive = false;
+    };
+  }, [appId]);
+
+  /** 待办中心是外壳级视图（#/flow），不属于任何页面 Schema */
+  const isFlow = inPath === "/flow";
 
   const goPage = useMemo(
     () =>
@@ -631,6 +654,19 @@ function AppView({
   const menu = assembleMenu(snapshot.pages, snapshot.data.entities);
   const current = resolveCurrentPage(snapshot.pages, menu, inPath);
   const token = themeTokenOf(snapshot.appConfig);
+  /** 菜单顶部固定「待办中心」（外壳级视图，key 与页面路由同走 goPage 的 hash 切换） */
+  const menuItems: MenuProps["items"] = [
+    {
+      key: "/flow",
+      label: (
+        <span>
+          待办中心{" "}
+          <Badge count={todoCount} size="small" offset={[2, -2]} />
+        </span>
+      ),
+    },
+    ...(menu.items ?? []),
+  ];
 
   return (
     <ConfigProvider locale={zhCN} theme={{ token }}>
@@ -670,9 +706,11 @@ function AppView({
             )}
             <Menu
               mode="inline"
-              selectedKeys={current ? [current.route] : []}
+              selectedKeys={
+                isFlow ? ["/flow"] : current ? [current.route] : []
+              }
               style={{ borderInlineEnd: "none", background: "transparent" }}
-              items={menu.items}
+              items={menuItems}
               onClick={({ key }) => goPage(key)}
             />
             <div style={{ flex: 1 }} />
@@ -682,7 +720,14 @@ function AppView({
           </div>
         </Layout.Sider>
         <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
-          {current ? (
+          {isFlow ? (
+            <FlowCenter
+              appId={appId}
+              user={user}
+              entities={snapshot.data.entities}
+              onTodoCountChange={setTodoCount}
+            />
+          ) : current ? (
             <SchemaRenderer
               page={current}
               dataSchema={snapshot.data}

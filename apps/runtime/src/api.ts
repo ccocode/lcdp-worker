@@ -61,6 +61,104 @@ export interface EntryResult {
   apps: AppInfo[];
 }
 
+/** 流程待办任务（GET /flow/todos）；record 为服务端按权限整形后的记录行 */
+export interface FlowTodoTask {
+  id: string;
+  instanceId: string;
+  workflowId: string;
+  entity: string;
+  recordId: string;
+  nodeLabel: string;
+  /** 或签 any / 会签 all */
+  mode: "any" | "all";
+  createdAt: string;
+  instance: { createdByName: string; createdAt: string };
+  record: Row;
+}
+
+/** 我处理过的任务（GET /flow/done），倒序 */
+export interface FlowDoneTask {
+  id: string;
+  instanceId: string;
+  workflowId: string;
+  entity: string;
+  recordId: string;
+  nodeLabel: string;
+  /** 本人的处理结果 */
+  status: "approved" | "rejected";
+  comment: string | null;
+  actedAt: string;
+  createdAt?: string;
+  record: Row;
+}
+
+/** 我发起的流程实例（GET /flow/mine） */
+export interface FlowMineInstance {
+  id: string;
+  workflowId: string;
+  entity: string;
+  recordId: string;
+  status: "running" | "approved" | "rejected";
+  currentNodeLabel: string | null;
+  pendingAssignees: string[];
+  createdAt: string;
+  updatedAt: string;
+  record: Row;
+}
+
+/** 流程事件（通知流与进度时间线共用） */
+export interface FlowEvent {
+  id: number | string;
+  instanceId: string;
+  /** start/task_created/approve/reject/urge/task_action/webhook/low_stock/complete/cc */
+  kind: string;
+  actor: string | null;
+  message: string;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** 流程实例（进度详情） */
+export interface FlowInstance {
+  id: string;
+  workflowId: string;
+  entity: string;
+  recordId: string;
+  status: "running" | "approved" | "rejected";
+  currentNode: string | null;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 实例下的单个审批任务（进度详情） */
+export interface FlowInstanceTask {
+  id: string;
+  nodeId: string;
+  nodeLabel: string;
+  assigneeUserId: string | null;
+  assigneeRole: string | null;
+  mode: "any" | "all";
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  comment: string | null;
+  actedBy: string | null;
+  actedAt: string | null;
+  createdAt: string;
+}
+
+export interface FlowInstanceDetail {
+  instance: FlowInstance;
+  tasks: FlowInstanceTask[];
+  events: FlowEvent[];
+}
+
+/** 可发起查询（GET /flow/startable/:entity）：workflow 为 null = 该实体未绑定已发布流程 */
+export interface FlowStartable {
+  workflow: { id: string; title: string } | null;
+  records: Row[];
+}
+
 /** 公开（匿名）入口解析结果：primary 为入口首个应用的公开面（无公开页时为 null） */
 export interface PublicEntryResult {
   entry: { id: string; name: string } | null;
@@ -221,6 +319,87 @@ export const api = {
       await apiFetch(
         `/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
         { method: "DELETE" },
+      );
+    },
+  },
+  /** 流程与待办（M5）：全部按当前登录用户在服务端过滤，前端只做呈现 */
+  flow: {
+    /** 待我审批的任务 */
+    async todos(appId: string): Promise<FlowTodoTask[]> {
+      const res = await apiFetch<{ tasks: FlowTodoTask[] }>(
+        `/apps/${encodeURIComponent(appId)}/flow/todos`,
+      );
+      return res.tasks;
+    },
+    /** 我处理过的任务（倒序） */
+    async done(appId: string): Promise<FlowDoneTask[]> {
+      const res = await apiFetch<{ tasks: FlowDoneTask[] }>(
+        `/apps/${encodeURIComponent(appId)}/flow/done`,
+      );
+      return res.tasks;
+    },
+    /** 我发起的流程实例 */
+    async mine(appId: string): Promise<FlowMineInstance[]> {
+      const res = await apiFetch<{ instances: FlowMineInstance[] }>(
+        `/apps/${encodeURIComponent(appId)}/flow/mine`,
+      );
+      return res.instances;
+    },
+    /** 与我相关的流程通知事件（新任务/催办/低库存/完成/驳回/抄送） */
+    async notifications(appId: string): Promise<FlowEvent[]> {
+      const res = await apiFetch<{ events: FlowEvent[] }>(
+        `/apps/${encodeURIComponent(appId)}/flow/notifications`,
+      );
+      return res.events;
+    },
+    /** 某实体绑定的流程与当前可发起的记录（无进行中实例、状态可发起） */
+    async startable(appId: string, entity: string): Promise<FlowStartable> {
+      return apiFetch<FlowStartable>(
+        `/apps/${encodeURIComponent(appId)}/flow/startable/${encodeURIComponent(entity)}`,
+      );
+    },
+    /** 对一条记录发起流程 */
+    async start(
+      appId: string,
+      entity: string,
+      recordId: string,
+    ): Promise<FlowInstance> {
+      const res = await apiFetch<{ instance: FlowInstance }>(
+        `/apps/${encodeURIComponent(appId)}/flow/${encodeURIComponent(entity)}/${encodeURIComponent(recordId)}/start`,
+        { method: "POST" },
+      );
+      return res.instance;
+    },
+    /** 处理审批任务（批准/驳回，可带意见） */
+    async act(
+      appId: string,
+      taskId: string,
+      decision: "approve" | "reject",
+      comment?: string,
+    ): Promise<FlowInstance> {
+      const res = await apiFetch<{ instance: FlowInstance }>(
+        `/apps/${encodeURIComponent(appId)}/flow/tasks/${encodeURIComponent(taskId)}/act`,
+        {
+          method: "POST",
+          body: JSON.stringify({ decision, comment: comment || undefined }),
+        },
+      );
+      return res.instance;
+    },
+    /** 催办一个进行中的实例（仅发起人/admin，服务端校验） */
+    async urge(appId: string, instanceId: string): Promise<void> {
+      await apiFetch(
+        `/apps/${encodeURIComponent(appId)}/flow/instances/${encodeURIComponent(instanceId)}/urge`,
+        { method: "POST" },
+      );
+    },
+    /** 实例进度详情（实例 + 全部任务 + 事件时间线） */
+    async instance(
+      appId: string,
+      instanceId: string,
+    ): Promise<FlowInstanceDetail> {
+      return apiFetch<FlowInstanceDetail>(
+        `/apps/${encodeURIComponent(appId)}/flow/instances/${encodeURIComponent(instanceId)}`,
       );
     },
   },
