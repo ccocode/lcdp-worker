@@ -1,4 +1,9 @@
-import type { ComponentNode, DataSchema, PageSchema } from "@naka1205/schema";
+import type {
+  ComponentNode,
+  DataSchema,
+  PageSchema,
+  PermissionSchema,
+} from "@naka1205/schema";
 import type {
   ListResult,
   Row,
@@ -23,6 +28,8 @@ export interface UserInfo {
   username: string;
   role: string;
   tenantId: string;
+  displayName?: string | null;
+  departmentId?: string | null;
 }
 
 export interface AppInfo {
@@ -54,14 +61,52 @@ export interface FragmentDef {
 }
 
 /**
- * 设计包视图（M3）：数据模型 + 设计页面 + 应用配置 + 片段库。
- * pages/fragments 为 null 表示该部分尚未建立（页面全走服务端自动派生）。
+ * 设计包视图（M3 起，M4 增 permissions）：数据模型 + 设计页面 + 应用配置 + 片段库 + 权限配置。
+ * pages/fragments/permissions 为 null 表示该部分尚未建立
+ * （页面全走服务端自动派生；未建权限时登录用户全权，见 M4 契约 §2）。
  */
 export interface BundleView {
   schema: DataSchema;
   pages: PageSchema[] | null;
   appConfig: AppConfig | null;
   fragments: FragmentDef[] | null;
+  permissions: PermissionSchema | null;
+}
+
+/** 平台用户（管理台口径，不含密码哈希） */
+export interface AdminUser {
+  id: string;
+  username: string;
+  role: string;
+  displayName: string | null;
+  departmentId: string | null;
+  createdAt: string;
+}
+
+export interface CreateUserBody {
+  username: string;
+  password: string;
+  role: string;
+  displayName?: string;
+  departmentId?: string;
+}
+
+export interface UpdateUserBody {
+  role?: string;
+  displayName?: string;
+  departmentId?: string | null;
+  password?: string;
+}
+
+/** 公开表单待审提交 */
+export interface Submission {
+  id: string;
+  entity: string;
+  body: Record<string, unknown>;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
 }
 
 export interface DesignData {
@@ -148,7 +193,7 @@ export const api = {
   async design(appId: string): Promise<DesignData> {
     return apiFetch<DesignData>(`/apps/${encodeURIComponent(appId)}/design`);
   },
-  /** 保存整个设计包为草稿（数据模型 + 页面 + 主题 + 片段），返回服务端归一化后的草稿 */
+  /** 保存整个设计包为草稿（数据模型 + 页面 + 主题 + 片段 + 权限），返回服务端归一化后的草稿 */
   async saveDraft(
     appId: string,
     bundle: BundleView,
@@ -175,6 +220,55 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ version }),
     });
+  },
+
+  // ---------------------------------------------------------- 用户管理（/admin/users，限 admin）
+  async adminUsers(): Promise<AdminUser[]> {
+    const res = await apiFetch<{ users: AdminUser[] }>("/admin/users");
+    return res.users;
+  },
+  async createUser(body: CreateUserBody): Promise<AdminUser> {
+    const res = await apiFetch<{ user: AdminUser }>("/admin/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return res.user;
+  },
+  async updateUser(id: string, body: UpdateUserBody): Promise<AdminUser> {
+    const res = await apiFetch<{ user: AdminUser }>(
+      `/admin/users/${encodeURIComponent(id)}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    );
+    return res.user;
+  },
+  async deleteUser(id: string): Promise<void> {
+    await apiFetch(`/admin/users/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  // ---------------------------------------------------------- 公开表单待审（/admin/apps/:appId/submissions，限 admin）
+  async submissions(
+    appId: string,
+    status?: Submission["status"],
+  ): Promise<Submission[]> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    const res = await apiFetch<{ submissions: Submission[] }>(
+      `/admin/apps/${encodeURIComponent(appId)}/submissions${qs}`,
+    );
+    return res.submissions;
+  },
+  async approveSubmission(appId: string, id: string): Promise<void> {
+    await apiFetch(
+      `/admin/apps/${encodeURIComponent(appId)}/submissions/${encodeURIComponent(id)}/approve`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  },
+  async rejectSubmission(appId: string, id: string): Promise<void> {
+    await apiFetch(
+      `/admin/apps/${encodeURIComponent(appId)}/submissions/${encodeURIComponent(id)}/reject`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
   },
 
   // ---------------------------------------------------------- 只读数据（设计器预览取数）
