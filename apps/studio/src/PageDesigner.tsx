@@ -500,7 +500,7 @@ export default function PageDesigner({
     startY: number;
     active: boolean;
   } | null>(null);
-  const dropRef = useRef<{ targetId: string; pos: DropPos } | null>(null);
+  const dropRef = useRef<{ targetId: string; pos: DropPos; axis: "x" | "y" } | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
   const paintedRef = useRef<{ el: HTMLElement; boxShadow: string; outline: string } | null>(null);
   /** 拖拽刚结束时吞掉随之而来的 click / 画布 onSelect，避免双重插入或选中被改 */
@@ -508,6 +508,8 @@ export default function PageDesigner({
   const justDraggedRef = useRef(false);
   const currentPageRef = useRef<PageSchema | null>(null);
   currentPageRef.current = currentPage;
+  const deviceRef = useRef(device);
+  deviceRef.current = device;
   const commitDropRef = useRef<() => void>(() => {});
 
   const clearPaint = () => {
@@ -518,7 +520,7 @@ export default function PageDesigner({
       paintedRef.current = null;
     }
   };
-  const paintDrop = (targetId: string, pos: DropPos) => {
+  const paintDrop = (targetId: string, pos: DropPos, axis: "x" | "y") => {
     const wrap = canvasWrapRef.current;
     if (!wrap) return;
     const el = wrap.querySelector<HTMLElement>(`[data-node-id="${targetId}"]`);
@@ -534,6 +536,9 @@ export default function PageDesigner({
     if (pos === "inside") {
       el.style.outline = "2px solid #1677ff";
       el.style.boxShadow = "inset 0 0 0 2px rgba(22,119,255,0.35)";
+    } else if (axis === "x") {
+      el.style.boxShadow =
+        pos === "before" ? "inset 3px 0 0 0 #1677ff" : "inset -3px 0 0 0 #1677ff";
     } else if (pos === "before") {
       el.style.boxShadow = "inset 0 3px 0 0 #1677ff";
     } else {
@@ -541,11 +546,28 @@ export default function PageDesigner({
     }
   };
 
-  /** 由指针坐标解出落点：命中最内层节点包围盒，上/下缘为同级前/后，容器中段为进入其内 */
+  /**
+   * 落点判定的流向轴：目标的父级是横排（row）容器时用水平轴，否则用垂直轴。
+   * 横排里左右相邻的组件（如并排统计卡）必须按 x 位置判定前/后——只看 y 时，
+   * 「拖到右邻居上半部」会被误判为「插到它前面」，而拖拽源本就在它前面，落点等于原地，看起来就是拖不动。
+   * 方向解析与渲染器一致：当前设备的布局变体覆盖优先，其次容器 props.direction，默认纵向。
+   */
+  const flowAxis = (root: ComponentNode, targetId: string): "x" | "y" => {
+    const loc = findParent(root, targetId);
+    if (!loc || loc.parent.type !== "Container") return "y";
+    const parent = loc.parent;
+    const dir =
+      parent.layout?.[deviceRef.current]?.direction ??
+      (parent.props?.direction as string | undefined) ??
+      "column";
+    return dir === "row" ? "x" : "y";
+  };
+
+  /** 由指针坐标解出落点：命中最内层节点包围盒，沿流向轴的两缘为同级前/后，容器中段为进入其内 */
   const resolveDropTarget = (
     clientX: number,
     clientY: number,
-  ): { targetId: string; pos: DropPos } | null => {
+  ): { targetId: string; pos: DropPos; axis: "x" | "y" } | null => {
     const page = currentPageRef.current;
     const wrap = canvasWrapRef.current;
     if (!page || !wrap) return null;
@@ -560,7 +582,15 @@ export default function PageDesigner({
     const target = findNode(page.root, targetId);
     if (!target) return null;
     const rect = el.getBoundingClientRect();
-    const ratio = rect.height > 0 ? (clientY - rect.top) / rect.height : 0.5;
+    const axis = flowAxis(page.root, targetId);
+    const ratio =
+      axis === "x"
+        ? rect.width > 0
+          ? (clientX - rect.left) / rect.width
+          : 0.5
+        : rect.height > 0
+          ? (clientY - rect.top) / rect.height
+          : 0.5;
     let pos: DropPos;
     if (CONTAINER_TYPES.includes(target.type)) {
       pos = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "inside";
@@ -570,7 +600,7 @@ export default function PageDesigner({
     const dragId =
       dragRef.current?.source.kind === "node" ? dragRef.current.source.nodeId : null;
     const eff = resolveDropPos(page.root, dragId, targetId, pos);
-    return eff ? { targetId, pos: eff } : null;
+    return eff ? { targetId, pos: eff, axis } : null;
   };
 
   /** 落点提交：与点击插入共用 mutatePage 历史栈，一次拖拽 = 一步撤销 */
@@ -635,7 +665,7 @@ export default function PageDesigner({
       const drop = resolveDropTarget(e.clientX, e.clientY);
       dropRef.current = drop;
       clearPaint();
-      if (drop) paintDrop(drop.targetId, drop.pos);
+      if (drop) paintDrop(drop.targetId, drop.pos, drop.axis);
     };
     const endDrag = (commit: boolean) => {
       const drag = dragRef.current;
