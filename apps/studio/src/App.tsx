@@ -315,6 +315,7 @@ function Designer({
       const res = await api.saveDraft(appId, working);
       setWorking(res.draft);
       setBaseline(JSON.stringify(res.draft));
+      setDesign((prev) => (prev ? { ...prev, draft: res.draft } : prev));
       void antdMessage.success("草稿已保存");
     } catch (err) {
       setError(errText(err));
