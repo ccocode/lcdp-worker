@@ -670,7 +670,6 @@ export default function PageDesigner({
     const endDrag = (commit: boolean) => {
       const drag = dragRef.current;
       if (!drag) return;
-      dragRef.current = null;
       if (ghostRef.current) {
         ghostRef.current.remove();
         ghostRef.current = null;
@@ -679,12 +678,15 @@ export default function PageDesigner({
       if (drag.active) {
         suppressClickRef.current = true;
         justDraggedRef.current = true;
+        // commitDrop 靠 dragRef/dropRef 取拖拽源与落点，必须在清空引用之前调用；
+        // 顺序写反会让每次落点提交都被 commitDrop 的空守卫挡掉（拖拽全程无感的真因）
         if (commit) commitDropRef.current();
         window.setTimeout(() => {
           suppressClickRef.current = false;
           justDraggedRef.current = false;
         }, 50);
       }
+      dragRef.current = null;
       dropRef.current = null;
     };
     const onUp = () => endDrag(true);
