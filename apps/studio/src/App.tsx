@@ -28,10 +28,11 @@ import type { AppInfo, BundleView, DesignData, UserInfo } from "./api.js";
 import { ApiError, api, getStoredUser, storeSession } from "./api.js";
 import PageDesigner from "./PageDesigner.js";
 import Permissions from "./Permissions.js";
+import WorkflowDesigner from "./WorkflowDesigner.js";
 
 /**
- * 设计台（M3 起，M4 增权限页签）：数据模型设计器 + 页面设计器 + 权限 + 应用设置 + 发布/版本/回滚。
- * 草稿是整个设计包（数据模型 + 设计页面 + 应用主题 + 片段库 + 权限配置），经 api 保存到平台，
+ * 设计台（M3 起，M4 增权限页签，M5 增流程页签）：数据模型设计器 + 页面设计器 + 流程设计器 + 权限 + 应用设置 + 发布/版本/回滚。
+ * 草稿是整个设计包（数据模型 + 设计页面 + 应用主题 + 片段库 + 权限配置 + 流程定义），经 api 保存到平台，
  * 发布时服务端做增量迁移并留版本快照，运行态即时读取新发布版本。
  */
 
@@ -287,6 +288,7 @@ function Designer({
               appConfig: d.published.appConfig,
               fragments: d.published.fragments,
               permissions: d.published.permissions,
+              workflows: d.published.workflows,
             }
           : null);
       setWorking(initial ? cloneBundle(initial) : null);
@@ -339,7 +341,7 @@ function Designer({
       setBaseline(JSON.stringify(res.draft));
       // 关键（M2 修复点，勿回退）：同步 design.draft，发布按钮才即时启用
       setDesign((prev) => (prev ? { ...prev, draft: res.draft } : prev));
-      void antdMessage.success("草稿已保存（数据模型 + 页面 + 主题 + 片段 + 权限）");
+      void antdMessage.success("草稿已保存（数据模型 + 页面 + 主题 + 片段 + 权限 + 流程）");
     } catch (err) {
       setError(errText(err));
       if (err instanceof ApiError && err.issues) setIssues(err.issues);
@@ -925,6 +927,21 @@ function Designer({
             ),
           },
           {
+            key: "workflow",
+            label: "流程",
+            children: (
+              <div style={{ height: "calc(100vh - 64px - 46px)", overflowY: "auto", background: "#fff" }}>
+                <WorkflowDesigner
+                  appId={appId}
+                  data={working.schema}
+                  permissions={working.permissions}
+                  workflows={working.workflows}
+                  onChange={(next) => updateBundle((b) => (b.workflows = next))}
+                />
+              </div>
+            ),
+          },
+          {
             key: "permissions",
             label: "权限",
             children: (
@@ -953,7 +970,7 @@ function Designer({
         okText="确认发布"
       >
         <Typography.Paragraph>
-          发布将基于**已保存的草稿**（数据模型 + 页面设计 + 主题 + 片段 + 权限）执行增量迁移并切换运行态。迁移只增不减，发布后可随时在版本历史中回滚。
+          发布将基于**已保存的草稿**（数据模型 + 页面设计 + 主题 + 片段 + 权限 + 流程）执行增量迁移并切换运行态。迁移只增不减，发布后可随时在版本历史中回滚。
         </Typography.Paragraph>
         <Input
           placeholder="版本说明（可选，如：新增合同实体）"

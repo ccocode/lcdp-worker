@@ -3,6 +3,7 @@ import type {
   DataSchema,
   PageSchema,
   PermissionSchema,
+  WorkflowSchema,
 } from "@naka1205/schema";
 import type {
   ListResult,
@@ -61,8 +62,9 @@ export interface FragmentDef {
 }
 
 /**
- * 设计包视图（M3 起，M4 增 permissions）：数据模型 + 设计页面 + 应用配置 + 片段库 + 权限配置。
- * pages/fragments/permissions 为 null 表示该部分尚未建立
+ * 设计包视图（M3 起，M4 增 permissions，M5 增 workflows）：
+ * 数据模型 + 设计页面 + 应用配置 + 片段库 + 权限配置 + 流程定义。
+ * pages/fragments/permissions/workflows 为 null 表示该部分尚未建立
  * （页面全走服务端自动派生；未建权限时登录用户全权，见 M4 契约 §2）。
  */
 export interface BundleView {
@@ -71,6 +73,7 @@ export interface BundleView {
   appConfig: AppConfig | null;
   fragments: FragmentDef[] | null;
   permissions: PermissionSchema | null;
+  workflows: WorkflowSchema[] | null;
 }
 
 /** 平台用户（管理台口径，不含密码哈希） */
@@ -193,7 +196,7 @@ export const api = {
   async design(appId: string): Promise<DesignData> {
     return apiFetch<DesignData>(`/apps/${encodeURIComponent(appId)}/design`);
   },
-  /** 保存整个设计包为草稿（数据模型 + 页面 + 主题 + 片段 + 权限），返回服务端归一化后的草稿 */
+  /** 保存整个设计包为草稿（数据模型 + 页面 + 主题 + 片段 + 权限 + 流程），返回服务端归一化后的草稿 */
   async saveDraft(
     appId: string,
     bundle: BundleView,
