@@ -1441,6 +1441,18 @@ export default function PageDesigner({
               key={`${node.id}-title`}
               onBlur={(ev) => patchProps(node.id, { title: ev.target.value })}
             />
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+              组件间距
+            </Typography.Text>
+            <InputNumber
+              style={{ width: 120, marginBottom: 6 }}
+              min={0}
+              value={(props.gap as number | undefined) ?? 16}
+              onChange={(v) => patchProps(node.id, { gap: v ?? undefined })}
+            />
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+              页面内上下相邻组件之间的间距（像素），默认 16；容器内部的间距在容器属性里单独设置。
+            </Typography.Paragraph>
           </>
         )}
 

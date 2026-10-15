@@ -137,13 +137,16 @@ function visibleSortedChildren(
     );
 }
 
-/** 页面布局：标题 + 子组件纵向排列 */
+/** 页面布局：标题 + 子组件纵向排列，组件间默认 16px 间距（props.gap 可调，与 Container 的间距口径一致） */
 export function Page({ node, children }: NodeProps) {
   const title =
     typeof node.props?.title === "string" ? node.props.title : undefined;
+  const gap = typeof node.props?.gap === "number" ? node.props.gap : 16;
   return (
-    <div style={styles.page}>
-      {title && <div style={styles.title}>{title}</div>}
+    <div
+      style={{ ...styles.page, display: "flex", flexDirection: "column", gap }}
+    >
+      {title && <div style={{ ...styles.title, margin: "4px 0 0" }}>{title}</div>}
       {children}
     </div>
   );
