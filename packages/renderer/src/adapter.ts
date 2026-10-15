@@ -25,8 +25,19 @@ export interface RuntimeAdapter {
       limit?: number;
       offset?: number;
       filters?: Record<string, string>;
+      /** 排序（数据视图 sort 的第一项经此下发，服务端执行） */
+      sort?: { field: string; dir: "asc" | "desc" };
     },
   ): Promise<ListResult>;
+  /** 聚合查询（统计卡片/图表用）：对实体做 count/sum/avg，可带等值过滤 */
+  aggregate(
+    entity: string,
+    q: {
+      fn: "count" | "sum" | "avg";
+      field?: string;
+      filters?: Record<string, string>;
+    },
+  ): Promise<number>;
   get(entity: string, id: string): Promise<Row | null>;
   create(entity: string, data: Row): Promise<Row>;
   update(entity: string, id: string, data: Row): Promise<Row>;
@@ -44,6 +55,13 @@ export interface RendererContextValue {
   dataSchema: DataSchema;
   page: PageSchema;
   params: Record<string, string>;
+  /** 当前渲染设备：组件树按此读取布局变体（node.layout[device]） */
+  device: "desktop" | "mobile";
+  /** 设计模式（设计器画布专用）：节点可点选，选中态由宿主管理 */
+  design?: {
+    selectedId?: string;
+    onSelect?: (nodeId: string) => void;
+  };
 }
 
 /** 按数据源 key 解析出实体定义（dataSources.key -> ref -> entities.key） */

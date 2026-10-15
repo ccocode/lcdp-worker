@@ -29,6 +29,16 @@ export interface Snapshot {
   app: AppInfo;
   data: DataSchema;
   pages: PageSchema[];
+  /** 应用配置（主题令牌等），来自设计包的 appConfig */
+  appConfig: { theme: Record<string, unknown> } | null;
+  /** 当前发布版本号（未发布为 null） */
+  version: number | null;
+}
+
+/** 入口解析结果：当前域名命中的入口与其装配的应用（顺序即呈现顺序） */
+export interface EntryResult {
+  entry: { id: string; name: string } | null;
+  apps: AppInfo[];
 }
 
 export function getToken(): string | null {
@@ -89,20 +99,51 @@ export const api = {
   async snapshot(appId: string): Promise<Snapshot> {
     return apiFetch<Snapshot>(`/apps/${encodeURIComponent(appId)}/snapshot`);
   },
+  /** 按当前域名解析入口（入口模型：域名定入口，入口装配应用与页面） */
+  async entry(host: string): Promise<EntryResult> {
+    return apiFetch<EntryResult>(
+      `/entry/current?host=${encodeURIComponent(host)}`,
+    );
+  },
   data: {
     async list(
       appId: string,
       entity: string,
-      params?: { limit?: number; offset?: number; filters?: Record<string, string> },
+      params?: {
+        limit?: number;
+        offset?: number;
+        filters?: Record<string, string>;
+        sort?: { field: string; dir: "asc" | "desc" };
+      },
     ): Promise<ListResult> {
       const qs = new URLSearchParams();
       if (params?.limit) qs.set("limit", String(params.limit));
       if (params?.offset) qs.set("offset", String(params.offset));
+      if (params?.sort) qs.set("sort", `${params.sort.field}:${params.sort.dir}`);
       for (const [k, v] of Object.entries(params?.filters ?? {})) qs.set(k, v);
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
       return apiFetch<ListResult>(
         `/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}${suffix}`,
       );
+    },
+    /** 聚合查询（统计卡片/图表）：服务端对实体做 count/sum/avg，等值过滤走查询参数 */
+    async aggregate(
+      appId: string,
+      entity: string,
+      q: {
+        fn: "count" | "sum" | "avg";
+        field?: string;
+        filters?: Record<string, string>;
+      },
+    ): Promise<number> {
+      const qs = new URLSearchParams();
+      qs.set("fn", q.fn);
+      if (q.field) qs.set("field", q.field);
+      for (const [k, v] of Object.entries(q.filters ?? {})) qs.set(k, v);
+      const res = await apiFetch<{ value: number }>(
+        `/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
+      );
+      return res.value;
     },
     async get(appId: string, entity: string, id: string): Promise<Row | null> {
       try {
@@ -160,6 +201,7 @@ export function makeAdapter(
 ): RuntimeAdapter {
   return {
     list: (entity, params) => api.data.list(appId, entity, params),
+    aggregate: (entity, q) => api.data.aggregate(appId, entity, q),
     get: (entity, id) => api.data.get(appId, entity, id),
     create: (entity, data) => api.data.create(appId, entity, data),
     update: (entity, id, data) => api.data.update(appId, entity, id, data),

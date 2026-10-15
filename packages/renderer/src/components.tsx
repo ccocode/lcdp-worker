@@ -1,4 +1,5 @@
 import {
+  Children,
   createContext,
   useCallback,
   useContext,
@@ -6,9 +7,28 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import type { ComponentNode, Entity, PageSchema } from "@naka1205/schema";
-import { Alert, Button, Space, Table } from "antd";
+import type {
+  ComponentNode,
+  DataView,
+  Entity,
+  Field,
+  NodeLayout,
+  PageSchema,
+} from "@naka1205/schema";
+import {
+  Alert,
+  Button,
+  Card,
+  Descriptions,
+  Input,
+  Space,
+  Statistic,
+  Table,
+  Tabs as AntdTabs,
+  Typography,
+} from "antd";
 import type { TableProps } from "antd";
+import dayjs from "dayjs";
 import type {
   RendererContextValue,
   Row,
@@ -51,6 +71,72 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * 单元格/详情值的统一格式化（列表与详情共用）：
+ * 布尔→是/否、枚举→选项标签、日期/时间→本地格式、引用→标签映射。
+ */
+export function formatCellValue(
+  field: Field,
+  value: unknown,
+  refLabels?: Record<string, string>,
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  switch (field.type) {
+    case "boolean":
+      return value === true || value === "true" ? "是" : "否";
+    case "enum": {
+      const opt = field.options?.find((o) => o.value === String(value));
+      return opt?.label ?? String(value);
+    }
+    case "date": {
+      const d = dayjs(value as string);
+      return d.isValid() ? d.format("YYYY-MM-DD") : String(value);
+    }
+    case "datetime": {
+      const d = dayjs(value as string);
+      return d.isValid() ? d.format("YYYY-MM-DD HH:mm") : String(value);
+    }
+    case "ref":
+      return refLabels?.[String(value)] ?? String(value);
+    case "json":
+      return typeof value === "string" ? value : JSON.stringify(value);
+    default:
+      return String(value);
+  }
+}
+
+/** 数据视图中可经适配器下发的等值过滤（其余算子暂不在此层下发） */
+export function eqFiltersOf(view: DataView | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of view?.filters ?? []) {
+    if (f.op === "eq" && f.value !== null && f.value !== undefined) {
+      out[f.field] = String(f.value);
+    }
+  }
+  return out;
+}
+
+/** 取节点在当前设备上的布局变体 */
+function layoutFor(
+  node: ComponentNode,
+  device: "desktop" | "mobile",
+): NodeLayout | undefined {
+  return node.layout?.[device];
+}
+
+/** 子节点按当前设备变体过滤隐藏并按 order 排序（NodeView 与 Tabs 共用，保证顺序一致） */
+function visibleSortedChildren(
+  node: ComponentNode,
+  device: "desktop" | "mobile",
+): ComponentNode[] {
+  return [...(node.children ?? [])]
+    .filter((c) => !layoutFor(c, device)?.hidden)
+    .sort(
+      (a, b) =>
+        (layoutFor(a, device)?.order ?? 0) - (layoutFor(b, device)?.order ?? 0),
+    );
+}
+
 /** 页面布局：标题 + 子组件纵向排列 */
 export function Page({ node, children }: NodeProps) {
   const title =
@@ -67,8 +153,10 @@ export function Page({ node, children }: NodeProps) {
 export function DataTable({ node }: NodeProps) {
   const ctx = useRendererCtx();
   const entity = resolveEntity(ctx, node.binding?.source);
+  const view = node.binding?.view;
   const pageSize =
-    typeof node.props?.pageSize === "number" ? node.props.pageSize : 20;
+    view?.pageSize ??
+    (typeof node.props?.pageSize === "number" ? node.props.pageSize : 20);
   const formRoute =
     typeof node.props?.formRoute === "string" ? node.props.formRoute : null;
   const [pageIdx, setPageIdx] = useState(0);
@@ -82,14 +170,22 @@ export function DataTable({ node }: NodeProps) {
   // 每个被引实体的标签映射是否已就绪（成功或失败都算就绪，失败时回退显示原始值）
   const [labelsDone, setLabelsDone] = useState<Record<string, boolean>>({});
 
+  // 数据视图签名（内容变化才重拉）：eq 过滤与第一排序项经适配器下发服务端
+  const viewSig = JSON.stringify(view ?? null);
   const load = useCallback(async () => {
     if (!entity) return;
     setLoading(true);
     setError(null);
     try {
+      const filters = eqFiltersOf(view);
+      const firstSort = view?.sort?.[0];
       const res = await ctx.adapter.list(entity.key, {
         limit: pageSize,
         offset: pageIdx * pageSize,
+        filters: Object.keys(filters).length ? filters : undefined,
+        sort: firstSort
+          ? { field: firstSort.field, dir: firstSort.dir }
+          : undefined,
       });
       setRows(res.rows);
       setTotal(res.total);
@@ -98,7 +194,9 @@ export function DataTable({ node }: NodeProps) {
     } finally {
       setLoading(false);
     }
-  }, [ctx.adapter, entity, pageIdx, pageSize]);
+    // view 的内容已由 viewSig 完整刻画
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.adapter, entity, pageIdx, pageSize, viewSig]);
 
   useEffect(() => {
     void load();
@@ -136,7 +234,17 @@ export function DataTable({ node }: NodeProps) {
 
   if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
 
-  const fields = entity.fields.slice(0, 7);
+  // 显示列：props.columns 指定字段 key 与顺序；未指定时取实体前 7 个字段
+  const columnKeys = Array.isArray(node.props?.columns)
+    ? (node.props.columns as unknown[]).filter(
+        (c): c is string => typeof c === "string",
+      )
+    : null;
+  const fields: Field[] = columnKeys
+    ? columnKeys
+        .map((k) => entity.fields.find((f) => f.key === k))
+        .filter((f): f is Field => Boolean(f))
+    : entity.fields.slice(0, 7);
   // 可见列涉及的被引实体标签尚未全部就绪时不渲染数据行，
   // 避免把原始 ID 当成最终内容闪现（映射到达后才出首屏）
   const pendingRefs = fields
@@ -145,15 +253,12 @@ export function DataTable({ node }: NodeProps) {
     .filter((k, i, a) => a.indexOf(k) === i && !labelsDone[k]);
   const labelsPending = pendingRefs.length > 0;
 
-  const cellText = (row: Row, field: (typeof fields)[number]): string => {
-    const v = row[field.key];
-    if (v === null || v === undefined || v === "") return "—";
-    if (field.type === "boolean") return v === true ? "是" : "否";
-    if (field.type === "ref" && field.refEntity) {
-      return labels[field.refEntity]?.[String(v)] ?? String(v);
-    }
-    return String(v);
-  };
+  const cellText = (row: Row, field: Field): string =>
+    formatCellValue(
+      field,
+      row[field.key],
+      field.refEntity ? labels[field.refEntity] : undefined,
+    );
 
   const tableColumns: TableProps<Row>["columns"] = [
     { title: "ID", dataIndex: "id", key: "__id", width: 120 },
@@ -533,12 +638,321 @@ export function EntityForm({ node }: NodeProps) {
   );
 }
 
-/** 内置组件注册表（Page 布局 + DataTable + EntityForm） */
+/** 布局容器：flex 排布子组件；方向优先取当前设备的布局变体，其次 props，再次默认纵向 */
+export function Container({ node, children }: NodeProps) {
+  const ctx = useRendererCtx();
+  const propDir =
+    node.props?.direction === "row" || node.props?.direction === "column"
+      ? node.props.direction
+      : undefined;
+  const direction = layoutFor(node, ctx.device)?.direction ?? propDir ?? "column";
+  const gap = typeof node.props?.gap === "number" ? node.props.gap : 12;
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: direction,
+        gap,
+        flexWrap: node.props?.wrap === true ? "wrap" : undefined,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** 标签页：每个子节点成一个页签，标题取子节点 props.title，缺省用组件类型名 */
+export function Tabs({ node, children }: NodeProps) {
+  const ctx = useRendererCtx();
+  const kids = visibleSortedChildren(node, ctx.device);
+  const rendered = Children.toArray(children);
+  return (
+    <AntdTabs
+      items={kids.map((child, i) => ({
+        key: child.id,
+        label:
+          typeof child.props?.title === "string" ? child.props.title : child.type,
+        children: rendered[i],
+      }))}
+    />
+  );
+}
+
+/**
+ * 聚合数值取数（StatCard / ChartPlaceholder 共用）：
+ * 实体经 binding.source 解析，过滤取数据视图的 eq 项，fn 缺省时按 fallbackCount 决定是否计数。
+ */
+function useAggregateValue(
+  node: ComponentNode,
+  fallbackCount: boolean,
+): { entity: Entity | null; value: number | null; error: string | null } {
+  const ctx = useRendererCtx();
+  const entity = resolveEntity(ctx, node.binding?.source);
+  const view = node.binding?.view;
+  const fn = view?.aggregate?.fn ?? (fallbackCount ? "count" : undefined);
+  const field = view?.aggregate?.field;
+  const filtersSig = JSON.stringify(eqFiltersOf(view));
+  const [value, setValue] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!entity || !fn) return;
+    let alive = true;
+    ctx.adapter
+      .aggregate(entity.key, {
+        fn,
+        field,
+        filters: JSON.parse(filtersSig) as Record<string, string>,
+      })
+      .then((v) => {
+        if (alive) setValue(v);
+      })
+      .catch((err) => {
+        if (alive) setError(errText(err));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [ctx.adapter, entity, fn, field, filtersSig]);
+  return { entity, value, error };
+}
+
+/** 统计卡片：聚合数值大字展示（计数/求和/平均，缺省计数） */
+export function StatCard({ node }: NodeProps) {
+  const { entity, value, error } = useAggregateValue(node, true);
+  const title =
+    typeof node.props?.title === "string"
+      ? node.props.title
+      : (entity?.label ?? "统计");
+  const suffix =
+    typeof node.props?.suffix === "string" ? node.props.suffix : undefined;
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  return (
+    <Card>
+      {error ? (
+        <Alert type="error" message={error} />
+      ) : (
+        <Statistic
+          title={title}
+          value={value === null ? "…" : value}
+          suffix={suffix}
+        />
+      )}
+    </Card>
+  );
+}
+
+/** 图表占位：图表引擎后续接入；已声明聚合时先展示聚合数值 */
+export function ChartPlaceholder({ node }: NodeProps) {
+  const hasAggregate = Boolean(node.binding?.view?.aggregate);
+  const { entity, value, error } = useAggregateValue(node, false);
+  const title =
+    typeof node.props?.title === "string" ? node.props.title : "图表";
+  return (
+    <Card title={title}>
+      {hasAggregate && entity ? (
+        error ? (
+          <Alert type="error" message={error} />
+        ) : (
+          <div
+            style={{
+              fontSize: 30,
+              fontWeight: 600,
+              textAlign: "center",
+              padding: "18px 0",
+            }}
+          >
+            {value === null ? "…" : value}
+          </div>
+        )
+      ) : (
+        <div
+          style={{
+            ...styles.empty,
+            border: "1px dashed #d9d9d9",
+            borderRadius: 8,
+          }}
+        >
+          图表占位（图表组件将在后续里程碑接入）
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** 详情：按页面参数 id 拉单条记录，以描述列表展示字段（值经统一格式化、引用显示标签） */
+export function Detail({ node }: NodeProps) {
+  const ctx = useRendererCtx();
+  const entity = resolveEntity(ctx, node.binding?.source);
+  const id = ctx.params.id;
+  const [row, setRow] = useState<Row | null>(null);
+  const [loading, setLoading] = useState(Boolean(id));
+  const [error, setError] = useState<string | null>(null);
+  const [labels, setLabels] = useState<Record<string, Record<string, string>>>(
+    {},
+  );
+
+  useEffect(() => {
+    if (!entity || !id) return;
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await ctx.adapter.get(entity.key, id);
+        if (!alive) return;
+        setRow(r);
+        const refFields = entity.fields.filter(
+          (f) => f.type === "ref" && f.refEntity,
+        );
+        const map: Record<string, Record<string, string>> = {};
+        await Promise.all(
+          refFields.map(async (f) => {
+            try {
+              const opts = await ctx.adapter.options(f.refEntity!);
+              map[f.refEntity!] = Object.fromEntries(
+                opts.map((o) => [o.value, o.label]),
+              );
+            } catch {
+              // 标签拉取失败时回退显示原始值
+            }
+          }),
+        );
+        if (alive) setLabels(map);
+      } catch (err) {
+        if (alive) setError(errText(err));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [ctx.adapter, entity, id]);
+
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!id) return <Alert type="info" message="未选择记录（缺少 id 参数）" />;
+  if (loading) return <div style={styles.empty}>加载中…</div>;
+  if (error) return <Alert type="error" message={error} />;
+  if (!row) return <Alert type="warning" message="记录不存在" />;
+
+  const fieldKeys = Array.isArray(node.props?.fields)
+    ? (node.props.fields as unknown[]).filter(
+        (c): c is string => typeof c === "string",
+      )
+    : null;
+  const fields: Field[] = fieldKeys
+    ? fieldKeys
+        .map((k) => entity.fields.find((f) => f.key === k))
+        .filter((f): f is Field => Boolean(f))
+    : entity.fields;
+  const listRoute =
+    typeof node.props?.listRoute === "string" ? node.props.listRoute : null;
+
+  return (
+    <div>
+      {listRoute && (
+        <Button
+          style={{ marginBottom: 12 }}
+          onClick={() => ctx.adapter.navigate(listRoute)}
+        >
+          ← 返回
+        </Button>
+      )}
+      <Descriptions bordered column={1} size="middle">
+        <Descriptions.Item label="ID">{String(row.id)}</Descriptions.Item>
+        {fields.map((f) => (
+          <Descriptions.Item key={f.key} label={f.label}>
+            {formatCellValue(
+              f,
+              row[f.key],
+              f.refEntity ? labels[f.refEntity] : undefined,
+            )}
+          </Descriptions.Item>
+        ))}
+      </Descriptions>
+    </div>
+  );
+}
+
+/** 动作按钮：点击后按 props.route 跳转页面 */
+export function ActionButton({ node }: NodeProps) {
+  const ctx = useRendererCtx();
+  const label =
+    typeof node.props?.label === "string" ? node.props.label : "按钮";
+  const type =
+    node.props?.type === "primary" ||
+    node.props?.type === "default" ||
+    node.props?.type === "dashed" ||
+    node.props?.type === "link" ||
+    node.props?.type === "text"
+      ? node.props.type
+      : undefined;
+  const route = typeof node.props?.route === "string" ? node.props.route : null;
+  return (
+    <Button
+      type={type}
+      onClick={route ? () => ctx.adapter.navigate(route) : undefined}
+    >
+      {label}
+    </Button>
+  );
+}
+
+/** 文本块：纯文本段落，level=title 时渲染为标题 */
+export function TextBlock({ node }: NodeProps) {
+  const text = typeof node.props?.text === "string" ? node.props.text : "";
+  if (node.props?.level === "title") {
+    return (
+      <Typography.Title level={3} style={{ whiteSpace: "pre-wrap" }}>
+        {text}
+      </Typography.Title>
+    );
+  }
+  return (
+    <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>
+      {text}
+    </Typography.Paragraph>
+  );
+}
+
+/** 图片：按 URL 展示，自适应容器宽度 */
+export function ImageBlock({ node }: NodeProps) {
+  const src = typeof node.props?.src === "string" ? node.props.src : "";
+  const alt = typeof node.props?.alt === "string" ? node.props.alt : "";
+  if (!src) return <Alert type="info" message="未设置图片地址" />;
+  return (
+    <img src={src} alt={alt} style={{ maxWidth: "100%", display: "block" }} />
+  );
+}
+
+/** 智能助手占位：运行态 Agent 在后续里程碑接入，先占位保证页面可引用 */
+export function AgentChat({ node }: NodeProps) {
+  const title =
+    typeof node.props?.title === "string" ? node.props.title : "智能助手";
+  return (
+    <Card title={title}>
+      <Typography.Paragraph type="secondary">
+        运行态智能助手将在后续里程碑接入
+      </Typography.Paragraph>
+      <Input disabled placeholder="输入问题或业务指令…" />
+    </Card>
+  );
+}
+
+/** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 12 类组件） */
 export function createDefaultRegistry(): ComponentRegistry {
   const registry = createRegistry();
   registerComponent(registry, "Page", Page);
+  registerComponent(registry, "Container", Container);
+  registerComponent(registry, "Tabs", Tabs);
   registerComponent(registry, "DataTable", DataTable);
   registerComponent(registry, "EntityForm", EntityForm);
+  registerComponent(registry, "Detail", Detail);
+  registerComponent(registry, "StatCard", StatCard);
+  registerComponent(registry, "ChartPlaceholder", ChartPlaceholder);
+  registerComponent(registry, "TextBlock", TextBlock);
+  registerComponent(registry, "Image", ImageBlock);
+  registerComponent(registry, "Button", ActionButton);
+  registerComponent(registry, "AgentChat", AgentChat);
   return registry;
 }
 
@@ -549,16 +963,54 @@ function NodeView({
   node: ComponentNode;
   registry: ComponentRegistry;
 }) {
+  const ctx = useRendererCtx();
   const Comp = registry.get(node.type);
   if (!Comp) {
     return <Alert type="error" message={`未注册的组件类型：${node.type}`} />;
   }
+  // 当前设备的布局变体声明 hidden 时，整棵子树不渲染
+  if (layoutFor(node, ctx.device)?.hidden) return null;
+  const design = ctx.design;
+  const selected =
+    design?.selectedId !== undefined && design.selectedId === node.id;
   return (
-    <Comp node={node}>
-      {node.children?.map((child) => (
-        <NodeView key={child.id} node={child} registry={registry} />
-      ))}
-    </Comp>
+    <div
+      data-node-id={design ? node.id : undefined}
+      onClick={
+        design?.onSelect
+          ? (e) => {
+              e.stopPropagation();
+              design.onSelect!(node.id);
+            }
+          : undefined
+      }
+      style={
+        selected
+          ? { outline: "2px solid #1677ff", outlineOffset: 1 }
+          : undefined
+      }
+    >
+      <Comp node={node}>
+        {visibleSortedChildren(node, ctx.device).map((child) => {
+          const cl = layoutFor(child, ctx.device);
+          // 每个子节点外包一层：order/span 在此生效，供 Container 的 flex 布局排布
+          return (
+            <div
+              key={child.id}
+              style={{
+                order: cl?.order,
+                flexBasis: cl?.span ? `${(cl.span / 12) * 100}%` : undefined,
+                flexGrow: cl?.span ? 0 : undefined,
+                flexShrink: cl?.span ? 1 : undefined,
+                minWidth: 0,
+              }}
+            >
+              <NodeView node={child} registry={registry} />
+            </div>
+          );
+        })}
+      </Comp>
+    </div>
   );
 }
 
@@ -568,7 +1020,11 @@ export interface SchemaRendererProps {
   adapter: RuntimeAdapter;
   /** 页面参数（如表单页的 id 来自 ?id=） */
   params?: Record<string, string>;
-  /** 自定义注册表（默认内置三件套；设计器可注入更多组件） */
+  /** 渲染设备（决定组件树读取哪一版布局变体），默认桌面端 */
+  device?: "desktop" | "mobile";
+  /** 设计模式（设计器画布）：节点可点选并回显选中态 */
+  design?: RendererContextValue["design"];
+  /** 自定义注册表（默认注册中心 v1；设计器可注入更多组件） */
   registry?: ComponentRegistry;
 }
 
@@ -578,11 +1034,15 @@ export function SchemaRenderer({
   dataSchema,
   adapter,
   params = {},
+  device = "desktop",
+  design,
   registry,
 }: SchemaRendererProps) {
   const reg = registry ?? createDefaultRegistry();
   return (
-    <RendererContext.Provider value={{ adapter, dataSchema, page, params }}>
+    <RendererContext.Provider
+      value={{ adapter, dataSchema, page, params, device, design }}
+    >
       <NodeView node={page.root} registry={reg} />
     </RendererContext.Provider>
   );

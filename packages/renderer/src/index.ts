@@ -15,14 +15,26 @@ export type {
 export { childEntities, resolveEntity } from "./adapter.js";
 export type { ComponentRegistry, NodeProps, SchemaRendererProps } from "./components.js";
 export {
+  ActionButton,
+  AgentChat,
+  ChartPlaceholder,
+  Container,
   DataTable,
+  Detail,
   EntityForm,
+  ImageBlock,
   Page,
   SchemaRenderer,
+  StatCard,
+  Tabs,
+  TextBlock,
   createDefaultRegistry,
   createRegistry,
+  eqFiltersOf,
+  formatCellValue,
   registerComponent,
   useRendererCtx,
 } from "./components.js";
+export { componentCatalog } from "./catalog.js";
 export { FieldInput } from "./fields.js";
 export { styles } from "./styles.js";
