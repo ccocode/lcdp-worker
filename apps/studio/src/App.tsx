@@ -272,6 +272,8 @@ function Designer({
   const [issues, setIssues] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  /** 流程图设计器上报的校验问题（M5.1）；非空时阻断保存草稿（服务端也会拒绝） */
+  const [wfIssues, setWfIssues] = useState<string[]>([]);
   const [publishNote, setPublishNote] = useState("");
 
   const load = useCallback(async () => {
@@ -877,7 +879,19 @@ function Designer({
         >
           在运行态打开
         </Button>
-        <Button loading={busy === "save"} disabled={!dirty} onClick={() => void saveDraft()}>
+        {wfIssues.length > 0 && (
+          <Tag color="red">流程校验未通过（{wfIssues.length}）</Tag>
+        )}
+        <Button
+          loading={busy === "save"}
+          disabled={!dirty || wfIssues.length > 0}
+          title={
+            wfIssues.length > 0
+              ? `流程校验未通过：${wfIssues[0]}${wfIssues.length > 1 ? ` 等 ${wfIssues.length} 项` : ""}`
+              : undefined
+          }
+          onClick={() => void saveDraft()}
+        >
           保存草稿
         </Button>
         <Button
@@ -937,6 +951,7 @@ function Designer({
                   permissions={working.permissions}
                   workflows={working.workflows}
                   onChange={(next) => updateBundle((b) => (b.workflows = next))}
+                  onValidityChange={setWfIssues}
                 />
               </div>
             ),

@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
-  Card,
   Input,
   List,
   Popconfirm,
@@ -11,540 +10,142 @@ import {
   Switch,
   Tag,
   Typography,
+  message as antdMessage,
 } from "antd";
+import {
+  Background,
+  Controls,
+  Handle,
+  MiniMap,
+  Position,
+  ReactFlow,
+  useEdgesState,
+  useNodesState,
+} from "@xyflow/react";
+import type {
+  Connection,
+  Edge as RFEdge,
+  Node as RFNode,
+  NodeProps,
+  NodeTypes,
+  OnSelectionChangeFunc,
+} from "@xyflow/react";
 import type {
   DataSchema,
-  Entity,
   Field,
   PermissionSchema,
   WorkflowNode,
   WorkflowSchema,
 } from "@naka1205/schema";
-
-/** schema 包未单独导出边类型，从 WorkflowSchema 派生 */
-type WorkflowEdge = WorkflowSchema["edges"][number];
+import {
+  OPS,
+  buildTaskAction,
+  connectNodes,
+  defaultExtrasFor,
+  deleteNode,
+  demoWorkflows,
+  emptyWorkflow,
+  insertNodeAfter,
+  layoutWorkflow,
+  literalOf,
+  metaOf,
+  newNodeId,
+  nodeById,
+  nodeSummary,
+  parseSimpleCondition,
+  parseTaskAction,
+  patchNode,
+  removeEdge,
+  validateExpression,
+  validateWorkflowsClient,
+  withMeta,
+} from "./workflowModel.js";
+import type {
+  ActionStep,
+  FlowMeta,
+  TaskActionExtras,
+  WorkflowEdge,
+} from "./workflowModel.js";
+import "@xyflow/react/dist/style.css";
+import "./workflow.css";
 
 /**
- * 流程页签（M5，契约 §9）：步骤式编辑器 ⇄ WorkflowSchema 图序列化。
- * 步骤模型是 §4.1 图子集的线性表示：审批 / 条件 / 动作三类步骤顺序排列，
- * 条件步骤门控其下一步骤（true 走下一步骤，false 跳过下一步骤）。
- * steps ⇄ graph 互转在本文件内实现；graphToSteps 遇到子集外结构返回 null，
- * UI 显示「高级结构，步骤视图只读」且不产生任何 bundle 改动。
- * 流程配置属于设计包的一部分：改动只改本地 bundle（经 onChange 标脏），
- * 走设计台既有「保存草稿 → 发布」流，服务端在存草稿/发布时做 validateWorkflows 校验。
+ * 流程页签（M5.1，增补契约）：图形化设计器 —— 左「流程列表 + 节点物料」、
+ * 中「React Flow 画布」、右「节点属性 / 流程基础设置」。
+ * 图即唯一事实源：所有编辑（插入 / 删除 / 连线 / 属性）直接作用于 WorkflowSchema
+ * 的 nodes/edges，未编辑的图保存时与原图语义完全一致；节点坐标不落库，
+ * 载入时自动分层布局，会话内可拖动调整、「自动布局」一键重排。
+ * 改动只改本地 bundle（经 onChange 标脏），保存/发布走设计台统一流；
+ * 客户端校验与 api validateWorkflows 等价，问题逐条展示且经 onValidityChange
+ * 阻断设计台「保存草稿」（服务端存草稿/发布时仍会再校验一次）。
  */
 
-// ---------------------------------------------------------------- 步骤模型
+// M5 模块的公开面保留（演示生成 / 步骤互转仍可从本模块引用）
+export {
+  buildWorkflow,
+  demoWorkflows,
+  graphToSteps,
+  stepsToGraph,
+} from "./workflowModel.js";
+export type {
+  ActionStep,
+  ApprovalStep,
+  ConditionStep,
+  FlowMeta,
+  FlowStep,
+} from "./workflowModel.js";
 
-export interface ApprovalStep {
-  id: string;
-  kind: "approval";
-  label: string;
-  role: string;
-  mode: "any" | "all";
-  statusOnEnter?: string;
+// ---------------------------------------------------------------- 画布节点卡片
+
+type WFNodeData = { wfNode: WorkflowNode; summary: string };
+type WFNode = RFNode<WFNodeData, "wf">;
+
+const TYPE_META: Record<
+  WorkflowNode["type"],
+  { tag: string; text: string; border: string }
+> = {
+  start: { tag: "cyan", text: "开始", border: "#13c2c2" },
+  approval: { tag: "blue", text: "审批", border: "#1677ff" },
+  condition: { tag: "orange", text: "条件", border: "#fa8c16" },
+  task: { tag: "green", text: "自动动作", border: "#52c41a" },
+  end: { tag: "default", text: "结束", border: "#8c8c8c" },
+};
+
+function FlowNodeCard({ data, selected }: NodeProps<WFNode>) {
+  const n = data.wfNode;
+  const meta = TYPE_META[n.type];
+  return (
+    <div
+      className="wf-node"
+      style={{
+        borderColor: selected ? "#1677ff" : meta.border,
+        boxShadow: selected
+          ? "0 0 0 3px rgba(22,119,255,0.25), 0 2px 8px rgba(0,0,0,0.12)"
+          : undefined,
+      }}
+    >
+      {n.type !== "start" && (
+        <Handle type="target" position={Position.Left} />
+      )}
+      <div className="wf-node-head">
+        <Tag color={meta.tag} style={{ margin: 0 }}>
+          {meta.text}
+        </Tag>
+        <span className="wf-node-label" title={n.label ?? n.id}>
+          {n.label?.trim() ? n.label : n.id}
+        </span>
+      </div>
+      <div className="wf-node-summary" title={data.summary}>
+        {data.summary}
+      </div>
+      {n.type !== "end" && (
+        <Handle type="source" position={Position.Right} />
+      )}
+    </div>
+  );
 }
 
-export interface ConditionStep {
-  id: string;
-  kind: "condition";
-  field: string;
-  op: string;
-  /** UI 内以文本保存；序列化时纯数字写裸数字、其余写单引号字符串 */
-  value: string;
-}
-
-export interface ActionStep {
-  id: string;
-  kind: "action";
-  label: string;
-  actionKind: "createRecord" | "applyInventory" | "setStatus" | "webhook";
-  // createRecord
-  targetEntity?: string;
-  seqPrefix?: string;
-  warehouseId?: string;
-  startWorkflow?: boolean;
-  // applyInventory
-  invMode?: "in" | "out";
-  // setStatus
-  statusValue?: string;
-  // webhook
-  url?: string;
-  event?: string;
-}
-
-export type FlowStep = ApprovalStep | ConditionStep | ActionStep;
-
-/** 流程级编辑元数据（落在 WorkflowSchema 的 statusField / settings / end 节点 config） */
-export interface FlowMeta {
-  /** 空串 = 不设置 statusField（引擎缺省 status，且实体无该字段时不镜像） */
-  statusField: string;
-  initialStatus: string;
-  rejectStatus: string;
-  finalStatus: string;
-  lowStockWebhookUrl: string;
-  ccRoles: string[];
-}
-
-let stepSeq = 0;
-function newStepId(): string {
-  stepSeq += 1;
-  return `s-${Date.now().toString(36)}-${stepSeq}`;
-}
-
-// ---------------------------------------------------------------- 序列化
-
-const OPS = [">=", "<=", ">", "<", "==", "!="] as const;
-
-/** 表达式字面量：纯数字裸写，其余单引号包裹 */
-function literalOf(value: string): string {
-  const t = value.trim();
-  if (t !== "" && !Number.isNaN(Number(t))) return t;
-  return `'${t.replace(/'/g, "")}'`;
-}
-
-function expressionOf(step: ConditionStep): string {
-  return `${step.field} ${step.op} ${literalOf(step.value)}`;
-}
-
-/** 步骤列表 → 图（§4.1 子集）：start → 步骤链 → end，条件步骤以 true/false 边门控下一步骤 */
-export function stepsToGraph(
-  steps: FlowStep[],
-  meta: FlowMeta,
-  sourceEntity: string,
-  data: DataSchema,
-): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
-  const nodes: WorkflowNode[] = [{ id: "start", type: "start", label: "开始" }];
-  const edges: WorkflowEdge[] = [];
-  const edge = (from: string, to: string, label?: string) =>
-    edges.push({ id: `e:${from}->${to}${label ? `:${label}` : ""}`, from, to, ...(label ? { label } : {}) });
-
-  for (const step of steps) {
-    if (step.kind === "approval") {
-      nodes.push({
-        id: step.id,
-        type: "approval",
-        label: step.label,
-        assigneeRule: { kind: "role", role: step.role },
-        config: {
-          mode: step.mode,
-          ...(step.statusOnEnter ? { statusOnEnter: step.statusOnEnter } : {}),
-        },
-      });
-    } else if (step.kind === "condition") {
-      nodes.push({
-        id: step.id,
-        type: "condition",
-        label: `条件：${step.field} ${step.op} ${step.value}`,
-        expression: expressionOf(step),
-      });
-    } else {
-      nodes.push({
-        id: step.id,
-        type: "task",
-        label: step.label,
-        action: actionOf(step, sourceEntity, data),
-      });
-    }
-  }
-  nodes.push({
-    id: "end",
-    type: "end",
-    label: "结束",
-    ...(meta.finalStatus ? { config: { finalStatus: meta.finalStatus } } : {}),
-  });
-
-  const nodeIdAt = (i: number): string => (i < steps.length ? steps[i]!.id : "end");
-  edge("start", nodeIdAt(0));
-  steps.forEach((step, i) => {
-    if (step.kind === "condition") {
-      edge(step.id, nodeIdAt(i + 1), "true");
-      edge(step.id, nodeIdAt(i + 2), "false");
-    } else {
-      edge(step.id, nodeIdAt(i + 1));
-    }
-  });
-  return { nodes, edges };
-}
-
-function actionOf(
-  step: ActionStep,
-  sourceEntity: string,
-  data: DataSchema,
-): Record<string, unknown> {
-  switch (step.actionKind) {
-    case "setStatus":
-      return { kind: "setStatus", value: step.statusValue ?? "" };
-    case "applyInventory":
-      return { kind: "applyInventory", mode: step.invMode ?? "in" };
-    case "webhook":
-      return {
-        kind: "webhook",
-        url: step.url ?? "",
-        ...(step.event ? { event: step.event } : {}),
-      };
-    case "createRecord": {
-      const target = data.entities.find((e) => e.key === step.targetEntity);
-      const fields: Record<string, unknown> = {};
-      if (target) {
-        const has = (k: string) => target.fields.some((f) => f.key === k);
-        if (has("in_no")) fields.in_no = { seq: step.seqPrefix || "IN-" };
-        // 指向源实体的引用字段（如入库单的 order_id）← 源记录 id
-        const link = target.fields.find(
-          (f) => f.type === "ref" && f.refEntity === sourceEntity,
-        );
-        if (link) fields[link.key] = { from: "id" };
-        if (has("warehouse_id") && step.warehouseId)
-          fields.warehouse_id = { const: step.warehouseId };
-        if (has("in_date")) fields.in_date = { today: true };
-      }
-      return {
-        kind: "createRecord",
-        entity: step.targetEntity ?? "",
-        fields,
-        ...(step.startWorkflow ? { startWorkflow: true } : {}),
-      };
-    }
-  }
-}
-
-/** 图 → 步骤列表；子集外结构返回 null（UI 只读） */
-export function graphToSteps(
-  wf: WorkflowSchema,
-  data: DataSchema,
-): { steps: FlowStep[]; meta: FlowMeta } | null {
-  const nodeMap = new Map<string, WorkflowNode>();
-  for (const n of wf.nodes) {
-    if (nodeMap.has(n.id)) return null;
-    nodeMap.set(n.id, n);
-  }
-  const start = nodeMap.get("start");
-  const end = nodeMap.get("end");
-  if (!start || start.type !== "start" || !end || end.type !== "end") return null;
-  if (wf.nodes.filter((n) => n.type === "start" || n.type === "end").length !== 2)
-    return null;
-
-  const out = new Map<string, WorkflowEdge[]>();
-  for (const e of wf.edges) {
-    if (!nodeMap.has(e.from) || !nodeMap.has(e.to)) return null;
-    out.set(e.from, [...(out.get(e.from) ?? []), e]);
-  }
-  if ((out.get("end") ?? []).length !== 0) return null;
-
-  // 沿主链行走：普通节点走唯一出边，条件节点走 true 边
-  const order: WorkflowNode[] = [];
-  const visited = new Set<string>(["start"]);
-  let cur: WorkflowNode = start;
-  for (;;) {
-    const outs = out.get(cur.id) ?? [];
-    let nextId: string;
-    if (cur.type === "condition") {
-      if (outs.length !== 2) return null;
-      const t = outs.find((e) => e.label === "true");
-      const f = outs.find((e) => e.label === "false");
-      if (!t || !f) return null;
-      nextId = t.to;
-    } else {
-      if (outs.length !== 1) return null;
-      nextId = outs[0]!.to;
-    }
-    if (nextId === "end") break;
-    const next = nodeMap.get(nextId);
-    if (!next || visited.has(nextId)) return null;
-    visited.add(nextId);
-    order.push(next);
-    cur = next;
-  }
-  if (order.length !== wf.nodes.length - 2) return null; // 有不可达节点
-
-  // 校验每条边都与子集形态一致（主链边 + 条件 false 边指向下下个节点）
-  const idAt = (i: number): string => (i < order.length ? order[i]!.id : "end");
-  const expected = new Map<string, number>();
-  const expect = (from: string, to: string, label?: string) => {
-    const k = `${from}->${to}:${label ?? ""}`;
-    expected.set(k, (expected.get(k) ?? 0) + 1);
-  };
-  expect("start", idAt(0));
-  order.forEach((n, i) => {
-    if (n.type === "condition") {
-      expect(n.id, idAt(i + 1), "true");
-      expect(n.id, idAt(i + 2), "false");
-    } else {
-      expect(n.id, idAt(i + 1));
-    }
-  });
-  for (const e of wf.edges) {
-    const k = `${e.from}->${e.to}:${e.label ?? ""}`;
-    const left = expected.get(k) ?? 0;
-    if (left <= 0) return null;
-    expected.set(k, left - 1);
-  }
-
-  const steps: FlowStep[] = [];
-  for (const n of order) {
-    const step = nodeToStep(n, wf, data);
-    if (!step) return null;
-    steps.push(step);
-  }
-
-  const settings = wf.settings ?? {};
-  const str = (v: unknown): string => (typeof v === "string" ? v : "");
-  const endConfig = end.config ?? {};
-  const meta: FlowMeta = {
-    statusField: wf.statusField ?? "",
-    initialStatus: str(settings.initialStatus),
-    rejectStatus: str(settings.rejectStatus),
-    finalStatus: str(endConfig.finalStatus),
-    lowStockWebhookUrl: str(settings.lowStockWebhookUrl),
-    ccRoles: Array.isArray(settings.ccRoles)
-      ? settings.ccRoles.filter((x): x is string => typeof x === "string")
-      : [],
-  };
-  return { steps, meta };
-}
-
-function nodeToStep(
-  n: WorkflowNode,
-  wf: WorkflowSchema,
-  data: DataSchema,
-): FlowStep | null {
-  if (n.type === "approval") {
-    const rule = n.assigneeRule ?? {};
-    if (rule.kind !== "role" || typeof rule.role !== "string" || !rule.role)
-      return null;
-    const config = n.config ?? {};
-    const mode = config.mode ?? "any";
-    if (mode !== "any" && mode !== "all") return null;
-    const statusOnEnter = config.statusOnEnter;
-    if (statusOnEnter !== undefined && typeof statusOnEnter !== "string")
-      return null;
-    return {
-      id: n.id,
-      kind: "approval",
-      label: n.label ?? "审批",
-      role: rule.role,
-      mode,
-      ...(statusOnEnter ? { statusOnEnter } : {}),
-    };
-  }
-  if (n.type === "condition") {
-    if (!n.expression) return null;
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*(>=|<=|==|!=|>|<)\s*(.+)$/.exec(
-      n.expression.trim(),
-    );
-    if (!m) return null;
-    let value = m[3]!.trim();
-    if (value.length >= 2 && value.startsWith("'") && value.endsWith("'"))
-      value = value.slice(1, -1);
-    return { id: n.id, kind: "condition", field: m[1]!, op: m[2]!, value };
-  }
-  if (n.type === "task") {
-    const action = n.action ?? {};
-    const kind = action.kind;
-    const label = n.label ?? "自动动作";
-    if (kind === "setStatus") {
-      if (typeof action.value !== "string") return null;
-      return { id: n.id, kind: "action", label, actionKind: "setStatus", statusValue: action.value };
-    }
-    if (kind === "applyInventory") {
-      if (action.mode !== "in" && action.mode !== "out") return null;
-      return { id: n.id, kind: "action", label, actionKind: "applyInventory", invMode: action.mode };
-    }
-    if (kind === "webhook") {
-      if (typeof action.url !== "string") return null;
-      if (action.event !== undefined && typeof action.event !== "string") return null;
-      return {
-        id: n.id,
-        kind: "action",
-        label,
-        actionKind: "webhook",
-        url: action.url,
-        ...(typeof action.event === "string" ? { event: action.event } : {}),
-      };
-    }
-    if (kind === "createRecord") {
-      if (typeof action.entity !== "string" || !action.entity) return null;
-      const target = data.entities.find((e) => e.key === action.entity);
-      if (!target) return null;
-      const fields = (action.fields ?? {}) as Record<string, unknown>;
-      const step: ActionStep = {
-        id: n.id,
-        kind: "action",
-        label,
-        actionKind: "createRecord",
-        targetEntity: action.entity,
-        startWorkflow: action.startWorkflow === true,
-      };
-      for (const [k, raw] of Object.entries(fields)) {
-        const spec = (raw ?? {}) as Record<string, unknown>;
-        if (k === "in_no" && typeof spec.seq === "string") {
-          step.seqPrefix = spec.seq;
-        } else if (k === "warehouse_id" && typeof spec.const === "string") {
-          step.warehouseId = spec.const;
-        } else if (k === "in_date" && spec.today === true) {
-          // 固定映射（{ today: true }），无 UI 参数
-        } else {
-          // 仅认「指向源实体的引用字段 ← { from: "id" }」这一固定映射
-          const f = target.fields.find((x) => x.key === k);
-          if (!f || f.type !== "ref" || f.refEntity !== wf.entity || spec.from !== "id")
-            return null;
-        }
-      }
-      return step;
-    }
-    return null;
-  }
-  return null;
-}
-
-/** 以新步骤/元数据重建 workflow（保留 base 字段与未知 settings 键） */
-export function buildWorkflow(
-  base: WorkflowSchema,
-  steps: FlowStep[],
-  meta: FlowMeta,
-  data: DataSchema,
-): WorkflowSchema {
-  const { nodes, edges } = stepsToGraph(steps, meta, base.entity, data);
-  const settings: Record<string, unknown> = { ...(base.settings ?? {}) };
-  const put = (k: string, v: unknown) => {
-    if (v === undefined || v === "" || (Array.isArray(v) && v.length === 0))
-      delete settings[k];
-    else settings[k] = v;
-  };
-  put("initialStatus", meta.initialStatus || undefined);
-  put("rejectStatus", meta.rejectStatus || undefined);
-  put("lowStockWebhookUrl", meta.lowStockWebhookUrl || undefined);
-  put("ccRoles", meta.ccRoles);
-  return {
-    ...base,
-    statusField: meta.statusField || undefined,
-    settings: Object.keys(settings).length > 0 ? settings : undefined,
-    nodes,
-    edges,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-function emptyWorkflow(appId: string, entity: Entity): WorkflowSchema {
-  const now = new Date().toISOString();
-  const hasStatus = entity.fields.some((f) => f.key === "status");
-  const base: WorkflowSchema = {
-    id: `${appId}:workflow:${entity.key}`,
-    kind: "workflow",
-    version: 1,
-    formatVersion: 1,
-    name: `${entity.label}流程`,
-    entity: entity.key,
-    nodes: [],
-    edges: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-  const meta: FlowMeta = {
-    statusField: hasStatus ? "status" : "",
-    initialStatus: "",
-    rejectStatus: "",
-    finalStatus: "",
-    lowStockWebhookUrl: "",
-    ccRoles: [],
-  };
-  return buildWorkflow(base, [], meta, { entities: [entity] } as DataSchema);
-}
-
-// ---------------------------------------------------------------- 演示流程（契约 §10）
-
-/** 一键生成三条演示流程的步骤模型并序列化；实体不存在的流程跳过 */
-export function demoWorkflows(appId: string, data: DataSchema): WorkflowSchema[] {
-  const byKey = (k: string) => data.entities.find((e) => e.key === k && !e.parentField);
-  const out: WorkflowSchema[] = [];
-  const make = (
-    entity: Entity,
-    meta: FlowMeta,
-    steps: FlowStep[],
-  ): WorkflowSchema => {
-    const now = new Date().toISOString();
-    const base: WorkflowSchema = {
-      id: `${appId}:workflow:${entity.key}`,
-      kind: "workflow",
-      version: 1,
-      formatVersion: 1,
-      name: `${entity.label}流程`,
-      entity: entity.key,
-      nodes: [],
-      edges: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-    return buildWorkflow(base, steps, meta, data);
-  };
-
-  const po = byKey("purchase_order");
-  if (po) {
-    const amountField =
-      po.fields.find((f) => f.key === "total_amount") ??
-      po.fields.find((f) => f.type === "decimal" || f.type === "int");
-    const steps: FlowStep[] = [
-      { id: newStepId(), kind: "approval", label: "主管审批", role: "manager", mode: "any", statusOnEnter: "待审批" },
-    ];
-    if (amountField) {
-      steps.push(
-        { id: newStepId(), kind: "condition", field: amountField.key, op: ">=", value: "5000" },
-        { id: newStepId(), kind: "approval", label: "总监审批", role: "director", mode: "any", statusOnEnter: "主管已批" },
-        { id: newStepId(), kind: "condition", field: amountField.key, op: ">=", value: "50000" },
-        { id: newStepId(), kind: "approval", label: "财务会签", role: "finance", mode: "all", statusOnEnter: "总监已批" },
-      );
-    }
-    if (byKey("stock_in")) {
-      steps.push({
-        id: newStepId(),
-        kind: "action",
-        label: "生成入库单",
-        actionKind: "createRecord",
-        targetEntity: "stock_in",
-        seqPrefix: "IN-",
-        warehouseId: "wh-01",
-        startWorkflow: true,
-      });
-    }
-    out.push(
-      make(
-        po,
-        { statusField: "status", initialStatus: "草稿", rejectStatus: "已驳回", finalStatus: "已通过", lowStockWebhookUrl: "", ccRoles: [] },
-        steps,
-      ),
-    );
-  }
-
-  const stockIn = byKey("stock_in");
-  if (stockIn) {
-    out.push(
-      make(
-        stockIn,
-        { statusField: "", initialStatus: "", rejectStatus: "", finalStatus: "", lowStockWebhookUrl: "", ccRoles: [] },
-        [
-          { id: newStepId(), kind: "approval", label: "仓库确认", role: "warehouse", mode: "any" },
-          { id: newStepId(), kind: "action", label: "库存入账", actionKind: "applyInventory", invMode: "in" },
-        ],
-      ),
-    );
-  }
-
-  const req = byKey("requisition");
-  if (req) {
-    out.push(
-      make(
-        req,
-        { statusField: "status", initialStatus: "待审批", rejectStatus: "已驳回", finalStatus: "已出库", lowStockWebhookUrl: "", ccRoles: [] },
-        [
-          { id: newStepId(), kind: "approval", label: "经理审批", role: "manager", mode: "any", statusOnEnter: "待审批" },
-          { id: newStepId(), kind: "approval", label: "仓库发放", role: "warehouse", mode: "any" },
-          { id: newStepId(), kind: "action", label: "库存发放", actionKind: "applyInventory", invMode: "out" },
-        ],
-      ),
-    );
-  }
-  return out;
-}
+const nodeTypes: NodeTypes = { wf: FlowNodeCard };
 
 // ---------------------------------------------------------------- 小组件
 
@@ -553,7 +154,7 @@ function StatusValueInput({
   value,
   onChange,
   placeholder,
-  width = 190,
+  width = 200,
 }: {
   field: Field | undefined;
   value: string;
@@ -583,27 +184,21 @@ function StatusValueInput({
   );
 }
 
-const KIND_TAG: Record<FlowStep["kind"], { color: string; text: string }> = {
-  approval: { color: "blue", text: "审批" },
-  condition: { color: "orange", text: "条件" },
-  action: { color: "green", text: "动作" },
-};
-
-function stepSummary(step: FlowStep): string {
-  if (step.kind === "approval")
-    return `${step.label} · 角色 ${step.role}${step.mode === "all" ? " · 会签" : ""}`;
-  if (step.kind === "condition")
-    return `当 ${step.field} ${step.op} ${step.value} 时执行下一步骤，否则跳过`;
-  switch (step.actionKind) {
-    case "createRecord":
-      return `${step.label} · 生成记录 → ${step.targetEntity ?? "—"}`;
-    case "applyInventory":
-      return `${step.label} · 库存${step.invMode === "out" ? "出库扣减" : "入库增加"}`;
-    case "setStatus":
-      return `${step.label} · 设置状态 = ${step.statusValue ?? ""}`;
-    case "webhook":
-      return `${step.label} · Webhook ${step.url ?? ""}`;
-  }
+function PanelRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <Typography.Text style={{ width: 92, flexShrink: 0, paddingTop: 5 }}>
+        {label}
+      </Typography.Text>
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------- 主组件
@@ -614,6 +209,8 @@ export interface WorkflowDesignerProps {
   permissions: PermissionSchema | null;
   workflows: WorkflowSchema[] | null;
   onChange: (next: WorkflowSchema[] | null) => void;
+  /** 校验问题回调（已带流程名前缀）；空数组 = 全部合法。用于阻断保存草稿。 */
+  onValidityChange?: (issues: string[]) => void;
 }
 
 export default function WorkflowDesigner({
@@ -622,18 +219,42 @@ export default function WorkflowDesigner({
   permissions,
   workflows,
   onChange,
+  onValidityChange,
 }: WorkflowDesignerProps) {
   const list = workflows ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [newEntityKey, setNewEntityKey] = useState<string | undefined>(undefined);
-
-  const selected = list.find((w) => w.id === selectedId) ?? list[0] ?? null;
-  const parsed = useMemo(
-    () => (selected ? graphToSteps(selected, data) : null),
-    [selected, data],
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  /** 选中态的同步镜像：画布重建（buildNodes/buildEdges）在同一提交周期内读它，避免竞态 */
+  const selRef = useRef<{ node: string | null; edge: string | null }>({
+    node: null,
+    edge: null,
+  });
+  const selectNode = (id: string | null) => {
+    selRef.current.node = id;
+    setSelectedNodeId(id);
+  };
+  const selectEdge = (id: string | null) => {
+    selRef.current.edge = id;
+    setSelectedEdgeId(id);
+  };
+  const [rfNodes, setRfNodes, onNodesChange] = useNodesState<WFNode>([]);
+  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
+  /** 会话内手动坐标（不落库）：key = `${workflowId}:${nodeId}` */
+  const posRef = useRef(new Map<string, { x: number; y: number }>());
+  /**
+   * 动作节点的步骤式字段缓存（会话级）：动作对象只承载当前 kind 的字段，
+   * 切换动作类型时用它保留其他 kind 先前填过的值（与 M5 步骤模型的体验一致）。
+   */
+  const stepCacheRef = useRef(
+    new Map<string, Omit<ActionStep, "id" | "label">>(),
   );
 
+  const selected = list.find((w) => w.id === selectedId) ?? list[0] ?? null;
   const entityOf = (key: string) => data.entities.find((e) => e.key === key);
+  const entity = selected ? entityOf(selected.entity) : undefined;
+
   const roleOptions = useMemo(
     () =>
       permissions
@@ -652,80 +273,246 @@ export default function WorkflowDesigner({
     (e) => !e.parentField && !list.some((w) => w.entity === e.key),
   );
 
-  const commit = (steps: FlowStep[], meta: FlowMeta, name?: string) => {
-    if (!selected || !parsed) return;
-    const base = name !== undefined ? { ...selected, name } : selected;
-    const next = buildWorkflow(base, steps, meta, data);
-    onChange(list.map((w) => (w.id === selected.id ? next : w)));
+  // ------------------------------------------------------------ 校验
+  const allIssues = useMemo(
+    () => validateWorkflowsClient(list, data),
+    [list, data],
+  );
+  const issuesOf = (wfId: string) =>
+    allIssues.filter((i) => i.workflowId === wfId).map((i) => i.message);
+  const selectedIssues = selected ? issuesOf(selected.id) : [];
+
+  const lastSentRef = useRef<string>("");
+  useEffect(() => {
+    if (!onValidityChange) return;
+    const flat = allIssues.map((i) => {
+      const w = list.find((x) => x.id === i.workflowId);
+      return `流程「${w?.name ?? i.workflowId}」${i.message}`;
+    });
+    const key = JSON.stringify(flat);
+    if (key !== lastSentRef.current) {
+      lastSentRef.current = key;
+      onValidityChange(flat);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allIssues, onValidityChange]);
+
+  // ------------------------------------------------------------ 画布同步
+  const buildNodes = (wf: WorkflowSchema): WFNode[] => {
+    const layout = layoutWorkflow(wf);
+    return wf.nodes.map((n) => ({
+      id: n.id,
+      type: "wf" as const,
+      position:
+        posRef.current.get(`${wf.id}:${n.id}`) ??
+        layout.get(n.id) ??
+        { x: 0, y: 0 },
+      data: { wfNode: n, summary: nodeSummary(n, wf, data) },
+      selected: n.id === selRef.current.node,
+    }));
   };
-  const commitSteps = (steps: FlowStep[]) =>
-    parsed && commit(steps, parsed.meta);
-  const commitMeta = (meta: FlowMeta) =>
-    parsed && commit(parsed.steps, meta);
-  const patchStep = (idx: number, patch: Partial<FlowStep>) => {
-    if (!parsed) return;
-    const steps = parsed.steps.map((s, i) =>
-      i === idx ? ({ ...s, ...patch } as FlowStep) : s,
+  const buildEdges = (wf: WorkflowSchema): RFEdge[] =>
+    wf.edges.map((e) => {
+      const cond = nodeById(wf, e.from)?.type === "condition";
+      const color =
+        e.label === "true"
+          ? "#389e0d"
+          : e.label === "false"
+            ? "#cf1322"
+            : "#8c8c8c";
+      return {
+        id: e.id,
+        source: e.from,
+        target: e.to,
+        label: e.label ?? undefined,
+        selected: e.id === selRef.current.edge,
+        style: { stroke: color, strokeWidth: cond ? 1.6 : 1.2 },
+        labelStyle: { fill: color, fontWeight: 700, fontSize: 12 },
+        labelBgStyle: { fill: "#ffffff", fillOpacity: 0.9 },
+        labelBgPadding: [5, 2] as [number, number],
+        labelBgBorderRadius: 3,
+      };
+    });
+
+  const graphSignature = useMemo(
+    () =>
+      selected ? JSON.stringify([selected.nodes, selected.edges]) : "",
+    [selected],
+  );
+
+  useEffect(() => {
+    selectNode(null);
+    selectEdge(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+
+  useEffect(() => {
+    if (!selected) {
+      setRfNodes([]);
+      setRfEdges([]);
+      return;
+    }
+    setRfNodes(buildNodes(selected));
+    setRfEdges(buildEdges(selected));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, graphSignature]);
+
+  // ------------------------------------------------------------ 提交
+  const commit = (next: WorkflowSchema) => {
+    onChange(
+      list.map((w) =>
+        w.id === next.id
+          ? { ...next, updatedAt: new Date().toISOString() }
+          : w,
+      ),
     );
-    commitSteps(steps);
   };
-  const moveStep = (idx: number, dir: -1 | 1) => {
-    if (!parsed) return;
-    const j = idx + dir;
-    if (j < 0 || j >= parsed.steps.length) return;
-    const steps = [...parsed.steps];
-    const tmp = steps[idx]!;
-    steps[idx] = steps[j]!;
-    steps[j] = tmp;
-    commitSteps(steps);
+  const commitAndRender = (next: WorkflowSchema) => {
+    commit(next);
+    setRfNodes(buildNodes(next));
+    setRfEdges(buildEdges(next));
   };
 
-  const addStep = (kind: FlowStep["kind"]) => {
-    if (!parsed || !selected) return;
-    const entity = entityOf(selected.entity);
-    let step: FlowStep;
+  const patchSelectedNode = (nodeId: string, patch: Partial<WorkflowNode>) => {
+    if (!selected) return;
+    commit(patchNode(selected, nodeId, patch));
+  };
+
+  // ------------------------------------------------------------ 画布事件
+  const handleSelectionChange: OnSelectionChangeFunc<WFNode, RFEdge> = ({
+    nodes,
+    edges,
+  }) => {
+    if (nodes.length > 0) {
+      selectNode(nodes[0]!.id);
+      selectEdge(null);
+    } else if (edges.length > 0) {
+      selectEdge(edges[0]!.id);
+      selectNode(null);
+    } else {
+      selectNode(null);
+      selectEdge(null);
+    }
+  };
+
+  const handleConnect = (conn: Connection) => {
+    if (!selected || !conn.source || !conn.target) return;
+    const res = connectNodes(selected, conn.source, conn.target);
+    if (res.error) {
+      void antdMessage.warning(res.error);
+      return;
+    }
+    if (res.wf) commitAndRender(res.wf);
+  };
+
+  const removeNodes = (ids: string[]) => {
+    if (!selected) return;
+    let wf = selected;
+    let blocked = false;
+    for (const id of ids) {
+      const n = nodeById(wf, id);
+      if (!n) continue;
+      if (n.type === "start" || n.type === "end") {
+        blocked = true;
+        continue;
+      }
+      wf = deleteNode(wf, id);
+    }
+    if (blocked) void antdMessage.warning("开始 / 结束节点不可删除");
+    if (wf !== selected) {
+      commit(wf);
+      if (selRef.current.node && !nodeById(wf, selRef.current.node))
+        selectNode(null);
+    }
+    setRfNodes(buildNodes(wf));
+    setRfEdges(buildEdges(wf));
+  };
+
+  const removeEdges = (ids: string[]) => {
+    if (!selected) return;
+    let wf = selected;
+    for (const id of ids) wf = removeEdge(wf, id);
+    if (wf !== selected) {
+      commit(wf);
+      if (
+        selRef.current.edge &&
+        !wf.edges.some((e) => e.id === selRef.current.edge)
+      )
+        selectEdge(null);
+    }
+    setRfNodes(buildNodes(wf));
+    setRfEdges(buildEdges(wf));
+  };
+
+  const autoLayout = () => {
+    if (!selected) return;
+    for (const k of [...posRef.current.keys()]) {
+      if (k.startsWith(`${selected.id}:`)) posRef.current.delete(k);
+    }
+    setRfNodes(buildNodes(selected));
+    setRfEdges(buildEdges(selected));
+  };
+
+  // ------------------------------------------------------------ 物料添加
+  const defaultRole = () =>
+    roleOptions?.[1]?.value ?? roleOptions?.[0]?.value ?? "admin";
+
+  const addNode = (kind: "approval" | "condition" | "action") => {
+    if (!selected) return;
+    const id = newNodeId(new Set(selected.nodes.map((n) => n.id)));
+    let node: WorkflowNode;
     if (kind === "approval") {
-      step = {
-        id: newStepId(),
-        kind: "approval",
+      node = {
+        id,
+        type: "approval",
         label: "审批",
-        role: roleOptions?.[1]?.value ?? roleOptions?.[0]?.value ?? "admin",
-        mode: "any",
+        assigneeRule: { kind: "role", role: defaultRole() },
+        config: { mode: "any" },
       };
     } else if (kind === "condition") {
-      const numField = entity?.fields.find(
-        (f) => f.type === "int" || f.type === "decimal",
-      );
-      step = {
-        id: newStepId(),
-        kind: "condition",
-        field: numField?.key ?? "",
-        op: ">=",
-        value: "",
+      const numField =
+        entity?.fields.find((f) => f.type === "int" || f.type === "decimal") ??
+        entity?.fields[0];
+      const field = numField?.key ?? "";
+      node = {
+        id,
+        type: "condition",
+        label: field ? `条件：${field} >= 0` : "条件",
+        expression: field ? `${field} >= 0` : "",
       };
     } else {
-      step = {
-        id: newStepId(),
+      const target =
+        unboundEntities[0]?.key ??
+        data.entities.find((e) => !e.parentField && e.key !== selected.entity)
+          ?.key ??
+        "";
+      const stepFields: Omit<ActionStep, "id" | "label"> = {
         kind: "action",
-        label: "自动动作",
         actionKind: "createRecord",
-        targetEntity: unboundEntities[0]?.key ?? data.entities.find((e) => !e.parentField && e.key !== selected.entity)?.key ?? "",
+        targetEntity: target,
         seqPrefix: "IN-",
         warehouseId: "wh-01",
         startWorkflow: false,
-        invMode: "in",
-        statusValue: "",
-        url: "",
-        event: "",
+      };
+      node = {
+        id,
+        type: "task",
+        label: "自动动作",
+        action: buildTaskAction(stepFields, null, selected.entity, data),
       };
     }
-    commitSteps([...parsed.steps, step]);
+    const wf = insertNodeAfter(selected, selectedNodeId, node);
+    commit(wf);
+    selectNode(id);
+    selectEdge(null);
+    setRfNodes(buildNodes(wf));
+    setRfEdges(buildEdges(wf));
   };
 
   const createWorkflow = () => {
-    const entity = newEntityKey ? entityOf(newEntityKey) : undefined;
-    if (!entity) return;
-    const wf = emptyWorkflow(appId, entity);
+    const ent = newEntityKey ? entityOf(newEntityKey) : undefined;
+    if (!ent) return;
+    const wf = emptyWorkflow(appId, ent);
     onChange([...list, wf]);
     setSelectedId(wf.id);
     setNewEntityKey(undefined);
@@ -741,7 +528,7 @@ export default function WorkflowDesigner({
   const roleSelect = (
     value: string,
     onRole: (v: string) => void,
-    width = 220,
+    width = "100%",
   ) => {
     if (!roleOptions) {
       return (
@@ -767,14 +554,649 @@ export default function WorkflowDesigner({
     );
   };
 
-  const entity = selected ? entityOf(selected.entity) : undefined;
+  const meta = selected ? metaOf(selected) : null;
   const statusFieldDef = entity?.fields.find(
-    (f) => f.key === (parsed?.meta.statusField || "status"),
+    (f) => f.key === (meta?.statusField || "status"),
   );
+  const selectedNode = selectedNodeId && selected
+    ? (nodeById(selected, selectedNodeId) ?? null)
+    : null;
+  const selectedEdge = selectedEdgeId && selected
+    ? (selected.edges.find((e) => e.id === selectedEdgeId) ?? null)
+    : null;
 
+  const commitMeta = (next: FlowMeta) => {
+    if (!selected) return;
+    commit(withMeta(selected, next));
+  };
+
+  // ------------------------------------------------------------ 属性面板：审批
+  const renderApproval = (
+    node: WorkflowNode,
+    patch: (p: Partial<WorkflowNode>) => void,
+  ) => {
+    const rule = (node.assigneeRule ?? {}) as {
+      kind?: unknown;
+      role?: unknown;
+      username?: unknown;
+    };
+    const cfg = node.config ?? {};
+    const advancedRule = rule.kind !== "role" && rule.kind !== "user";
+    return (
+      <>
+        <PanelRow label="指派方式">
+          <Select
+            style={{ width: "100%" }}
+            disabled={advancedRule}
+            placeholder={advancedRule ? "高级指派规则" : undefined}
+            value={advancedRule ? undefined : (rule.kind as string)}
+            onChange={(v) =>
+              patch({
+                assigneeRule:
+                  v === "user"
+                    ? {
+                        kind: "user",
+                        username:
+                          typeof rule.username === "string"
+                            ? rule.username
+                            : "",
+                      }
+                    : {
+                        kind: "role",
+                        role:
+                          typeof rule.role === "string" && rule.role
+                            ? rule.role
+                            : defaultRole(),
+                      },
+              })
+            }
+            options={[
+              { value: "role", label: "按角色" },
+              { value: "user", label: "指定用户" },
+            ]}
+          />
+        </PanelRow>
+        {advancedRule && (
+          <Alert
+            type="warning"
+            showIcon
+            message="该节点的指派规则为高级形态（如按字段指派），图设计器不改写它；审批模式与进入时状态仍可编辑。"
+          />
+        )}
+        {rule.kind === "role" && (
+          <PanelRow label="审批角色">
+            {roleSelect(
+              typeof rule.role === "string" ? rule.role : "",
+              (v) => patch({ assigneeRule: { kind: "role", role: v } }),
+            )}
+          </PanelRow>
+        )}
+        {rule.kind === "user" && (
+          <PanelRow label="指定用户">
+            <Input
+              placeholder="用户名（如 zhangjing）"
+              value={typeof rule.username === "string" ? rule.username : ""}
+              onChange={(e) =>
+                patch({
+                  assigneeRule: { kind: "user", username: e.target.value },
+                })
+              }
+            />
+          </PanelRow>
+        )}
+        <PanelRow label="审批模式">
+          <Select
+            style={{ width: "100%" }}
+            value={cfg.mode === "all" ? "all" : "any"}
+            onChange={(v) => patch({ config: { ...cfg, mode: v } })}
+            options={[
+              { value: "any", label: "或签（一人通过即可）" },
+              { value: "all", label: "会签（全部通过）" },
+            ]}
+          />
+        </PanelRow>
+        <PanelRow label="进入时状态">
+          <StatusValueInput
+            field={statusFieldDef}
+            value={typeof cfg.statusOnEnter === "string" ? cfg.statusOnEnter : ""}
+            onChange={(v) => {
+              const c: Record<string, unknown> = { ...cfg };
+              if (v) c.statusOnEnter = v;
+              else delete c.statusOnEnter;
+              patch({ config: c });
+            }}
+            placeholder="不设置"
+            width={212}
+          />
+        </PanelRow>
+      </>
+    );
+  };
+
+  // ------------------------------------------------------------ 属性面板：条件
+  const renderCondition = (
+    node: WorkflowNode,
+    patch: (p: Partial<WorkflowNode>) => void,
+  ) => {
+    const expr = node.expression ?? "";
+    const simple = expr ? parseSimpleCondition(expr) : null;
+    const err = expr ? validateExpression(expr) : null;
+    if (simple) {
+      const autoLabel = (f: string, op: string, v: string) =>
+        `条件：${f} ${op} ${v}`;
+      const isAuto =
+        !node.label ||
+        node.label === autoLabel(simple.field, simple.op, simple.value);
+      const applySimple = (f: string, op: string, v: string) =>
+        patch({
+          expression: `${f} ${op} ${literalOf(v)}`,
+          ...(isAuto ? { label: autoLabel(f, op, v) } : {}),
+        });
+      return (
+        <>
+          <PanelRow label="字段">
+            <Select
+              style={{ width: "100%" }}
+              placeholder="选择字段"
+              value={simple.field || undefined}
+              onChange={(v) => applySimple(v, simple.op, simple.value)}
+              options={(entity?.fields ?? []).map((f) => ({
+                value: f.key,
+                label: `${f.label}（${f.key}）`,
+              }))}
+            />
+          </PanelRow>
+          <PanelRow label="运算符">
+            <Select
+              style={{ width: "100%" }}
+              value={simple.op}
+              onChange={(v) => applySimple(simple.field, v, simple.value)}
+              options={OPS.map((o) => ({ value: o, label: o }))}
+            />
+          </PanelRow>
+          <PanelRow label="值">
+            <Input
+              placeholder="如 5000"
+              value={simple.value}
+              onChange={(e) => applySimple(simple.field, simple.op, e.target.value)}
+            />
+          </PanelRow>
+          <PanelRow label="表达式原文">
+            <Typography.Text code style={{ fontSize: 12 }}>
+              {expr}
+            </Typography.Text>
+          </PanelRow>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            语义：条件成立走 true 边、不成立走 false
+            边；两条分支须最终汇合到同一节点或结束节点。
+          </Typography.Text>
+        </>
+      );
+    }
+    return (
+      <>
+        <PanelRow label="表达式">
+          <Input.TextArea
+            rows={3}
+            value={expr}
+            placeholder="如 total_amount >= 5000 && status == '草稿'"
+            onChange={(e) => patch({ expression: e.target.value })}
+          />
+        </PanelRow>
+        {err ? (
+          <Alert type="error" showIcon message={`表达式不合法：${err}`} />
+        ) : expr ? (
+          <Alert
+            type="info"
+            showIcon
+            message="复合表达式模式：含 && / || / 括号的表达式在此直接编辑原文，保存前会做语法校验。"
+          />
+        ) : (
+          <Alert type="warning" showIcon message="尚未设置表达式" />
+        )}
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          单个比较（字段 运算符 值）会自动切换为结构化编辑；条件成立走 true
+          边、不成立走 false 边，两支须最终汇合。
+        </Typography.Text>
+      </>
+    );
+  };
+
+  // ------------------------------------------------------------ 属性面板：自动动作
+  const renderTask = (
+    node: WorkflowNode,
+    patch: (p: Partial<WorkflowNode>) => void,
+  ) => {
+    if (!selected) return null;
+    const kindOptions = [
+      { value: "createRecord", label: "生成记录" },
+      { value: "applyInventory", label: "库存增减" },
+      { value: "setStatus", label: "设置状态" },
+      { value: "webhook", label: "Webhook 通知" },
+    ];
+    const kindSelect = (
+      value: ActionStep["actionKind"] | undefined,
+      onKind: (k: ActionStep["actionKind"]) => void,
+      placeholder?: string,
+    ) => (
+      <Select
+        style={{ width: "100%" }}
+        value={value}
+        placeholder={placeholder}
+        onChange={onKind}
+        options={kindOptions}
+      />
+    );
+    const parsed = node.action
+      ? parseTaskAction(node.action, selected.entity, data)
+      : null;
+
+    if (!parsed) {
+      const kind = (node.action ?? {}).kind;
+      return (
+        <>
+          <PanelRow label="动作类型">
+            {kindSelect(undefined, (k) => {
+              const base = defaultStepForKind(k);
+              stepCacheRef.current.set(node.id, base);
+              patch({
+                action: buildTaskAction(base, null, selected.entity, data),
+              });
+            }, "选择类型以替换当前动作")}
+          </PanelRow>
+          <Alert
+            type="warning"
+            showIcon
+            message="高级动作配置"
+            description={`当前动作（${typeof kind === "string" ? kind : "未设置"}）含图设计器未建模的字段映射，本面板不会改写它；节点可改名、移动、删除与连线。选择上方动作类型可整体替换为可编辑动作。`}
+          />
+        </>
+      );
+    }
+
+    const step: Omit<ActionStep, "id" | "label"> = {
+      ...(stepCacheRef.current.get(node.id) ?? {}),
+      ...parsed.step,
+    };
+    const applyStep = (
+      p: Partial<Omit<ActionStep, "id" | "label">>,
+      exOverride?: TaskActionExtras,
+    ) => {
+      const next = { ...step, ...p };
+      let ex = exOverride ?? parsed.extras;
+      if (p.targetEntity && p.targetEntity !== step.targetEntity) {
+        ex = defaultExtrasFor(entityOf(p.targetEntity), selected.entity);
+      }
+      if (p.seqPrefix !== undefined) ex = { ...ex, hasSeq: true };
+      stepCacheRef.current.set(node.id, next);
+      patch({ action: buildTaskAction(next, ex, selected.entity, data) });
+    };
+    const switchKind = (k: ActionStep["actionKind"]) => {
+      // 与 M5 步骤模型一致：字段对象累积各 kind 的值，切换类型不丢已填字段；
+      // 新类型的缺省值只补空缺（step 已有值优先）。
+      const merged: Omit<ActionStep, "id" | "label"> = {
+        ...defaultStepForKind(k),
+        ...step,
+        actionKind: k,
+      };
+      stepCacheRef.current.set(node.id, merged);
+      patch({
+        action: buildTaskAction(
+          merged,
+          k === "createRecord"
+            ? defaultExtrasFor(
+                entityOf(merged.targetEntity ?? ""),
+                selected.entity,
+              )
+            : null,
+          selected.entity,
+          data,
+        ),
+      });
+    };
+
+    return (
+      <>
+        <PanelRow label="动作类型">
+          {kindSelect(step.actionKind, switchKind)}
+        </PanelRow>
+        {step.actionKind === "createRecord" && (
+          <>
+            <PanelRow label="目标实体">
+              <Select
+                style={{ width: "100%" }}
+                placeholder="选择目标实体"
+                value={step.targetEntity || undefined}
+                onChange={(v) => applyStep({ targetEntity: v })}
+                options={data.entities
+                  .filter((e) => !e.parentField)
+                  .map((e) => ({
+                    value: e.key,
+                    label: `${e.label}（${e.key}）`,
+                  }))}
+              />
+            </PanelRow>
+            <PanelRow label="单号序列前缀">
+              <Input
+                value={step.seqPrefix ?? ""}
+                onChange={(e) => applyStep({ seqPrefix: e.target.value })}
+              />
+            </PanelRow>
+            <PanelRow label="仓库常量">
+              <Input
+                placeholder="wh-01"
+                value={step.warehouseId ?? ""}
+                onChange={(e) => applyStep({ warehouseId: e.target.value })}
+              />
+            </PanelRow>
+            <PanelRow label="自动发起目标流程">
+              <Switch
+                checked={Boolean(step.startWorkflow)}
+                onChange={(v) => applyStep({ startWorkflow: v })}
+              />
+            </PanelRow>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              生成规则：目标实体的单号字段（in_no）按前缀生成序列；指向本实体的引用字段自动填源记录；仓库常量写入
+              warehouse_id（演示主仓库 wh-01，可改）；日期字段（in_date）填当天。
+            </Typography.Text>
+          </>
+        )}
+        {step.actionKind === "applyInventory" && (
+          <>
+            <PanelRow label="模式">
+              <Select
+                style={{ width: "100%" }}
+                value={step.invMode ?? "in"}
+                onChange={(v) =>
+                  applyStep({ invMode: v as "in" | "out" })
+                }
+                options={[
+                  { value: "in", label: "入库（按明细增加库存）" },
+                  { value: "out", label: "出库（按明细扣减库存）" },
+                ]}
+              />
+            </PanelRow>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              入库按本单明细逐项增加库存；出库先校验总量、不足则驳回本次操作。执行后逐物料检查低库存并预警。
+            </Typography.Text>
+          </>
+        )}
+        {step.actionKind === "setStatus" && (
+          <PanelRow label="状态值">
+            <StatusValueInput
+              field={statusFieldDef}
+              value={step.statusValue ?? ""}
+              onChange={(v) => applyStep({ statusValue: v })}
+              placeholder="写入状态字段的值"
+              width={212}
+            />
+          </PanelRow>
+        )}
+        {step.actionKind === "webhook" && (
+          <>
+            <PanelRow label="URL">
+              <Input
+                placeholder="https://…"
+                value={step.url ?? ""}
+                onChange={(e) => applyStep({ url: e.target.value })}
+              />
+            </PanelRow>
+            <PanelRow label="事件名">
+              <Input
+                placeholder="如 order_approved"
+                value={step.event ?? ""}
+                onChange={(e) => applyStep({ event: e.target.value })}
+              />
+            </PanelRow>
+          </>
+        )}
+      </>
+    );
+  };
+
+  const defaultStepForKind = (
+    k: ActionStep["actionKind"],
+  ): Omit<ActionStep, "id" | "label"> => {
+    switch (k) {
+      case "createRecord":
+        return {
+          kind: "action",
+          actionKind: "createRecord",
+          targetEntity:
+            unboundEntities[0]?.key ??
+            data.entities.find(
+              (e) => !e.parentField && e.key !== selected?.entity,
+            )?.key ??
+            "",
+          seqPrefix: "IN-",
+          warehouseId: "wh-01",
+          startWorkflow: false,
+        };
+      case "applyInventory":
+        return { kind: "action", actionKind: "applyInventory", invMode: "in" };
+      case "setStatus":
+        return { kind: "action", actionKind: "setStatus", statusValue: "" };
+      case "webhook":
+        return { kind: "action", actionKind: "webhook", url: "", event: "" };
+    }
+  };
+
+  // ------------------------------------------------------------ 属性面板：节点
+  const renderNodePanel = (node: WorkflowNode) => {
+    const patch = (p: Partial<WorkflowNode>) => patchSelectedNode(node.id, p);
+    const cfg = node.config ?? {};
+    return (
+      <Space direction="vertical" size={12} style={{ display: "flex" }}>
+        <Space size={8}>
+          <Tag color={TYPE_META[node.type].tag}>
+            {TYPE_META[node.type].text}节点
+          </Tag>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {node.id}
+          </Typography.Text>
+        </Space>
+        <PanelRow label="名称">
+          <Input
+            value={node.label ?? ""}
+            placeholder={node.id}
+            onChange={(e) => patch({ label: e.target.value })}
+          />
+        </PanelRow>
+        {node.type === "start" && (
+          <Alert
+            type="info"
+            showIcon
+            message="开始节点：流程入口。记录处于「可发起状态值」（缺省为草稿）时，可从运行态待办中心发起本流程。"
+          />
+        )}
+        {node.type === "approval" && renderApproval(node, patch)}
+        {node.type === "condition" && renderCondition(node, patch)}
+        {node.type === "task" && renderTask(node, patch)}
+        {node.type === "end" && (
+          <>
+            <PanelRow label="完成状态值">
+              <StatusValueInput
+                field={statusFieldDef}
+                value={
+                  typeof cfg.finalStatus === "string" ? cfg.finalStatus : ""
+                }
+                onChange={(v) => {
+                  const c: Record<string, unknown> = { ...cfg };
+                  if (v) c.finalStatus = v;
+                  else delete c.finalStatus;
+                  patch({ config: c });
+                }}
+                placeholder="如：已通过"
+                width={212}
+              />
+            </PanelRow>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              流程到达结束节点时，把完成状态镜像写回记录的状态字段；留空则不写回完成状态。
+            </Typography.Text>
+          </>
+        )}
+        {node.type !== "start" && node.type !== "end" && (
+          <Button danger block onClick={() => removeNodes([node.id])}>
+            删除该节点（自动改接上下游）
+          </Button>
+        )}
+      </Space>
+    );
+  };
+
+  // ------------------------------------------------------------ 属性面板：连线
+  const renderEdgePanel = (edge: WorkflowEdge) => {
+    if (!selected) return null;
+    const from = nodeById(selected, edge.from);
+    const to = nodeById(selected, edge.to);
+    const nameOf = (n?: WorkflowNode) =>
+      n?.label?.trim() ? n.label : (n?.id ?? "?");
+    return (
+      <Space direction="vertical" size={12} style={{ display: "flex" }}>
+        <Space size={8}>
+          <Tag>连线</Tag>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {edge.id}
+          </Typography.Text>
+        </Space>
+        <PanelRow label="来源">
+          <Typography.Text>{nameOf(from)}</Typography.Text>
+        </PanelRow>
+        <PanelRow label="目标">
+          <Typography.Text>{nameOf(to)}</Typography.Text>
+        </PanelRow>
+        {from?.type === "condition" ? (
+          <PanelRow label="分支标签">
+            <Select
+              style={{ width: "100%" }}
+              value={edge.label ?? "true"}
+              onChange={(v) =>
+                commit({
+                  ...selected,
+                  edges: selected.edges.map((e) =>
+                    e.id === edge.id ? { ...e, label: v } : e,
+                  ),
+                })
+              }
+              options={[
+                { value: "true", label: "true（条件成立）" },
+                { value: "false", label: "false（条件不成立）" },
+              ]}
+            />
+          </PanelRow>
+        ) : (
+          <PanelRow label="分支标签">
+            <Typography.Text type="secondary">普通连线无标签</Typography.Text>
+          </PanelRow>
+        )}
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          条件节点的两条出边须分别标记 true 与 false，否则校验不通过。
+        </Typography.Text>
+        <Button danger block onClick={() => removeEdges([edge.id])}>
+          删除连线
+        </Button>
+      </Space>
+    );
+  };
+
+  // ------------------------------------------------------------ 属性面板：基础设置
+  const renderBasePanel = () => {
+    if (!selected || !meta) return null;
+    return (
+      <Space direction="vertical" size={12} style={{ display: "flex" }}>
+        <Typography.Text strong>流程基础设置</Typography.Text>
+        <PanelRow label="绑定实体">
+          <Tag color="blue">
+            {entity?.label ?? selected.entity}（{selected.entity}）
+          </Tag>
+        </PanelRow>
+        <PanelRow label="状态字段">
+          <Select
+            style={{ width: "100%" }}
+            value={meta.statusField}
+            onChange={(v) => commitMeta({ ...meta, statusField: v })}
+            options={[
+              { value: "", label: "（不设置，流程状态不写回记录）" },
+              ...(entity?.fields ?? []).map((f) => ({
+                value: f.key,
+                label: `${f.label}（${f.key}）`,
+              })),
+            ]}
+          />
+        </PanelRow>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          审批进入 / 完成 / 驳回时，流程状态镜像写回该字段。
+        </Typography.Text>
+        <PanelRow label="可发起状态值">
+          <StatusValueInput
+            field={statusFieldDef}
+            value={meta.initialStatus}
+            onChange={(v) => commitMeta({ ...meta, initialStatus: v })}
+            placeholder="缺省：草稿"
+            width={212}
+          />
+        </PanelRow>
+        <PanelRow label="驳回状态值">
+          <StatusValueInput
+            field={statusFieldDef}
+            value={meta.rejectStatus}
+            onChange={(v) => commitMeta({ ...meta, rejectStatus: v })}
+            placeholder="缺省：已驳回"
+            width={212}
+          />
+        </PanelRow>
+        <PanelRow label="完成状态值">
+          <StatusValueInput
+            field={statusFieldDef}
+            value={meta.finalStatus}
+            onChange={(v) => commitMeta({ ...meta, finalStatus: v })}
+            placeholder="如：已通过"
+            width={212}
+          />
+        </PanelRow>
+        <PanelRow label="低库存 Webhook">
+          <Input
+            placeholder="https://…（留空 = 只记录低库存事件，不投递）"
+            value={meta.lowStockWebhookUrl}
+            onChange={(e) =>
+              commitMeta({ ...meta, lowStockWebhookUrl: e.target.value })
+            }
+          />
+        </PanelRow>
+        <PanelRow label="抄送角色">
+          {roleOptions ? (
+            <Select
+              style={{ width: "100%" }}
+              mode="multiple"
+              allowClear
+              placeholder="流程完成 / 驳回时通知这些角色"
+              value={meta.ccRoles}
+              onChange={(v) => commitMeta({ ...meta, ccRoles: v })}
+              options={roleOptions}
+            />
+          ) : (
+            <Select
+              style={{ width: "100%" }}
+              mode="tags"
+              allowClear
+              placeholder="输入角色 key 后回车"
+              value={meta.ccRoles}
+              onChange={(v) => commitMeta({ ...meta, ccRoles: v })}
+            />
+          )}
+        </PanelRow>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          在画布上点选节点编辑其属性，点选连线可改分支标签或删除；从节点右侧圆点拖到另一节点左侧圆点即可连线（条件节点的出边自动补
+          true/false 标签）。
+        </Typography.Text>
+      </Space>
+    );
+  };
+
+  // ------------------------------------------------------------ 布局
   return (
     <div style={{ display: "flex", height: "100%" }}>
-      {/* ------------------------------------------------ 左列：流程列表 */}
+      {/* ------------------------------------------------ 左列：流程列表 + 节点物料 */}
       <div
         style={{
           width: 250,
@@ -795,7 +1217,7 @@ export default function WorkflowDesigner({
           dataSource={list}
           locale={{ emptyText: "尚未建立任何流程" }}
           renderItem={(w) => {
-            const p = graphToSteps(w, data);
+            const wIssues = issuesOf(w.id);
             return (
               <List.Item
                 onClick={() => setSelectedId(w.id)}
@@ -810,9 +1232,14 @@ export default function WorkflowDesigner({
                   <div style={{ fontWeight: 600 }}>{w.name}</div>
                   <div style={{ color: "#9ca3af", fontSize: 12 }}>
                     {entityOf(w.entity)?.label ?? w.entity}（{w.entity}）·{" "}
-                    {p ? `${p.steps.length} 个步骤` : "高级结构"} · 状态字段{" "}
+                    {w.nodes.length} 个节点 · 状态字段{" "}
                     {w.statusField ?? "status"}
                   </div>
+                  {wIssues.length > 0 && (
+                    <div style={{ color: "#cf1322", fontSize: 12 }}>
+                      {wIssues.length} 个校验问题
+                    </div>
+                  )}
                 </div>
               </List.Item>
             );
@@ -831,6 +1258,32 @@ export default function WorkflowDesigner({
               金额≥50000 财务会签 → 自动生成入库单）、入库确认（仓库确认 →
               库存入账）、领用审批发放（经理 → 仓库发放 →
               库存扣减）。生成后进入草稿，核对无误再保存并发布。
+            </Typography.Paragraph>
+          </div>
+        )}
+        {selected && (
+          <div style={{ marginTop: 16 }}>
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+              节点物料
+            </Typography.Text>
+            <Space direction="vertical" size={8} style={{ display: "flex" }}>
+              <Button block onClick={() => addNode("approval")}>
+                + 审批节点
+              </Button>
+              <Button block onClick={() => addNode("condition")}>
+                + 条件节点
+              </Button>
+              <Button block onClick={() => addNode("action")}>
+                + 自动动作
+              </Button>
+            </Space>
+            <Typography.Paragraph
+              type="secondary"
+              style={{ fontSize: 12, marginTop: 8 }}
+            >
+              选中画布节点后添加 = 插入到该节点之后（条件节点接其 true
+              边）；未选中 = 接到主链末尾。画布上可拖线连接节点，Del
+              键删除选中的节点 / 连线。
             </Typography.Paragraph>
           </div>
         )}
@@ -862,43 +1315,54 @@ export default function WorkflowDesigner({
         </div>
       </div>
 
-      {/* ------------------------------------------------ 右列：编辑区 */}
-      <div style={{ flex: 1, padding: 20, overflowY: "auto", background: "#fff", minWidth: 0 }}>
+      {/* ------------------------------------------------ 中列：画布 */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          padding: 12,
+          minWidth: 0,
+          background: "#fff",
+        }}
+      >
         {!selected ? (
           <Typography.Text type="secondary">
             从左侧选择一条流程开始设计，或新建流程 / 初始化演示流程。
           </Typography.Text>
-        ) : !parsed ? (
-          <>
-            <Space size={12} style={{ marginBottom: 12 }}>
-              <Typography.Title level={5} style={{ margin: 0 }}>
-                {selected.name}
-              </Typography.Title>
-              <Tag>{entity?.label ?? selected.entity}</Tag>
-            </Space>
-            <Alert
-              type="warning"
-              showIcon
-              message="该流程为高级结构，步骤视图只读"
-              description={`该流程的节点/边结构超出步骤式编辑子集（共 ${selected.nodes.length} 个节点、${selected.edges.length} 条边），步骤视图无法编辑，本页签不会对它做任何修改。可通过接口或后续的图形编辑器维护。`}
-            />
-          </>
         ) : (
           <>
-            <Space size={12} wrap style={{ marginBottom: 4 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                flexWrap: "wrap",
+                marginBottom: 10,
+              }}
+            >
               <span>
                 流程名称：
                 <Input
                   style={{ width: 220, marginLeft: 8 }}
                   value={selected.name}
                   onChange={(e) =>
-                    commit(parsed.steps, parsed.meta, e.target.value)
+                    commit({ ...selected, name: e.target.value })
                   }
                 />
               </span>
               <Tag color="blue">
                 绑定实体：{entity?.label ?? selected.entity}（{selected.entity}）
               </Tag>
+              {selectedIssues.length > 0 ? (
+                <Tag color="red">{selectedIssues.length} 个校验问题</Tag>
+              ) : (
+                <Tag color="green">校验通过</Tag>
+              )}
+              <div style={{ flex: 1 }} />
+              <Button size="small" onClick={autoLayout}>
+                自动布局
+              </Button>
               <Popconfirm
                 title="删除该流程？"
                 description="流程将从设计草稿中移除；已在运行的流程实例不受影响，发布后新记录不能再发起该流程。"
@@ -911,370 +1375,91 @@ export default function WorkflowDesigner({
                   删除流程
                 </Button>
               </Popconfirm>
-            </Space>
-
-            {/* ------------------------------------------ 基础区 */}
-            <Card size="small" title="基础设置" style={{ marginTop: 12 }}>
-              <Space direction="vertical" size={12} style={{ display: "flex" }}>
-                <Space size={10} wrap>
-                  <Typography.Text style={{ width: 110 }}>状态字段</Typography.Text>
-                  <Select
-                    style={{ width: 240 }}
-                    value={parsed.meta.statusField}
-                    onChange={(v) => commitMeta({ ...parsed.meta, statusField: v })}
-                    options={[
-                      { value: "", label: "（不设置，流程状态不写回记录）" },
-                      ...(entity?.fields ?? []).map((f) => ({
-                        value: f.key,
-                        label: `${f.label}（${f.key}）`,
-                      })),
-                    ]}
-                  />
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    审批进入 / 完成 / 驳回时，流程状态镜像写回该字段
-                  </Typography.Text>
-                </Space>
-                <Space size={10} wrap>
-                  <Typography.Text style={{ width: 110 }}>可发起状态值</Typography.Text>
-                  <StatusValueInput
-                    field={statusFieldDef}
-                    value={parsed.meta.initialStatus}
-                    onChange={(v) => commitMeta({ ...parsed.meta, initialStatus: v })}
-                    placeholder="缺省：草稿"
-                  />
-                  <Typography.Text style={{ width: 110 }}>驳回状态值</Typography.Text>
-                  <StatusValueInput
-                    field={statusFieldDef}
-                    value={parsed.meta.rejectStatus}
-                    onChange={(v) => commitMeta({ ...parsed.meta, rejectStatus: v })}
-                    placeholder="缺省：已驳回"
-                  />
-                  <Typography.Text style={{ width: 110 }}>完成状态值</Typography.Text>
-                  <StatusValueInput
-                    field={statusFieldDef}
-                    value={parsed.meta.finalStatus}
-                    onChange={(v) => commitMeta({ ...parsed.meta, finalStatus: v })}
-                    placeholder="如：已通过"
-                  />
-                </Space>
-                <Space size={10} wrap>
-                  <Typography.Text style={{ width: 110 }}>低库存 Webhook</Typography.Text>
-                  <Input
-                    style={{ width: 430 }}
-                    placeholder="https://…（留空 = 只记录低库存事件，不投递）"
-                    value={parsed.meta.lowStockWebhookUrl}
-                    onChange={(e) =>
-                      commitMeta({ ...parsed.meta, lowStockWebhookUrl: e.target.value })
-                    }
-                  />
-                </Space>
-                <Space size={10} wrap>
-                  <Typography.Text style={{ width: 110 }}>抄送角色</Typography.Text>
-                  {roleOptions ? (
-                    <Select
-                      style={{ width: 430 }}
-                      mode="multiple"
-                      allowClear
-                      placeholder="流程完成 / 驳回时通知这些角色"
-                      value={parsed.meta.ccRoles}
-                      onChange={(v) => commitMeta({ ...parsed.meta, ccRoles: v })}
-                      options={roleOptions}
-                    />
-                  ) : (
-                    <Select
-                      style={{ width: 430 }}
-                      mode="tags"
-                      allowClear
-                      placeholder="输入角色 key 后回车（未建立权限配置时的文本兜底）"
-                      value={parsed.meta.ccRoles}
-                      onChange={(v) => commitMeta({ ...parsed.meta, ccRoles: v })}
-                    />
-                  )}
-                </Space>
-              </Space>
-            </Card>
-
-            {/* ------------------------------------------ 步骤区 */}
-            <div style={{ marginTop: 16 }}>
-              <Typography.Title level={5} style={{ margin: "0 0 8px" }}>
-                步骤（按顺序执行）
-              </Typography.Title>
-              <Space direction="vertical" size={10} style={{ display: "flex" }}>
-                {parsed.steps.map((step, idx) => (
-                  <Card
-                    key={step.id}
-                    size="small"
-                    title={
-                      <Space size={8}>
-                        <span>步骤 {idx + 1}</span>
-                        <Tag color={KIND_TAG[step.kind].color}>
-                          {KIND_TAG[step.kind].text}
-                        </Tag>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {stepSummary(step)}
-                        </Typography.Text>
-                      </Space>
-                    }
-                    extra={
-                      <Space size={4}>
-                        <Button size="small" onClick={() => moveStep(idx, -1)}>
-                          上移
-                        </Button>
-                        <Button size="small" onClick={() => moveStep(idx, 1)}>
-                          下移
-                        </Button>
-                        <Button
-                          size="small"
-                          danger
-                          onClick={() =>
-                            commitSteps(parsed.steps.filter((_, i) => i !== idx))
-                          }
-                        >
-                          删除
-                        </Button>
-                      </Space>
-                    }
-                  >
-                    {step.kind === "approval" && (
-                      <Space size={10} wrap>
-                        <span>
-                          名称：
-                          <Input
-                            style={{ width: 150, marginLeft: 6 }}
-                            value={step.label}
-                            onChange={(e) => patchStep(idx, { label: e.target.value })}
-                          />
-                        </span>
-                        <span>
-                          审批角色：
-                          <span style={{ marginLeft: 6 }}>
-                            {roleSelect(step.role, (v) => patchStep(idx, { role: v }))}
-                          </span>
-                        </span>
-                        <span>
-                          模式：
-                          <Select
-                            style={{ width: 170, marginLeft: 6 }}
-                            value={step.mode}
-                            onChange={(v) => patchStep(idx, { mode: v })}
-                            options={[
-                              { value: "any", label: "或签（一人通过即可）" },
-                              { value: "all", label: "会签（全部通过）" },
-                            ]}
-                          />
-                        </span>
-                        <span>
-                          进入时状态：
-                          <span style={{ marginLeft: 6 }}>
-                            <StatusValueInput
-                              field={statusFieldDef}
-                              value={step.statusOnEnter ?? ""}
-                              onChange={(v) =>
-                                patchStep(idx, { statusOnEnter: v || undefined })
-                              }
-                              placeholder="不设置"
-                              width={150}
-                            />
-                          </span>
-                        </span>
-                      </Space>
-                    )}
-                    {step.kind === "condition" && (
-                      <Space direction="vertical" size={8} style={{ display: "flex" }}>
-                        <Space size={10} wrap>
-                          <span>
-                            字段：
-                            <Select
-                              style={{ width: 200, marginLeft: 6 }}
-                              placeholder="选择数值字段"
-                              value={step.field || undefined}
-                              onChange={(v) => patchStep(idx, { field: v })}
-                              options={(entity?.fields ?? [])
-                                .filter((f) => f.type === "int" || f.type === "decimal")
-                                .map((f) => ({
-                                  value: f.key,
-                                  label: `${f.label}（${f.key}）`,
-                                }))}
-                            />
-                          </span>
-                          <span>
-                            运算符：
-                            <Select
-                              style={{ width: 90, marginLeft: 6 }}
-                              value={step.op}
-                              onChange={(v) => patchStep(idx, { op: v })}
-                              options={OPS.map((o) => ({ value: o, label: o }))}
-                            />
-                          </span>
-                          <span>
-                            值：
-                            <Input
-                              style={{ width: 130, marginLeft: 6 }}
-                              placeholder="如 5000"
-                              value={step.value}
-                              onChange={(e) => patchStep(idx, { value: e.target.value })}
-                            />
-                          </span>
-                        </Space>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          固定语义：条件满足时执行下一步骤；不满足时跳过下一步骤，直接进入再下一步骤（或结束）。
-                        </Typography.Text>
-                      </Space>
-                    )}
-                    {step.kind === "action" && (
-                      <Space direction="vertical" size={8} style={{ display: "flex" }}>
-                        <Space size={10} wrap>
-                          <span>
-                            名称：
-                            <Input
-                              style={{ width: 150, marginLeft: 6 }}
-                              value={step.label}
-                              onChange={(e) => patchStep(idx, { label: e.target.value })}
-                            />
-                          </span>
-                          <span>
-                            动作类型：
-                            <Select
-                              style={{ width: 170, marginLeft: 6 }}
-                              value={step.actionKind}
-                              onChange={(v) => patchStep(idx, { actionKind: v })}
-                              options={[
-                                { value: "createRecord", label: "生成记录" },
-                                { value: "applyInventory", label: "库存增减" },
-                                { value: "setStatus", label: "设置状态" },
-                                { value: "webhook", label: "Webhook 通知" },
-                              ]}
-                            />
-                          </span>
-                        </Space>
-                        {step.actionKind === "createRecord" && (
-                          <Space size={10} wrap>
-                            <span>
-                              目标实体：
-                              <Select
-                                style={{ width: 200, marginLeft: 6 }}
-                                placeholder="选择目标实体"
-                                value={step.targetEntity || undefined}
-                                onChange={(v) => patchStep(idx, { targetEntity: v })}
-                                options={data.entities
-                                  .filter((e) => !e.parentField)
-                                  .map((e) => ({
-                                    value: e.key,
-                                    label: `${e.label}（${e.key}）`,
-                                  }))}
-                              />
-                            </span>
-                            <span>
-                              单号序列前缀：
-                              <Input
-                                style={{ width: 110, marginLeft: 6 }}
-                                value={step.seqPrefix ?? ""}
-                                onChange={(e) => patchStep(idx, { seqPrefix: e.target.value })}
-                              />
-                            </span>
-                            <span>
-                              仓库常量：
-                              <Input
-                                style={{ width: 110, marginLeft: 6 }}
-                                placeholder="wh-01"
-                                value={step.warehouseId ?? ""}
-                                onChange={(e) => patchStep(idx, { warehouseId: e.target.value })}
-                              />
-                            </span>
-                            <span>
-                              自动发起目标流程：
-                              <Switch
-                                style={{ marginLeft: 6 }}
-                                checked={Boolean(step.startWorkflow)}
-                                onChange={(v) => patchStep(idx, { startWorkflow: v })}
-                              />
-                            </span>
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              生成规则：目标实体的单号字段（in_no）按前缀生成序列；指向本实体的引用字段自动填源记录；仓库常量写入
-                              warehouse_id（演示主仓库 wh-01，可改）；日期字段（in_date）填当天。
-                            </Typography.Text>
-                          </Space>
-                        )}
-                        {step.actionKind === "applyInventory" && (
-                          <Space size={10} wrap>
-                            <span>
-                              模式：
-                              <Select
-                                style={{ width: 220, marginLeft: 6 }}
-                                value={step.invMode ?? "in"}
-                                onChange={(v) => patchStep(idx, { invMode: v })}
-                                options={[
-                                  { value: "in", label: "入库（按明细增加库存）" },
-                                  { value: "out", label: "出库（按明细扣减库存）" },
-                                ]}
-                              />
-                            </span>
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              入库按本单明细逐项增加库存；出库先校验总量、不足则驳回本次操作。执行后逐物料检查低库存并预警。
-                            </Typography.Text>
-                          </Space>
-                        )}
-                        {step.actionKind === "setStatus" && (
-                          <span>
-                            状态值：
-                            <span style={{ marginLeft: 6 }}>
-                              <StatusValueInput
-                                field={statusFieldDef}
-                                value={step.statusValue ?? ""}
-                                onChange={(v) => patchStep(idx, { statusValue: v })}
-                                placeholder="写入状态字段的值"
-                                width={190}
-                              />
-                            </span>
-                          </span>
-                        )}
-                        {step.actionKind === "webhook" && (
-                          <Space size={10} wrap>
-                            <span>
-                              URL：
-                              <Input
-                                style={{ width: 320, marginLeft: 6 }}
-                                placeholder="https://…"
-                                value={step.url ?? ""}
-                                onChange={(e) => patchStep(idx, { url: e.target.value })}
-                              />
-                            </span>
-                            <span>
-                              事件名：
-                              <Input
-                                style={{ width: 150, marginLeft: 6 }}
-                                placeholder="如 order_approved"
-                                value={step.event ?? ""}
-                                onChange={(e) => patchStep(idx, { event: e.target.value })}
-                              />
-                            </span>
-                          </Space>
-                        )}
-                      </Space>
-                    )}
-                  </Card>
-                ))}
-                {parsed.steps.length === 0 && (
-                  <Typography.Text type="secondary">
-                    暂无步骤。用下方按钮添加第一个步骤；只有开始与结束的流程会在发起后直接完成。
-                  </Typography.Text>
-                )}
-              </Space>
-              <Space style={{ marginTop: 12 }}>
-                <Button type="primary" ghost onClick={() => addStep("approval")}>
-                  添加审批
-                </Button>
-                <Button type="primary" ghost onClick={() => addStep("condition")}>
-                  添加条件
-                </Button>
-                <Button type="primary" ghost onClick={() => addStep("action")}>
-                  添加自动动作
-                </Button>
-              </Space>
             </div>
+            <div className="wf-canvas-wrap">
+              <ReactFlow
+                key={selected.id}
+                nodes={rfNodes}
+                edges={rfEdges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={handleConnect}
+                onSelectionChange={handleSelectionChange}
+                onNodesDelete={(ns) => removeNodes(ns.map((n) => n.id))}
+                onEdgesDelete={(es) => removeEdges(es.map((e) => e.id))}
+                onNodeDragStop={(_, node) => {
+                  posRef.current.set(
+                    `${selected.id}:${node.id}`,
+                    node.position,
+                  );
+                }}
+                nodeTypes={nodeTypes}
+                deleteKeyCode={["Backspace", "Delete"]}
+                fitView
+                fitViewOptions={{ padding: 0.25 }}
+                minZoom={0.2}
+                maxZoom={1.75}
+              >
+                <Background gap={16} color="#e5e7eb" />
+                <Controls />
+                <MiniMap
+                  pannable
+                  zoomable
+                  style={{ width: 120, height: 80 }}
+                  nodeColor={(n) =>
+                    TYPE_META[
+                      (n.data as WFNodeData | undefined)?.wfNode.type ??
+                        "approval"
+                    ].border
+                  }
+                />
+              </ReactFlow>
+            </div>
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, marginTop: 8 }}
+            >
+              节点坐标仅在本次会话内保留（不随草稿保存），重新打开时自动布局排布。条件分支必须汇合：true
+              / false 两条出边最终到达同一节点或结束节点。
+            </Typography.Text>
           </>
         )}
       </div>
+
+      {/* ------------------------------------------------ 右列：属性 */}
+      {selected && (
+        <div
+          style={{
+            width: 340,
+            borderLeft: "1px solid #f0f0f0",
+            padding: 12,
+            overflowY: "auto",
+            flexShrink: 0,
+            background: "#fff",
+          }}
+        >
+          {selectedIssues.length > 0 && (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`流程校验未通过（${selectedIssues.length}）`}
+              description={
+                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                  {selectedIssues.map((m, i) => (
+                    <li key={i}>{m}</li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
+          {selectedEdge
+            ? renderEdgePanel(selectedEdge)
+            : selectedNode
+              ? renderNodePanel(selectedNode)
+              : renderBasePanel()}
+        </div>
+      )}
     </div>
   );
 }
