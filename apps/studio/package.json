@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "pnpm --filter @lcdp/renderer build && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@lcdp/renderer": "workspace:*",
-    "@naka1205/schema": "0.1.0",
+    "@naka1205/schema": "0.2.0",
     "antd": "^5.27.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

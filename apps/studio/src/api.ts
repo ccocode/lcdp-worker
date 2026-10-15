@@ -1,4 +1,11 @@
-import type { DataSchema } from "@naka1205/schema";
+import type { ComponentNode, DataSchema, PageSchema } from "@naka1205/schema";
+import type {
+  ListResult,
+  Row,
+  RuntimeAdapter,
+  SelectOption,
+} from "@lcdp/renderer";
+import { message as antdMessage } from "antd";
 
 /**
  * 设计台的平台 api 客户端（与运行态同源接口，token 独立存储互不影响）。
@@ -30,13 +37,37 @@ export interface VersionInfo {
   publishedBy: string | null;
   publishedAt: string;
   entityCount: number;
+  pageCount: number;
   current: boolean;
+}
+
+/** 应用配置（主题）：与平台 AppConfigPart 对齐，theme 为自由键值（colorPrimary/borderRadius/logoText 等） */
+export interface AppConfig {
+  theme: Record<string, unknown>;
+}
+
+/** 页面片段定义（与平台 FragmentDef 对齐） */
+export interface FragmentDef {
+  id: string;
+  name: string;
+  root: ComponentNode;
+}
+
+/**
+ * 设计包视图（M3）：数据模型 + 设计页面 + 应用配置 + 片段库。
+ * pages/fragments 为 null 表示该部分尚未建立（页面全走服务端自动派生）。
+ */
+export interface BundleView {
+  schema: DataSchema;
+  pages: PageSchema[] | null;
+  appConfig: AppConfig | null;
+  fragments: FragmentDef[] | null;
 }
 
 export interface DesignData {
   app: AppInfo;
-  published: { version: number; schema: DataSchema } | null;
-  draft: DataSchema | null;
+  published: (BundleView & { version: number }) | null;
+  draft: BundleView | null;
   versions: VersionInfo[];
 }
 
@@ -91,6 +122,13 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export interface DataListParams {
+  limit?: number;
+  offset?: number;
+  filters?: Record<string, string>;
+  sort?: { field: string; dir: "asc" | "desc" };
+}
+
 export const api = {
   async login(
     username: string,
@@ -110,13 +148,14 @@ export const api = {
   async design(appId: string): Promise<DesignData> {
     return apiFetch<DesignData>(`/apps/${encodeURIComponent(appId)}/design`);
   },
+  /** 保存整个设计包为草稿（数据模型 + 页面 + 主题 + 片段），返回服务端归一化后的草稿 */
   async saveDraft(
     appId: string,
-    schema: DataSchema,
-  ): Promise<{ ok: boolean; draft: DataSchema }> {
+    bundle: BundleView,
+  ): Promise<{ ok: boolean; draft: BundleView }> {
     return apiFetch(`/apps/${encodeURIComponent(appId)}/design/draft`, {
       method: "PUT",
-      body: JSON.stringify(schema),
+      body: JSON.stringify(bundle),
     });
   },
   async publish(
@@ -137,4 +176,103 @@ export const api = {
       body: JSON.stringify({ version }),
     });
   },
+
+  // ---------------------------------------------------------- 只读数据（设计器预览取数）
+  async dataList(
+    appId: string,
+    entity: string,
+    params?: DataListParams,
+  ): Promise<ListResult> {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    if (params?.sort) qs.set("sort", `${params.sort.field}:${params.sort.dir}`);
+    for (const [k, v] of Object.entries(params?.filters ?? {})) qs.set(k, v);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return apiFetch<ListResult>(
+      `/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}${suffix}`,
+    );
+  },
+  async dataGet(appId: string, entity: string, id: string): Promise<Row | null> {
+    try {
+      const res = await apiFetch<{ row: Row }>(
+        `/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+      );
+      return res.row;
+    } catch {
+      return null;
+    }
+  },
+  /** 聚合取数（统计卡片/图表预览）：fn=count 不需 field，sum/avg 需数字字段 */
+  async aggregate(
+    appId: string,
+    entity: string,
+    args: {
+      fn: "count" | "sum" | "avg";
+      field?: string;
+      filters?: Record<string, string>;
+    },
+  ): Promise<number> {
+    const qs = new URLSearchParams();
+    qs.set("fn", args.fn);
+    if (args.field) qs.set("field", args.field);
+    for (const [k, v] of Object.entries(args.filters ?? {})) qs.set(k, v);
+    const res = await apiFetch<{ value: unknown }>(
+      `/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
+    );
+    const n = Number(res.value);
+    return Number.isFinite(n) ? n : 0;
+  },
 };
+
+/** 引用下拉的显示标签：优先取语义字段（名称/单号/编码/标题），兜底用 id（与 runtime 的 pickLabel 同逻辑） */
+function pickLabel(row: Row): string {
+  for (const key of ["name", "order_no", "in_no", "req_no", "code", "title"]) {
+    const v = row[key];
+    if (typeof v === "string" && v) return v;
+    if (typeof v === "number") return String(v);
+  }
+  return String(row.id);
+}
+
+/**
+ * 设计器预览适配器：读方法走真实接口（预览看到的是真实数据），
+ * 写方法一律拦截并提示——设计预览不落库，保存/发布只针对 Schema 本身。
+ */
+export function makePreviewAdapter(appId: string): RuntimeAdapter {
+  const blocked = (message: string): never => {
+    antdMessage.error(message);
+    throw new Error(message);
+  };
+  const adapter = {
+    list: (entity: string, params?: DataListParams) =>
+      api.dataList(appId, entity, params),
+    get: (entity: string, id: string) => api.dataGet(appId, entity, id),
+    create: (_entity: string, _data: Row): Promise<Row> =>
+      blocked("设计预览模式：写操作已禁用"),
+    update: (_entity: string, _id: string, _data: Row): Promise<Row> =>
+      blocked("设计预览模式：写操作已禁用"),
+    remove: (_entity: string, _id: string): Promise<void> =>
+      blocked("设计预览模式：写操作已禁用"),
+    aggregate: (
+      entity: string,
+      args: {
+        fn: "count" | "sum" | "avg";
+        field?: string;
+        filters?: Record<string, string>;
+      },
+    ) => api.aggregate(appId, entity, args),
+    options: async (entity: string): Promise<SelectOption[]> => {
+      const res = await api.dataList(appId, entity, { limit: 200 });
+      return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
+    },
+    navigate: (to: string) => {
+      antdMessage.info(`设计预览模式：页面跳转已禁用（目标 ${to}）`);
+    },
+    notify: (message: string, kind?: "ok" | "error") => {
+      if (kind === "error") antdMessage.error(message);
+      else antdMessage.success(message);
+    },
+  };
+  return adapter as RuntimeAdapter;
+}
