@@ -1,0 +1,16 @@
+/* 页面设计器三栏内的 antd Tabs：撑满高度、内容区独立滚动（配合 className="pd-tabs"） */
+.pd-tabs {
+  display: flex;
+  flex-direction: column;
+}
+.pd-tabs > .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+}
+.pd-tabs > .ant-tabs-content-holder > .ant-tabs-content {
+  height: 100%;
+}
+.pd-tabs .ant-tabs-tabpane {
+  height: 100%;
+  overflow-y: auto;
+}

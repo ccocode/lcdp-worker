@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import {
   Alert,
   Button,
@@ -11,12 +12,13 @@ import {
   Select,
   Space,
   Switch,
+  Tabs,
   Tag,
   Tree,
   Typography,
   message as antdMessage,
 } from "antd";
-import type { TreeDataNode } from "antd";
+import type { TreeDataNode, TreeProps } from "antd";
 import { SchemaRenderer, componentCatalog } from "@lcdp/renderer";
 import type {
   ComponentNode,
@@ -28,11 +30,14 @@ import type {
 } from "@naka1205/schema";
 import type { FragmentDef } from "./api.js";
 import { makePreviewAdapter } from "./api.js";
+import "./designer.css";
 
 /**
- * 页面设计器（M3）：页管理 + 物料/画布/属性三栏 + 双设备布局变体 + 片段。
- * 画布即运行态渲染器（design 模式：点选节点、真实数据只读预览）；
- * 所有改动只更新本地设计包状态（经 onPagesChange 上抛），保存/发布走设计器统一按钮。
+ * 页面设计器：三栏 —— 左「组件」（按分类 TAB + 片段 TAB）、中「布局」（页管理工具栏 + 画布）、
+ * 右「属性 / 结构」（TAB）。把组件拖到画布上落位、拖动画布组件调整顺序与层级（结构树亦可拖拽，
+ * 共用同一套树操作）；点选组件即在右栏显示其属性并绑定数据源。画布即运行态渲染器
+ * （design 模式：点选节点、真实数据只读预览）；所有改动只更新本地设计包状态
+ * （经 onPagesChange 上抛），保存/发布走设计器统一按钮。
  */
 
 type CatalogItem = (typeof componentCatalog)[number];
@@ -114,6 +119,89 @@ function reIdTree(node: ComponentNode, existing: Set<string>): ComponentNode {
   return copy;
 }
 
+// ---------------------------------------------------------- 拖拽落点（画布拖拽与结构树拖拽共用同一套树操作）
+type DropPos = "before" | "after" | "inside";
+
+/** 可容纳子节点的组件类型（与渲染器的 children 渲染范围一致） */
+const CONTAINER_TYPES = ["Page", "Container", "Tabs"];
+
+/** 目标节点是否为 dragId 本身或其后代（此时禁止落入，避免成环） */
+function isSelfOrDescendant(
+  root: ComponentNode,
+  dragId: string,
+  targetId: string,
+): boolean {
+  if (dragId === targetId) return true;
+  const drag = findNode(root, dragId);
+  if (!drag) return true;
+  return Boolean(findNode(drag, targetId));
+}
+
+/**
+ * 校验落点并归一化：inside 仅容器可接（非容器自动转 after）；
+ * 根节点无同级，before/after 转为 inside（追加到根子级末尾）。
+ * 不合法返回 null。
+ */
+function resolveDropPos(
+  root: ComponentNode,
+  dragId: string | null,
+  targetId: string,
+  pos: DropPos,
+): DropPos | null {
+  const target = findNode(root, targetId);
+  if (!target) return null;
+  if (dragId) {
+    if (dragId === root.id) return null;
+    if (isSelfOrDescendant(root, dragId, targetId)) return null;
+  }
+  let p = pos;
+  if (p === "inside" && !CONTAINER_TYPES.includes(target.type)) p = "after";
+  if (targetId === root.id && p !== "inside") p = "inside";
+  if (p !== "inside" && !findParent(root, targetId)) return null;
+  return p;
+}
+
+/** 把节点插入到目标位置（pos 已经 resolveDropPos 归一化时不会失败） */
+function insertNodeAt(
+  root: ComponentNode,
+  node: ComponentNode,
+  targetId: string,
+  pos: DropPos,
+): boolean {
+  if (pos === "inside") {
+    const t = findNode(root, targetId);
+    if (!t) return false;
+    t.children = [...(t.children ?? []), node];
+    return true;
+  }
+  const loc = findParent(root, targetId);
+  if (!loc?.parent.children) return false;
+  loc.parent.children.splice(pos === "before" ? loc.index : loc.index + 1, 0, node);
+  return true;
+}
+
+/** 从树上摘下节点（返回摘下的子树，找不到返回 null） */
+function detachNode(root: ComponentNode, id: string): ComponentNode | null {
+  const loc = findParent(root, id);
+  if (!loc?.parent.children) return null;
+  const [n] = loc.parent.children.splice(loc.index, 1);
+  return n ?? null;
+}
+
+/** 移动已有节点到目标位置：先全量校验再摘下插入，不会出现丢节点 */
+function moveNodeTo(
+  root: ComponentNode,
+  dragId: string,
+  targetId: string,
+  pos: DropPos,
+): boolean {
+  const eff = resolveDropPos(root, dragId, targetId, pos);
+  if (!eff) return false;
+  const node = detachNode(root, dragId);
+  if (!node) return false;
+  return insertNodeAt(root, node, targetId, eff);
+}
+
 function toTreeData(node: ComponentNode): TreeDataNode {
   return {
     key: node.id,
@@ -149,6 +237,8 @@ export default function PageDesigner({
   const [newPageRoute, setNewPageRoute] = useState("");
   const [fragOpen, setFragOpen] = useState(false);
   const [fragName, setFragName] = useState("");
+  /** 右栏页签：选中组件（含画布点选/新插入/拖拽落位）即切到「属性」 */
+  const [rightTab, setRightTab] = useState<"props" | "tree">("props");
 
   const adapter = useMemo(() => makePreviewAdapter(appId), [appId]);
 
@@ -349,6 +439,18 @@ export default function PageDesigner({
   };
 
   // ---------------------------------------------------------- 节点级变更
+  /** 数据组件的默认绑定：页面已有实体数据源则自动指向第一个（点击插入与拖拽落入共用） */
+  const prepareNode = (page: PageSchema, node: ComponentNode) => {
+    if (!DATA_TYPES.includes(node.type)) return;
+    const firstEntity = page.dataSources.find((ds) => ds.kind === "entity");
+    if (node.binding && !node.binding.source) {
+      if (firstEntity) node.binding.source = firstEntity.key;
+      else delete node.binding;
+    } else if (!node.binding && firstEntity) {
+      node.binding = { source: firstEntity.key };
+    }
+  };
+
   /** 插入节点并处理数据组件的默认绑定：有现成实体数据源则复用，否则保持未绑定（属性面板提示） */
   const insertNode = (raw: ComponentNode) => {
     if (!currentPage) {
@@ -357,20 +459,14 @@ export default function PageDesigner({
     }
     let insertedId: string | null = null;
     mutatePage((page) => {
-      const node = raw;
-      if (DATA_TYPES.includes(node.type)) {
-        const firstEntity = page.dataSources.find((ds) => ds.kind === "entity");
-        if (node.binding && !node.binding.source) {
-          if (firstEntity) node.binding.source = firstEntity.key;
-          else delete node.binding;
-        } else if (!node.binding && firstEntity) {
-          node.binding = { source: firstEntity.key };
-        }
-      }
-      insertAtPoint(page.root, selectedNodeId, node);
-      insertedId = node.id;
+      prepareNode(page, raw);
+      insertAtPoint(page.root, selectedNodeId, raw);
+      insertedId = raw.id;
     });
-    if (insertedId) setSelectedNodeId(insertedId);
+    if (insertedId) {
+      setSelectedNodeId(insertedId);
+      setRightTab("props");
+    }
   };
 
   const insertCatalogItem = (item: CatalogItem) => {
@@ -389,6 +485,224 @@ export default function PageDesigner({
     }
     const existing = collectIds(currentPage.root);
     insertNode(reIdTree(frag.root, existing));
+  };
+
+  // ---------------------------------------------------------- 拖拽（指针式：物料拖入画布 / 画布节点拖动；结构树拖拽见 onTreeDrop）
+  type DragSource =
+    | { kind: "catalog"; item: CatalogItem; label: string }
+    | { kind: "fragment"; frag: FragmentDef; label: string }
+    | { kind: "node"; nodeId: string; label: string };
+
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    source: DragSource;
+    startX: number;
+    startY: number;
+    active: boolean;
+  } | null>(null);
+  const dropRef = useRef<{ targetId: string; pos: DropPos } | null>(null);
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  const paintedRef = useRef<{ el: HTMLElement; boxShadow: string; outline: string } | null>(null);
+  /** 拖拽刚结束时吞掉随之而来的 click / 画布 onSelect，避免双重插入或选中被改 */
+  const suppressClickRef = useRef(false);
+  const justDraggedRef = useRef(false);
+  const currentPageRef = useRef<PageSchema | null>(null);
+  currentPageRef.current = currentPage;
+  const commitDropRef = useRef<() => void>(() => {});
+
+  const clearPaint = () => {
+    const p = paintedRef.current;
+    if (p) {
+      p.el.style.boxShadow = p.boxShadow;
+      p.el.style.outline = p.outline;
+      paintedRef.current = null;
+    }
+  };
+  const paintDrop = (targetId: string, pos: DropPos) => {
+    const wrap = canvasWrapRef.current;
+    if (!wrap) return;
+    const el = wrap.querySelector<HTMLElement>(`[data-node-id="${targetId}"]`);
+    if (!el) return;
+    if (paintedRef.current?.el === el) clearPaint();
+    if (!paintedRef.current) {
+      paintedRef.current = {
+        el,
+        boxShadow: el.style.boxShadow,
+        outline: el.style.outline,
+      };
+    }
+    if (pos === "inside") {
+      el.style.outline = "2px solid #1677ff";
+      el.style.boxShadow = "inset 0 0 0 2px rgba(22,119,255,0.35)";
+    } else if (pos === "before") {
+      el.style.boxShadow = "inset 0 3px 0 0 #1677ff";
+    } else {
+      el.style.boxShadow = "inset 0 -3px 0 0 #1677ff";
+    }
+  };
+
+  /** 由指针坐标解出落点：命中最内层节点包围盒，上/下缘为同级前/后，容器中段为进入其内 */
+  const resolveDropTarget = (
+    clientX: number,
+    clientY: number,
+  ): { targetId: string; pos: DropPos } | null => {
+    const page = currentPageRef.current;
+    const wrap = canvasWrapRef.current;
+    if (!page || !wrap) return null;
+    const ghost = ghostRef.current;
+    if (ghost) ghost.style.visibility = "hidden";
+    const hit = document.elementFromPoint(clientX, clientY);
+    if (ghost) ghost.style.visibility = "visible";
+    const el = hit?.closest<HTMLElement>("[data-node-id]");
+    if (!el || !wrap.contains(el)) return null;
+    const targetId = el.dataset.nodeId;
+    if (!targetId) return null;
+    const target = findNode(page.root, targetId);
+    if (!target) return null;
+    const rect = el.getBoundingClientRect();
+    const ratio = rect.height > 0 ? (clientY - rect.top) / rect.height : 0.5;
+    let pos: DropPos;
+    if (CONTAINER_TYPES.includes(target.type)) {
+      pos = ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "inside";
+    } else {
+      pos = ratio < 0.5 ? "before" : "after";
+    }
+    const dragId =
+      dragRef.current?.source.kind === "node" ? dragRef.current.source.nodeId : null;
+    const eff = resolveDropPos(page.root, dragId, targetId, pos);
+    return eff ? { targetId, pos: eff } : null;
+  };
+
+  /** 落点提交：与点击插入共用 mutatePage 历史栈，一次拖拽 = 一步撤销 */
+  const commitDrop = () => {
+    const drag = dragRef.current;
+    const drop = dropRef.current;
+    if (!drag || !drop || !currentPageRef.current) return;
+    let landedId: string | null = null;
+    mutatePage((page) => {
+      if (drag.source.kind === "catalog") {
+        const node = drag.source.item.make(genNodeId(collectIds(page.root)));
+        prepareNode(page, node);
+        if (insertNodeAt(page.root, node, drop.targetId, drop.pos)) landedId = node.id;
+      } else if (drag.source.kind === "fragment") {
+        const node = reIdTree(drag.source.frag.root, collectIds(page.root));
+        prepareNode(page, node);
+        if (insertNodeAt(page.root, node, drop.targetId, drop.pos)) landedId = node.id;
+      } else {
+        if (moveNodeTo(page.root, drag.source.nodeId, drop.targetId, drop.pos))
+          landedId = drag.source.nodeId;
+      }
+    });
+    if (landedId) {
+      setSelectedNodeId(landedId);
+      setRightTab("props");
+    }
+  };
+  commitDropRef.current = commitDrop;
+
+  /** 在物料卡片 / 片段行 / 画布节点上按下指针即预备拖拽（移动超过阈值才真正进入拖拽态，普通点击不受影响） */
+  const armDrag = (source: DragSource, e: { clientX: number; clientY: number }) => {
+    dragRef.current = {
+      source,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+    };
+    dropRef.current = null;
+  };
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      if (!drag.active) {
+        if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 6) return;
+        drag.active = true;
+        const ghost = document.createElement("div");
+        ghost.textContent = drag.source.label;
+        ghost.style.cssText =
+          "position:fixed;z-index:9999;pointer-events:none;padding:4px 12px;" +
+          "background:#1677ff;color:#fff;border-radius:6px;font-size:12px;opacity:0.92;" +
+          "transform:translate(-50%,-140%);box-shadow:0 4px 14px rgba(0,0,0,0.25)";
+        document.body.appendChild(ghost);
+        ghostRef.current = ghost;
+      }
+      const ghost = ghostRef.current;
+      if (ghost) {
+        ghost.style.left = `${e.clientX}px`;
+        ghost.style.top = `${e.clientY}px`;
+      }
+      const drop = resolveDropTarget(e.clientX, e.clientY);
+      dropRef.current = drop;
+      clearPaint();
+      if (drop) paintDrop(drop.targetId, drop.pos);
+    };
+    const endDrag = (commit: boolean) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      dragRef.current = null;
+      if (ghostRef.current) {
+        ghostRef.current.remove();
+        ghostRef.current = null;
+      }
+      clearPaint();
+      if (drag.active) {
+        suppressClickRef.current = true;
+        justDraggedRef.current = true;
+        if (commit) commitDropRef.current();
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+          justDraggedRef.current = false;
+        }, 50);
+      }
+      dropRef.current = null;
+    };
+    const onUp = () => endDrag(true);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") endDrag(false);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  /** 画布内按下指针：命中节点即预备拖动该节点（根节点不可拖） */
+  const onCanvasPointerDown = (e: ReactPointerEvent) => {
+    const page = currentPageRef.current;
+    if (!page || e.button !== 0) return;
+    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-node-id]");
+    if (!el || !canvasWrapRef.current?.contains(el)) return;
+    const nodeId = el.dataset.nodeId;
+    if (!nodeId || nodeId === page.root.id) return;
+    const node = findNode(page.root, nodeId);
+    if (!node) return;
+    armDrag({ kind: "node", nodeId, label: node.type }, e);
+  };
+
+  /** 结构树拖拽：antd 的 dropPosition 归一化为 -1 前 / 0 内 / 1 后，与画布拖拽共用 moveNodeTo */
+  const onTreeDrop: TreeProps["onDrop"] = (info) => {
+    if (!currentPage) return;
+    const dragId = String(info.dragNode.key);
+    const targetId = String(info.node.key);
+    const posSegs = String(info.node.pos ?? "").split("-");
+    const rel = info.dropPosition - Number(posSegs[posSegs.length - 1] ?? 0);
+    const pos: DropPos = rel < 0 ? "before" : rel > 0 ? "after" : "inside";
+    let ok = false;
+    mutatePage((page) => {
+      ok = moveNodeTo(page.root, dragId, targetId, pos);
+    });
+    if (ok) setSelectedNodeId(dragId);
+  };
+
+  /** 物料/片段的点击：拖拽刚结束的 click 要吞掉，其余走原点击插入 */
+  const clickInsert = (fn: () => void) => {
+    if (suppressClickRef.current) return;
+    fn();
   };
 
   const patchProps = (nodeId: string, patch: Record<string, unknown>) =>
@@ -1207,7 +1521,7 @@ export default function PageDesigner({
         type="info"
         showIcon
         style={{ margin: "12px 16px 0" }}
-        message="页面改动与数据模型共用一份草稿：调整后记得点右上角「保存草稿」，再发布。画布为运行态真实渲染（只读预览，写操作已禁用），点击画布组件或右侧结构树即可选中节点。"
+        message="页面改动与数据模型共用一份草稿：调整后记得点右上角「保存草稿」，再发布。画布为运行态真实渲染（只读预览，写操作已禁用）：把左栏组件拖到画布上落位，拖动画布中的组件可调整顺序与层级，点选组件后在右栏「属性」里改配置与数据源。"
       />
       {pages === null && (
         <Alert
@@ -1218,193 +1532,122 @@ export default function PageDesigner({
         />
       )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        {/* 页管理列 */}
+        {/* 左栏：组件（分类 TAB + 片段 TAB），拖拽到画布落位或点击添加 */}
         <div
           style={{
             width: 224,
             borderRight: "1px solid #f0f0f0",
-            padding: 12,
-            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
             flexShrink: 0,
+            background: "#fff",
           }}
         >
-          <Typography.Text strong>设计页</Typography.Text>
-          <div style={{ margin: "10px 0" }}>
-            {pagesArr.map((p) => (
-              <div
-                key={p.id}
-                onClick={() => {
-                  setSelectedPageId(p.id);
-                  setSelectedNodeId(null);
-                }}
-                style={{
-                  cursor: "pointer",
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  marginBottom: 6,
-                  background:
-                    currentPage?.id === p.id ? "#e6f4ff" : "rgba(0,0,0,0.02)",
-                }}
-              >
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
-                <div style={{ color: "#9ca3af", fontSize: 12 }}>{p.route}</div>
-                <Space size={4} style={{ marginTop: 4 }}>
-                  {p.menu && !p.menu.hidden ? (
-                    <Tag color="blue">菜单：{p.menu.label}</Tag>
-                  ) : (
-                    <Tag>无菜单</Tag>
-                  )}
-                  <Popconfirm
-                    title={`删除页面「${p.name}」？`}
-                    description="仅删除设计页；若该实体再无设计页覆盖，将恢复自动派生。"
-                    onConfirm={() => deletePage(p)}
-                  >
-                    <Button
-                      size="small"
-                      type="text"
-                      danger
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      删除
-                    </Button>
-                  </Popconfirm>
-                </Space>
-              </div>
-            ))}
-            {pagesArr.length === 0 && (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                暂无设计页
-              </Typography.Text>
-            )}
-          </div>
-          <Space direction="vertical" size={8} style={{ display: "flex" }}>
-            <Select
-              placeholder="从实体生成列表+表单页"
-              value={genEntityKey}
-              onChange={(v) => {
-                setGenEntityKey(null);
-                const entity = topEntities.find((e) => e.key === v);
-                if (entity) generateFromEntity(entity);
-              }}
-              options={topEntities.map((e) => ({
-                value: e.key,
-                label: `${e.label}（${e.key}）`,
-              }))}
-            />
-            <Button block onClick={() => setNewPageOpen(true)}>
-              新建自定义页
-            </Button>
-          </Space>
-          <Typography.Text
-            strong
-            style={{ display: "block", margin: "18px 0 8px" }}
-          >
-            未设计（自动派生）
-          </Typography.Text>
-          {undesigned.map((e) => (
-            <div
-              key={e.key}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                marginBottom: 4,
-                color: "#9ca3af",
-                background: "rgba(0,0,0,0.02)",
-                fontSize: 12,
-              }}
-            >
-              {e.label}（{e.key}） <Tag style={{ marginLeft: 4 }}>自动派生</Tag>
-            </div>
-          ))}
-          {undesigned.length === 0 && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              全部顶层实体均已有设计页
-            </Typography.Text>
-          )}
-        </div>
-
-        {/* 物料 + 片段列 */}
-        <div
-          style={{
-            width: 188,
-            borderRight: "1px solid #f0f0f0",
-            padding: 12,
-            overflowY: "auto",
-            flexShrink: 0,
-          }}
-        >
-          <Typography.Text strong>组件物料</Typography.Text>
-          <Typography.Paragraph
-            type="secondary"
-            style={{ fontSize: 12, margin: "4px 0 8px" }}
-          >
-            点击插入到当前插入点（选中容器进其内、选中普通组件插其后）
-          </Typography.Paragraph>
-          {catalogGroups.map(([category, items]) => (
-            <div key={category} style={{ marginBottom: 12 }}>
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: 12, display: "block", marginBottom: 6 }}
-              >
-                {category}
-              </Typography.Text>
-              <Space direction="vertical" size={6} style={{ display: "flex" }}>
-                {items.map((item) => (
-                  <Button
-                    key={item.type}
-                    block
-                    style={{ height: "auto", padding: "6px 8px", textAlign: "left" }}
-                    onClick={() => insertCatalogItem(item)}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{item.label}</div>
-                    <div
-                      style={{
-                        color: "#9ca3af",
-                        fontSize: 11,
-                        whiteSpace: "normal",
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {item.description}
-                    </div>
-                  </Button>
-                ))}
-              </Space>
-            </div>
-          ))}
-          <Typography.Text strong style={{ display: "block", marginTop: 16 }}>
-            片段
-          </Typography.Text>
-          {(fragments ?? []).map((frag) => (
-            <div
-              key={frag.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "6px 8px",
-                borderRadius: 6,
-                background: "rgba(0,0,0,0.02)",
-                marginTop: 6,
-              }}
-            >
-              <span style={{ flex: 1, fontSize: 13 }}>{frag.name}</span>
-              <Button size="small" onClick={() => insertFragment(frag)}>
-                插入
-              </Button>
-            </div>
-          ))}
-          {(fragments ?? []).length === 0 && (
+          <div style={{ padding: "10px 12px 0" }}>
+            <Typography.Text strong>组件</Typography.Text>
             <Typography.Paragraph
               type="secondary"
-              style={{ fontSize: 12, marginTop: 6 }}
+              style={{ fontSize: 12, margin: "2px 0 0" }}
             >
-              暂无片段。选中任意组件后，在属性面板点「存为片段」即可沉淀复用。
+              拖拽到画布上落位，或点击添加到当前选中位置
             </Typography.Paragraph>
-          )}
+          </div>
+          <Tabs
+            size="small"
+            className="pd-tabs"
+            style={{ flex: 1, minHeight: 0, padding: "0 6px" }}
+            items={[
+              ...catalogGroups.map(([category, items]) => ({
+                key: category,
+                label: category,
+                children: (
+                  <div style={{ padding: "4px 6px 14px" }}>
+                    <Space direction="vertical" size={6} style={{ display: "flex" }}>
+                      {items.map((item) => (
+                        <div
+                          key={item.type}
+                          onPointerDown={(e) =>
+                            armDrag({ kind: "catalog", item, label: item.label }, e)
+                          }
+                          onClick={() =>
+                            clickInsert(() => insertCatalogItem(item))
+                          }
+                          style={{
+                            border: "1px solid #e5e7eb",
+                            borderRadius: 8,
+                            padding: "7px 9px",
+                            cursor: "grab",
+                            userSelect: "none",
+                            touchAction: "none",
+                            background: "#fff",
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>
+                            {item.label}
+                          </div>
+                          <div
+                            style={{
+                              color: "#9ca3af",
+                              fontSize: 11,
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {item.description}
+                          </div>
+                        </div>
+                      ))}
+                    </Space>
+                  </div>
+                ),
+              })),
+              {
+                key: "片段",
+                label: "片段",
+                children: (
+                  <div style={{ padding: "4px 6px 14px" }}>
+                    {(fragments ?? []).map((frag) => (
+                      <div
+                        key={frag.id}
+                        onPointerDown={(e) =>
+                          armDrag({ kind: "fragment", frag, label: frag.name }, e)
+                        }
+                        onClick={() => clickInsert(() => insertFragment(frag))}
+                        style={{
+                          border: "1px solid #e5e7eb",
+                          borderRadius: 8,
+                          padding: "7px 9px",
+                          cursor: "grab",
+                          userSelect: "none",
+                          touchAction: "none",
+                          background: "#fff",
+                          marginBottom: 6,
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>
+                          {frag.name}
+                        </div>
+                        <div style={{ color: "#9ca3af", fontSize: 11 }}>
+                          拖拽到画布，或点击插入（生成新节点 id）
+                        </div>
+                      </div>
+                    ))}
+                    {(fragments ?? []).length === 0 && (
+                      <Typography.Paragraph
+                        type="secondary"
+                        style={{ fontSize: 12 }}
+                      >
+                        暂无片段。在画布选中组件后，在右栏「属性」点「存为片段」即可沉淀复用。
+                      </Typography.Paragraph>
+                    )}
+                  </div>
+                ),
+              },
+            ]}
+          />
         </div>
 
-        {/* 画布列 */}
+        {/* 中栏：布局 —— 页管理并入工具栏，下方为画布（运行态真实渲染 + 拖拽排布） */}
         <div
           style={{
             flex: 1,
@@ -1425,10 +1668,43 @@ export default function PageDesigner({
               flexWrap: "wrap",
             }}
           >
-            <Typography.Text strong>
-              {currentPage ? currentPage.name : "未选择页面"}
-            </Typography.Text>
-            {currentPage && <Tag>{currentPage.route}</Tag>}
+            <Select
+              style={{ width: 200 }}
+              placeholder="选择页面"
+              value={currentPage?.id}
+              onChange={(v) => {
+                setSelectedPageId(v);
+                setSelectedNodeId(null);
+              }}
+              options={pagesArr.map((p) => ({
+                value: p.id,
+                label: `${p.name}（${p.route}）`,
+              }))}
+            />
+            <Select
+              style={{ width: 210 }}
+              placeholder="从实体生成列表+表单页"
+              value={genEntityKey}
+              onChange={(v) => {
+                setGenEntityKey(null);
+                const entity = topEntities.find((e) => e.key === v);
+                if (entity) generateFromEntity(entity);
+              }}
+              options={topEntities.map((e) => ({
+                value: e.key,
+                label: `${e.label}（${e.key}）`,
+              }))}
+            />
+            <Button onClick={() => setNewPageOpen(true)}>新建自定义页</Button>
+            {currentPage && (
+              <Popconfirm
+                title={`删除页面「${currentPage.name}」？`}
+                description="仅删除设计页；若该实体再无设计页覆盖，将恢复自动派生。"
+                onConfirm={() => deletePage(currentPage)}
+              >
+                <Button danger>删除页面</Button>
+              </Popconfirm>
+            )}
             <Segmented
               value={device}
               onChange={(v) => setDevice(v as Device)}
@@ -1453,10 +1729,28 @@ export default function PageDesigner({
             </Button>
             <div style={{ flex: 1 }} />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {device === "desktop" ? "桌面" : "移动"}布局编辑中 · 点画布或结构树选节点
+              {device === "desktop" ? "桌面" : "移动"}布局编辑中 · 拖拽组件排布，点选后在右栏改属性
             </Typography.Text>
           </div>
-          <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+          {undesigned.length > 0 && (
+            <div
+              style={{
+                padding: "6px 14px",
+                background: "#fffbe6",
+                borderBottom: "1px solid #f0f0f0",
+                fontSize: 12,
+                color: "#8c8c8c",
+              }}
+            >
+              未设计（自动派生）：
+              {undesigned.map((e) => `${e.label}（${e.key}）`).join("、")}
+            </div>
+          )}
+          <div
+            ref={canvasWrapRef}
+            onPointerDown={onCanvasPointerDown}
+            style={{ flex: 1, overflow: "auto", padding: 16 }}
+          >
             {currentPage ? (
               <div
                 style={
@@ -1487,20 +1781,24 @@ export default function PageDesigner({
                   device={device}
                   design={{
                     selectedId: selectedNodeId ?? undefined,
-                    onSelect: (id: string) => setSelectedNodeId(id),
+                    onSelect: (id: string) => {
+                      if (justDraggedRef.current) return;
+                      setSelectedNodeId(id);
+                      setRightTab("props");
+                    },
                   }}
                 />
               </div>
             ) : (
               <Empty
-                description="暂无设计页：从左侧「从实体生成」或「新建自定义页」开始"
+                description="暂无设计页：从工具栏「从实体生成」或「新建自定义页」开始"
                 style={{ marginTop: 80 }}
               />
             )}
           </div>
         </div>
 
-        {/* 结构树 + 属性列 */}
+        {/* 右栏：属性 / 结构（TAB）—— 选中组件即显示其属性与数据源绑定 */}
         <div
           style={{
             width: 324,
@@ -1512,49 +1810,71 @@ export default function PageDesigner({
             background: "#fff",
           }}
         >
-          <div
-            style={{
-              padding: 12,
-              borderBottom: "1px solid #f0f0f0",
-              maxHeight: 250,
-              overflow: "auto",
-            }}
-          >
-            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
-              组件结构
-            </Typography.Text>
-            {currentPage ? (
-              <Tree
-                treeData={[toTreeData(currentPage.root)]}
-                selectedKeys={selectedNodeId ? [selectedNodeId] : []}
-                onSelect={(keys) =>
-                  setSelectedNodeId((keys[0] as string | undefined) ?? null)
-                }
-                defaultExpandAll
-                blockNode
-              />
-            ) : (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                无页面
-              </Typography.Text>
-            )}
-          </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-            {currentPage ? (
-              selectedNode && selectedNode.id !== currentPage.root.id ? (
-                renderNodeProps(currentPage, selectedNode)
-              ) : (
-                <>
-                  {selectedNode && renderNodeProps(currentPage, selectedNode)}
-                  {renderPageSettings(currentPage)}
-                </>
-              )
-            ) : (
-              <Typography.Text type="secondary">
-                先从左侧选择或新建一张页面。
-              </Typography.Text>
-            )}
-          </div>
+          <Tabs
+            size="small"
+            className="pd-tabs"
+            activeKey={rightTab}
+            onChange={(k) => setRightTab(k as "props" | "tree")}
+            style={{ flex: 1, minHeight: 0, padding: "0 6px" }}
+            items={[
+              {
+                key: "props",
+                label: "属性",
+                children: (
+                  <div style={{ padding: "4px 8px 14px" }}>
+                    {currentPage ? (
+                      selectedNode && selectedNode.id !== currentPage.root.id ? (
+                        renderNodeProps(currentPage, selectedNode)
+                      ) : (
+                        <>
+                          {selectedNode &&
+                            renderNodeProps(currentPage, selectedNode)}
+                          {renderPageSettings(currentPage)}
+                        </>
+                      )
+                    ) : (
+                      <Typography.Text type="secondary">
+                        先在画布工具栏选择或新建一张页面。
+                      </Typography.Text>
+                    )}
+                  </div>
+                ),
+              },
+              {
+                key: "tree",
+                label: "结构",
+                children: (
+                  <div style={{ padding: "4px 8px 14px" }}>
+                    <Typography.Paragraph
+                      type="secondary"
+                      style={{ fontSize: 12, marginBottom: 8 }}
+                    >
+                      拖拽节点可调整顺序与层级；点选节点后到「属性」页签编辑。
+                    </Typography.Paragraph>
+                    {currentPage ? (
+                      <Tree
+                        treeData={[toTreeData(currentPage.root)]}
+                        selectedKeys={selectedNodeId ? [selectedNodeId] : []}
+                        onSelect={(keys) =>
+                          setSelectedNodeId(
+                            (keys[0] as string | undefined) ?? null,
+                          )
+                        }
+                        draggable
+                        onDrop={onTreeDrop}
+                        defaultExpandAll
+                        blockNode
+                      />
+                    ) : (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        无页面
+                      </Typography.Text>
+                    )}
+                  </div>
+                ),
+              },
+            ]}
+          />
         </div>
       </div>
 
