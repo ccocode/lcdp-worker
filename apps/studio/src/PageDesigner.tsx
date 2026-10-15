@@ -502,8 +502,6 @@ export default function PageDesigner({
   } | null>(null);
   const dropRef = useRef<{ targetId: string; pos: DropPos; axis: "x" | "y" } | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
-  /** 拖拽落点辅助器：贴在目标边缘的方位徽标（↑上方 / ↓下方 / ←左侧 / →右侧 / 移入内部） */
-  const hintRef = useRef<HTMLDivElement | null>(null);
   const paintedRef = useRef<{ el: HTMLElement; boxShadow: string; outline: string } | null>(null);
   /** 拖拽刚结束时吞掉随之而来的 click / 画布 onSelect，避免双重插入或选中被改 */
   const suppressClickRef = useRef(false);
@@ -545,57 +543,6 @@ export default function PageDesigner({
       el.style.boxShadow = "inset 0 3px 0 0 #1677ff";
     } else {
       el.style.boxShadow = "inset 0 -3px 0 0 #1677ff";
-    }
-  };
-
-  /** 落点辅助器文案：把 before/after/inside 翻译成用户看得懂的方位（按流向轴区分左右与上下） */
-  const dropHintText = (pos: DropPos, axis: "x" | "y"): string => {
-    if (pos === "inside") return "移入内部";
-    if (axis === "x") return pos === "before" ? "← 移到左侧" : "→ 移到右侧";
-    return pos === "before" ? "↑ 移到上方" : "↓ 移到下方";
-  };
-
-  /** 显示落点辅助器：徽标锚在目标元素对应边缘的外侧（inside 时居中），随落点实时跟随 */
-  const showDropHint = (targetId: string, pos: DropPos, axis: "x" | "y") => {
-    const wrap = canvasWrapRef.current;
-    if (!wrap) return;
-    const el = wrap.querySelector<HTMLElement>(`[data-node-id="${targetId}"]`);
-    if (!el) return;
-    let hint = hintRef.current;
-    if (!hint) {
-      hint = document.createElement("div");
-      hint.style.cssText =
-        "position:fixed;z-index:10000;pointer-events:none;padding:3px 10px;" +
-        "background:#1677ff;color:#fff;border-radius:999px;font-size:12px;line-height:18px;" +
-        "white-space:nowrap;transform:translate(-50%,-50%);" +
-        "box-shadow:0 4px 14px rgba(0,0,0,0.28)";
-      document.body.appendChild(hint);
-      hintRef.current = hint;
-    }
-    const rect = el.getBoundingClientRect();
-    let x = rect.left + rect.width / 2;
-    let y = rect.top + rect.height / 2;
-    if (pos === "before") {
-      if (axis === "x") x = rect.left - 42;
-      else y = rect.top - 16;
-    } else if (pos === "after") {
-      if (axis === "x") x = rect.right + 42;
-      else y = rect.bottom + 16;
-    }
-    hint.textContent = dropHintText(pos, axis);
-    hint.style.left = `${x}px`;
-    hint.style.top = `${y}px`;
-    hint.style.display = "block";
-  };
-
-  const hideDropHint = () => {
-    if (hintRef.current) hintRef.current.style.display = "none";
-  };
-
-  const removeDropHint = () => {
-    if (hintRef.current) {
-      hintRef.current.remove();
-      hintRef.current = null;
     }
   };
 
@@ -722,12 +669,7 @@ export default function PageDesigner({
       const drop = resolveDropTarget(e.clientX, e.clientY);
       dropRef.current = drop;
       clearPaint();
-      if (drop) {
-        paintDrop(drop.targetId, drop.pos, drop.axis);
-        showDropHint(drop.targetId, drop.pos, drop.axis);
-      } else {
-        hideDropHint();
-      }
+      if (drop) paintDrop(drop.targetId, drop.pos, drop.axis);
     };
     const endDrag = (commit: boolean) => {
       const drag = dragRef.current;
@@ -736,7 +678,6 @@ export default function PageDesigner({
         ghostRef.current.remove();
         ghostRef.current = null;
       }
-      removeDropHint();
       document.body.style.userSelect = "";
       document.body.style.removeProperty("-webkit-user-select");
       clearPaint();
@@ -768,13 +709,13 @@ export default function PageDesigner({
     };
   }, []);
 
-  /** 画布内按下指针：命中节点即预备拖动该节点（根节点不可拖） */
+  /** 画布内按下指针：只有按在组件的拖拽手柄上才预备拖动（根节点无手柄）；组件本体按下只走点选，避免拖动表格/表单内部控件时误移组件 */
   const onCanvasPointerDown = (e: ReactPointerEvent) => {
     const page = currentPageRef.current;
     if (!page || e.button !== 0) return;
-    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-node-id]");
-    if (!el || !canvasWrapRef.current?.contains(el)) return;
-    const nodeId = el.dataset.nodeId;
+    const handle = (e.target as HTMLElement).closest<HTMLElement>("[data-drag-handle]");
+    if (!handle || !canvasWrapRef.current?.contains(handle)) return;
+    const nodeId = handle.dataset.dragHandle;
     if (!nodeId || nodeId === page.root.id) return;
     const node = findNode(page.root, nodeId);
     if (!node) return;
@@ -1630,7 +1571,7 @@ export default function PageDesigner({
         type="info"
         showIcon
         style={{ margin: "12px 16px 0" }}
-        message="页面改动与数据模型共用一份草稿：调整后记得点右上角「保存草稿」，再发布。画布为运行态真实渲染（只读预览，写操作已禁用）：把左栏组件拖到画布上落位，拖动画布中的组件可调整顺序与层级，点选组件后在右栏「属性」里改配置与数据源。"
+        message="页面改动与数据模型共用一份草稿：调整后记得点右上角「保存草稿」，再发布。画布为运行态真实渲染（只读预览，写操作已禁用）：把左栏组件拖到画布上落位；把鼠标移到画布组件上、按住其左上角的拖拽手柄拖动，可精确调整顺序与层级；点选组件后在右栏「属性」里改配置与数据源。"
       />
       {pages === null && (
         <Alert
@@ -1840,7 +1781,7 @@ export default function PageDesigner({
             </Button>
             <div style={{ flex: 1 }} />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {device === "desktop" ? "桌面" : "移动"}布局编辑中 · 拖拽组件排布，点选后在右栏改属性
+              {device === "desktop" ? "桌面" : "移动"}布局编辑中 · 按住组件左上角手柄拖拽排布，点选后在右栏改属性
             </Typography.Text>
           </div>
           {undesigned.length > 0 && (

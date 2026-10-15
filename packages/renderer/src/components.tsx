@@ -983,9 +983,12 @@ export function createDefaultRegistry(): ComponentRegistry {
 function NodeView({
   node,
   registry,
+  isRoot,
 }: {
   node: ComponentNode;
   registry: ComponentRegistry;
+  /** 页面根节点：设计态不挂拖拽手柄（根不可拖） */
+  isRoot?: boolean;
 }) {
   const ctx = useRendererCtx();
   const Comp = registry.get(node.type);
@@ -1000,6 +1003,9 @@ function NodeView({
   return (
     <div
       data-node-id={design ? node.id : undefined}
+      className={
+        design ? `lcdp-node${selected ? " lcdp-node-selected" : ""}` : undefined
+      }
       onClick={
         design?.onSelect
           ? (e) => {
@@ -1014,6 +1020,18 @@ function NodeView({
           : undefined
       }
     >
+      {design && !isRoot && (
+        <div
+          className="lcdp-drag-handle"
+          data-drag-handle={node.id}
+          title="按住手柄拖拽移动此组件"
+        >
+          <span aria-hidden>⠿</span>
+          <span>
+            {typeof node.props?.title === "string" ? node.props.title : node.type}
+          </span>
+        </div>
+      )}
       <Comp node={node}>
         {visibleSortedChildren(node, ctx.device).map((child) => {
           const cl = layoutFor(child, ctx.device);
@@ -1070,7 +1088,7 @@ export function SchemaRenderer({
     <RendererContext.Provider
       value={{ adapter, dataSchema, page, params, device, access, design }}
     >
-      <NodeView node={page.root} registry={reg} />
+      <NodeView node={page.root} registry={reg} isRoot />
     </RendererContext.Provider>
   );
 }
