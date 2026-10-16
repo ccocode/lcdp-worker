@@ -913,9 +913,25 @@ export default function PageDesigner({
       patchView(node.id, { filters: next.length > 0 ? next : undefined });
     const sortField = view.sort?.[0]?.field;
     const sortDir = view.sort?.[0]?.dir ?? "asc";
-    const numericFieldOptions = entity.fields
-      .filter((f) => f.type === "int" || f.type === "decimal")
-      .map((f) => ({ value: f.key, label: `${f.label}（${f.key}）` }));
+    const numericFieldOptions = [
+      ...entity.fields
+        .filter((f) => f.type === "int" || f.type === "decimal")
+        .map((f) => ({ value: f.key, label: `${f.label}（${f.key}）` })),
+      // 跨引用路径（M9 补）：本实体 ref 字段 → 目标实体数字字段，value = <refKey>.<targetKey>
+      // （如库存 quantity 小于 物料→安全库存 material_id.safety_stock，服务端编译为子查询）
+      ...entity.fields
+        .filter((f) => f.type === "ref" && f.refEntity)
+        .flatMap((rf) => {
+          const target = data.entities.find((e) => e.key === rf.refEntity);
+          if (!target) return [];
+          return target.fields
+            .filter((tf) => tf.type === "int" || tf.type === "decimal")
+            .map((tf) => ({
+              value: `${rf.key}.${tf.key}`,
+              label: `${rf.label} → ${tf.label}（${rf.key}.${tf.key}）`,
+            }));
+        }),
+    ];
     return (
       <div style={{ marginBottom: 12 }}>
         <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
