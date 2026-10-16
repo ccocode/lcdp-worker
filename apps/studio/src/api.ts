@@ -310,6 +310,14 @@ export const api = {
     const res = await apiFetch<{ apps: AppInfo[] }>("/apps");
     return res.apps;
   },
+  /** 新建应用（M10 补强）：服务端建 platform_apps 行，设计包由 GET /design 合成起始包 */
+  async createApp(id: string, name: string): Promise<AppInfo> {
+    const res = await apiFetch<{ app: AppInfo }>("/apps", {
+      method: "POST",
+      body: JSON.stringify({ id, name }),
+    });
+    return res.app;
+  },
   async design(appId: string): Promise<DesignData> {
     return apiFetch<DesignData>(`/apps/${encodeURIComponent(appId)}/design`);
   },

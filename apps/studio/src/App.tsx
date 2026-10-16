@@ -174,6 +174,12 @@ function AppsView({
 }) {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** 新建应用对话框（M10 补强） */
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [newAppId, setNewAppId] = useState("");
+  const [newAppName, setNewAppName] = useState("");
 
   useEffect(() => {
     api
@@ -181,6 +187,20 @@ function AppsView({
       .then(setApps)
       .catch((err) => setError(errText(err)));
   }, []);
+
+  const submitCreate = async () => {
+    setCreateBusy(true);
+    setCreateError(null);
+    try {
+      const app = await api.createApp(newAppId.trim(), newAppName.trim());
+      setCreateOpen(false);
+      onOpen(app.id);
+    } catch (err) {
+      setCreateError(errText(err));
+    } finally {
+      setCreateBusy(false);
+    }
+  };
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "36px 24px" }}>
@@ -196,8 +216,47 @@ function AppsView({
           </Typography.Text>
         </div>
         <div style={{ flex: 1 }} />
-        <Button onClick={onLogout}>退出登录</Button>
+        <Space>
+          <Button
+            type="primary"
+            onClick={() => {
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
+          >
+            新建应用
+          </Button>
+          <Button onClick={onLogout}>退出登录</Button>
+        </Space>
       </div>
+      <Modal
+        title="新建应用"
+        open={createOpen}
+        onOk={() => void submitCreate()}
+        onCancel={() => setCreateOpen(false)}
+        confirmLoading={createBusy}
+        okText="创建并进入设计器"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form layout="vertical">
+          <Form.Item label="应用 id（小写字母开头，小写字母/数字/连字符，创建后不可改）" required>
+            <Input
+              value={newAppId}
+              onChange={(e) => setNewAppId(e.target.value)}
+              placeholder="如 xingqiao-cms"
+            />
+          </Form.Item>
+          <Form.Item label="应用名称" required>
+            <Input
+              value={newAppName}
+              onChange={(e) => setNewAppName(e.target.value)}
+              placeholder="如 星桥科技官网 CMS"
+            />
+          </Form.Item>
+          {createError && <Alert type="error" message={createError} />}
+        </Form>
+      </Modal>
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
       )}
