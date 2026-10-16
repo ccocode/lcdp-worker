@@ -614,6 +614,14 @@ export function EntityForm({ node }: NodeProps) {
     typeof node.props?.listRoute === "string" ? node.props.listRoute : "/";
   const id = ctx.params.id;
   const isEdit = Boolean(id);
+  // 权限门控：与 DataTable 的 canCreate 同口径——宿主透传了 access 且本实体无对应
+  // 动作时隐藏工具栏写按钮（只读角色不再看到点了必然 403 的保存/删除；服务端仍为
+  // 权威强制）。无 access（如设计态预览）时不限制，保持设计器内行为不变。
+  const accessActions =
+    entity && ctx.access ? ctx.access[entity.key]?.actions : undefined;
+  const canCreate = !ctx.access || (accessActions?.includes("create") ?? false);
+  const canUpdate = !ctx.access || (accessActions?.includes("update") ?? false);
+  const canDelete = !ctx.access || (accessActions?.includes("delete") ?? false);
   const children = entity ? childEntities(ctx.dataSchema, entity.key) : [];
   const [values, setValues] = useState<Row>({});
   const [childRows, setChildRows] = useState<Record<string, Row[]>>({});
@@ -879,14 +887,16 @@ export function EntityForm({ node }: NodeProps) {
         />
       ))}
       <div style={{ ...styles.toolbar, marginTop: 20 }}>
-        <Button type="primary" loading={saving} onClick={() => void save()}>
-          保存
-        </Button>
+        {(isEdit ? canUpdate : canCreate) && (
+          <Button type="primary" loading={saving} onClick={() => void save()}>
+            保存
+          </Button>
+        )}
         <Button onClick={() => ctx.adapter.navigate(listRoute)}>
           返回列表
         </Button>
         <div style={styles.spacer} />
-        {isEdit && (
+        {isEdit && canDelete && (
           <Button danger onClick={() => void remove()}>
             删除
           </Button>

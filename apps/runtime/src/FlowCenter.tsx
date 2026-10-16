@@ -748,11 +748,11 @@ export default function FlowCenter({
                     </Space>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       审批人：
-                      {t.assigneeUserId ?? t.assigneeRole ?? "—"}
+                      {t.assigneeName ?? t.assigneeRole ?? t.assigneeUserId ?? "—"}
                       {t.actedBy && (
                         <>
                           {" "}
-                          · 处理人：{t.actedBy} · {fmtTime(t.actedAt)}
+                          · 处理人：{t.actedName ?? t.actedBy} · {fmtTime(t.actedAt)}
                         </>
                       )}
                       {t.comment && <> · 意见：{t.comment}</>}
@@ -780,7 +780,7 @@ export default function FlowCenter({
                       type="secondary"
                       style={{ fontSize: 12 }}
                     >
-                      {ev.actor ? `${ev.actor} · ` : ""}
+                      {ev.actor ? `${ev.actorName ?? ev.actor} · ` : ""}
                       {fmtTime(ev.createdAt)}
                     </Typography.Text>
                   </div>

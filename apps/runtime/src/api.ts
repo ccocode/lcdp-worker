@@ -123,6 +123,8 @@ export interface FlowEvent {
   /** start/task_created/approve/reject/urge/task_action/webhook/low_stock/complete/cc */
   kind: string;
   actor: string | null;
+  /** actor 的显示名（服务端按 username 解析 platform_users.display_name；system 等非用户 actor 回退为 actor 原值） */
+  actorName: string | null;
   message: string;
   payload: Record<string, unknown> | null;
   createdAt: string;
@@ -149,10 +151,14 @@ export interface FlowInstanceTask {
   nodeLabel: string;
   assigneeUserId: string | null;
   assigneeRole: string | null;
+  /** 审批人显示名（服务端 COALESCE display_name/username；角色指派未落实到人时为 null） */
+  assigneeName: string | null;
   mode: "any" | "all";
   status: "pending" | "approved" | "rejected" | "cancelled";
   comment: string | null;
   actedBy: string | null;
+  /** 处理人显示名（服务端按 actedBy=username 解析 display_name，回退为 username） */
+  actedName: string | null;
   actedAt: string | null;
   createdAt: string;
 }
