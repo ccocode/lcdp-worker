@@ -992,7 +992,7 @@ export default function PageDesigner({
               ) : (
                 <Input
                   style={{ flex: 1 }}
-                  placeholder="比较值"
+                  placeholder="比较值（$param.参数名 可引用页面参数）"
                   defaultValue={f.value == null ? "" : String(f.value)}
                   key={`${node.id}-f-${i}-${f.op}-${String(f.value ?? "")}`}
                   onBlur={(ev) =>
@@ -1004,6 +1004,19 @@ export default function PageDesigner({
                   }
                 />
               )}
+              <Switch
+                size="small"
+                title="与上一条为或（OR）"
+                checked={f.or === true}
+                disabled={i === 0}
+                onChange={(v) =>
+                  writeFilters(
+                    filters.map((x, j) =>
+                      j === i ? { ...x, or: v || undefined } : x,
+                    ),
+                  )
+                }
+              />
               <Button
                 size="small"
                 danger

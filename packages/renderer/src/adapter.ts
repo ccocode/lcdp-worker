@@ -22,6 +22,8 @@ export interface ViewFilter {
   field: string;
   op: string;
   value?: unknown;
+  /** 或分组（M10 补强）：true = 与上一项为 OR（同组或、组间且），服务端编译时折叠分组 */
+  or?: boolean;
 }
 
 /** 聚合查询参数（统计卡片/图表共用） */

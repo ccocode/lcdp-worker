@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -122,27 +123,78 @@ export function formatCellValue(
   }
 }
 
-/** 数据视图中可经适配器下发的等值过滤（其余算子暂不在此层下发） */
+/**
+ * 数据视图中可经适配器下发的等值过滤（其余算子暂不在此层下发）。
+ * 或组内的项一律不双发：旧 filters 是纯 AND 口径，把或条件的一项当作独立等值条件
+ * 并行下发会把「A 或 B」误作「A 且 B」，故按服务端同一分组规则（or=true 与前一项同组）
+ * 切分组后，成员数 >1 的组整体跳过；单项组维持原口径（op eq 且 value 非空才双发）。
+ */
 export function eqFiltersOf(view: DataView | undefined): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const f of view?.filters ?? []) {
-    if (f.op === "eq" && f.value !== null && f.value !== undefined) {
-      out[f.field] = String(f.value);
+  const filters = view?.filters ?? [];
+  let group: typeof filters = [];
+  const flush = () => {
+    if (group.length === 1) {
+      const f = group[0]!;
+      if (f.op === "eq" && f.value !== null && f.value !== undefined) {
+        out[f.field] = String(f.value);
+      }
+    }
+    group = [];
+  };
+  for (const f of filters) {
+    if (f.or === true && group.length > 0) group.push(f);
+    else {
+      flush();
+      group = [f];
     }
   }
+  flush();
   return out;
 }
 
 /**
  * 数据视图过滤 → 结构化 vf（M9）：全部 op 原样产出（含字段间比较 *Field，其 value 为被比字段 key），
  * 服务端统一编译与权限校验；DataTable/StatCard/Chart 取数一律带 vf（旧 eq filters 兼容并行发送）。
+ * 或分组标记 or 一并透传，服务端编译时折叠为同组 OR、组间 AND。
  */
 export function viewFiltersOf(view: DataView | undefined): ViewFilter[] {
   return (view?.filters ?? []).map((f) => ({
     field: f.field,
     op: f.op,
     value: f.value,
+    or: f.or || undefined,
   }));
+}
+
+/** 过滤值对页面参数的引用形态：$param.<key>（整串严格匹配，key = [A-Za-z0-9_]+） */
+const PARAM_REF_RE = /^\$param\.([A-Za-z0-9_]+)$/;
+
+/**
+ * 过滤参数绑定（M10 补强）：数据视图过滤项的 value 若为 `$param.<key>` 引用，
+ * 以当前页面参数（URL 入参）替换——栏目/搜索等页把条件值留给访问地址决定。
+ * 参数缺失或为空串时剔除该过滤项（页面未带参 = 不按此条件过滤），其余值原样保留；
+ * 返回新 view（sort/pageSize/aggregate 不动），无过滤项时原样返回。
+ */
+export function resolveViewParams(
+  view: DataView | undefined,
+  params: Record<string, string>,
+): DataView | undefined {
+  if (!view?.filters?.length) return view;
+  const filters: NonNullable<DataView["filters"]> = [];
+  for (const f of view.filters) {
+    if (typeof f.value === "string") {
+      const m = PARAM_REF_RE.exec(f.value);
+      if (m) {
+        const v = params[m[1]!];
+        if (v === undefined || v === "") continue;
+        filters.push({ ...f, value: v });
+        continue;
+      }
+    }
+    filters.push(f);
+  }
+  return { ...view, filters };
 }
 
 /**
@@ -250,7 +302,16 @@ export function Page({ node, children }: NodeProps) {
 export function DataTable({ node }: NodeProps) {
   const ctx = useRendererCtx();
   const entity = resolveEntity(ctx, node.binding?.source);
-  const view = node.binding?.view;
+  const rawView = node.binding?.view;
+  const rawViewSig = JSON.stringify(rawView ?? null);
+  const paramsSig = JSON.stringify(ctx.params);
+  // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
+  // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
+  const view = useMemo(
+    () => resolveViewParams(rawView, ctx.params),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawViewSig, paramsSig],
+  );
   const pageSize =
     view?.pageSize ??
     (typeof node.props?.pageSize === "number" ? node.props.pageSize : 20);
@@ -886,7 +947,16 @@ function useAggregateValue(
 ): { entity: Entity | null; value: number | null; error: string | null; denied: boolean } {
   const ctx = useRendererCtx();
   const entity = resolveEntity(ctx, node.binding?.source);
-  const view = node.binding?.view;
+  const rawView = node.binding?.view;
+  const rawViewSig = JSON.stringify(rawView ?? null);
+  const paramsSig = JSON.stringify(ctx.params);
+  // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
+  // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
+  const view = useMemo(
+    () => resolveViewParams(rawView, ctx.params),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawViewSig, paramsSig],
+  );
   const fn = view?.aggregate?.fn ?? (fallbackCount ? "count" : undefined);
   const field = view?.aggregate?.field;
   const filtersSig = JSON.stringify(eqFiltersOf(view));
@@ -1023,7 +1093,16 @@ function GroupedChart({
   entity: Entity;
 }) {
   const ctx = useRendererCtx();
-  const view = node.binding?.view;
+  const rawView = node.binding?.view;
+  const rawViewSig = JSON.stringify(rawView ?? null);
+  const paramsSig = JSON.stringify(ctx.params);
+  // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
+  // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
+  const view = useMemo(
+    () => resolveViewParams(rawView, ctx.params),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawViewSig, paramsSig],
+  );
   const agg = view?.aggregate;
   const fn = agg?.fn ?? "count";
   const field = agg?.field;
@@ -1190,7 +1269,16 @@ export function ChartPlaceholder({ node }: NodeProps) {
 export function ContentList({ node }: NodeProps) {
   const ctx = useRendererCtx();
   const entity = resolveEntity(ctx, node.binding?.source);
-  const view = node.binding?.view;
+  const rawView = node.binding?.view;
+  const rawViewSig = JSON.stringify(rawView ?? null);
+  const paramsSig = JSON.stringify(ctx.params);
+  // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
+  // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
+  const view = useMemo(
+    () => resolveViewParams(rawView, ctx.params),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawViewSig, paramsSig],
+  );
   const pageSize =
     view?.pageSize ??
     (typeof node.props?.pageSize === "number" ? node.props.pageSize : 10);

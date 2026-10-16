@@ -922,15 +922,35 @@ export default function WorkflowDesigner({
           </>
         )}
         {step.actionKind === "setStatus" && (
-          <PanelRow label="状态值">
-            <StatusValueInput
-              field={statusFieldDef}
-              value={step.statusValue ?? ""}
-              onChange={(v) => applyStep({ statusValue: v })}
-              placeholder="写入状态字段的值"
-              width={212}
-            />
-          </PanelRow>
+          <>
+            <PanelRow label="状态值">
+              <StatusValueInput
+                field={statusFieldDef}
+                value={step.statusValue ?? ""}
+                onChange={(v) => applyStep({ statusValue: v })}
+                placeholder="写入状态字段的值"
+                width={212}
+              />
+            </PanelRow>
+            <PanelRow label="盖时间戳字段（可选）">
+              <Select
+                style={{ width: "100%" }}
+                allowClear
+                placeholder="不盖时间戳"
+                value={step.stampField || undefined}
+                onChange={(v) => applyStep({ stampField: v || undefined })}
+                options={(entity?.fields ?? [])
+                  .filter((f) => f.type === "date" || f.type === "datetime")
+                  .map((f) => ({
+                    value: f.key,
+                    label: `${f.label}（${f.key}）`,
+                  }))}
+              />
+            </PanelRow>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              选定后，动作执行时同时给该日期/时间字段写入当前时刻（如文章发布时写发布时间）。
+            </Typography.Text>
+          </>
         )}
         {step.actionKind === "webhook" && (
           <>

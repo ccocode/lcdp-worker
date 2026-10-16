@@ -51,6 +51,8 @@ export interface ActionStep {
   invMode?: "in" | "out";
   // setStatus
   statusValue?: string;
+  /** setStatus 可选：执行时同时给该 date/datetime 字段盖当前时间戳（如发布时写发布时间） */
+  stampField?: string;
   // webhook
   url?: string;
   event?: string;
@@ -168,7 +170,11 @@ export function actionOf(
 ): Record<string, unknown> {
   switch (step.actionKind) {
     case "setStatus":
-      return { kind: "setStatus", value: step.statusValue ?? "" };
+      return {
+        kind: "setStatus",
+        value: step.statusValue ?? "",
+        ...(step.stampField ? { stampField: step.stampField } : {}),
+      };
     case "applyInventory":
       return { kind: "applyInventory", mode: step.invMode ?? "in" };
     case "webhook":
@@ -690,8 +696,18 @@ export function parseTaskAction(
   const extras: TaskActionExtras = { hasSeq: false, hasInDate: false };
   if (kind === "setStatus") {
     if (typeof action.value !== "string") return null;
+    if (action.stampField !== undefined && typeof action.stampField !== "string")
+      return null;
     return {
-      step: { kind: "action", actionKind: "setStatus", statusValue: action.value },
+      step: {
+        kind: "action",
+        actionKind: "setStatus",
+        statusValue: action.value,
+        stampField:
+          typeof action.stampField === "string" && action.stampField
+            ? action.stampField
+            : undefined,
+      },
       extras,
     };
   }
@@ -1075,7 +1091,7 @@ export function nodeSummary(
         case "applyInventory":
           return s.invMode === "out" ? "库存出库扣减" : "库存入库增加";
         case "setStatus":
-          return `设置状态 = ${s.statusValue ?? ""}`;
+          return `设置状态 = ${s.statusValue ?? ""}${s.stampField ? ` · 盖时间戳 ${s.stampField}` : ""}`;
         case "webhook":
           return `Webhook ${s.url ?? ""}`;
       }
@@ -1267,6 +1283,19 @@ export function validateWorkflowsClient(
         } else if (kind === "setStatus") {
           if (typeof action.value !== "string" || !action.value) {
             push(`动作节点「${label}」的 setStatus 缺少 value`);
+          }
+          // 盖时间戳字段（可选，与服务端 flow 引擎同口径）：非空时须为绑定实体的 date/datetime 字段
+          const stamp = action.stampField;
+          if (stamp !== undefined && stamp !== null && stamp !== "") {
+            const sf =
+              typeof stamp === "string"
+                ? entity.fields.find((f) => f.key === stamp)
+                : undefined;
+            if (!sf || (sf.type !== "date" && sf.type !== "datetime")) {
+              push(
+                `动作节点「${label}」的 setStatus 盖时间戳字段须为绑定实体的日期/时间字段: ${String(stamp)}`,
+              );
+            }
           }
         }
       }

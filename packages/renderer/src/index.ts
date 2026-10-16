@@ -42,6 +42,7 @@ export {
   eqFiltersOf,
   formatCellValue,
   registerComponent,
+  resolveViewParams,
   useRendererCtx,
   viewFiltersOf,
 } from "./components.js";
