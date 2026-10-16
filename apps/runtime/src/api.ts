@@ -49,8 +49,14 @@ export interface Snapshot {
   app: AppInfo;
   data: DataSchema;
   pages: PageSchema[];
-  /** 应用配置（主题令牌等），来自设计包的 appConfig */
-  appConfig: { theme: Record<string, unknown> } | null;
+  /** 应用配置（主题令牌等），来自设计包的 appConfig；shell/globalVars 为 M10 起宽松读取（服务端原样回传配置体） */
+  appConfig: {
+    theme: Record<string, unknown>;
+    /** 外壳形态：site = 站点型外壳，其余/缺省 = 系统外壳（M10） */
+    shell?: string;
+    /** 全局变量（站点外壳取 siteSearchRoute / siteFooter 等，M10） */
+    globalVars?: Record<string, unknown>;
+  } | null;
   /** 当前发布版本号（未发布为 null） */
   version: number | null;
   /** 已发布的权限配置（未发布权限时为 null → 旧行为全权） */
@@ -231,7 +237,13 @@ export interface PublicEntryResult {
     pages: PageSchema[];
     /** 仅含公开可读/公开表单涉及的实体定义 */
     data: DataSchema;
-    appConfig: { theme: Record<string, unknown> } | null;
+    appConfig: {
+      theme: Record<string, unknown>;
+      /** 外壳形态：site = 站点型外壳，其余/缺省 = 系统外壳（M10） */
+      shell?: string;
+      /** 全局变量（站点外壳取 siteSearchRoute / siteFooter 等，M10） */
+      globalVars?: Record<string, unknown>;
+    } | null;
     /** 公开策略（决定哪些实体可读、哪些可提交表单） */
     public: PublicPolicy;
   } | null;

@@ -55,6 +55,9 @@ export interface VersionInfo {
 /** 应用配置（主题）：与平台 AppConfigPart 对齐，theme 为自由键值（colorPrimary/borderRadius/logoText 等） */
 export interface AppConfig {
   theme: Record<string, unknown>;
+  /** 外壳形态：system（默认）| site（站点型外壳，顶栏导航 + 页脚），M10 起由应用设置维护 */
+  shell?: string;
+  globalVars?: Record<string, unknown>;
 }
 
 /** 页面片段定义（与平台 FragmentDef 对齐） */

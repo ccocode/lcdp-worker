@@ -24,7 +24,13 @@ import {
 } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import type { DataSchema, Entity, Field, FieldType } from "@naka1205/schema";
-import type { AppInfo, BundleView, DesignData, UserInfo } from "./api.js";
+import type {
+  AppConfig,
+  AppInfo,
+  BundleView,
+  DesignData,
+  UserInfo,
+} from "./api.js";
 import { ApiError, api, getStoredUser, normalizeAgents, storeSession } from "./api.js";
 import PageDesigner from "./PageDesigner.js";
 import Permissions from "./Permissions.js";
@@ -720,7 +726,14 @@ function Designer({
         if (v === undefined) delete next[k];
         else next[k] = v;
       }
-      b.appConfig = { theme: next };
+      // 保留 shell / globalVars 等同级配置，只替换 theme
+      b.appConfig = { ...(b.appConfig ?? { theme: {} }), theme: next };
+    });
+  /** 外壳形态（M10）：写入 appConfig.shell，运行态以入口主应用的该值决定外壳呈现 */
+  const shell = working.appConfig?.shell === "site" ? "site" : "system";
+  const setShell = (v: string) =>
+    updateBundle((b) => {
+      b.appConfig = { ...(b.appConfig ?? { theme: {} }), shell: v };
     });
   const colorPrimary =
     typeof theme.colorPrimary === "string" ? theme.colorPrimary : "#1677ff";
@@ -728,6 +741,27 @@ function Designer({
   const settingsTab = (
     <div style={{ padding: 20, maxWidth: 720 }}>
       <Typography.Title level={5} style={{ marginTop: 0 }}>
+        外壳形态
+      </Typography.Title>
+      <Space size={10}>
+        <Typography.Text style={{ width: 90 }}>运行外壳</Typography.Text>
+        <Select
+          style={{ width: 320 }}
+          value={shell}
+          onChange={setShell}
+          options={[
+            { value: "system", label: "系统外壳（侧边导航 · 内部系统）" },
+            { value: "site", label: "站点外壳（顶栏导航 + 页脚 · 公开站点）" },
+          ]}
+        />
+      </Space>
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 12, marginTop: 8, maxWidth: 560 }}
+      >
+        入口以本应用为主应用（装配顺序首位）时，运行态登录面与公开面按所选外壳呈现；作为次应用装配进其他入口时，外壳由该入口的主应用决定。
+      </Typography.Paragraph>
+      <Typography.Title level={5} style={{ marginTop: 28 }}>
         主题
       </Typography.Title>
       {!working.appConfig ? (
@@ -789,8 +823,18 @@ function Designer({
             <div>
               <Popconfirm
                 title="停用自定义主题？"
-                description="主题配置将从草稿中移除，发布后运行态恢复平台默认主题。"
-                onConfirm={() => updateBundle((b) => (b.appConfig = null))}
+                description="主题配置将从草稿中移除，发布后运行态恢复平台默认主题（外壳形态等其他配置保留）。"
+                onConfirm={() =>
+                  updateBundle((b) => {
+                    if (!b.appConfig) return;
+                    // 只清主题：shell / globalVars 等同级配置保留；无其余配置时回到未启用态
+                    const rest: AppConfig = { ...b.appConfig, theme: {} };
+                    const hasOther = Object.keys(rest).some(
+                      (k) => k !== "theme",
+                    );
+                    b.appConfig = hasOther ? rest : null;
+                  })
+                }
               >
                 <Button danger>停用自定义主题</Button>
               </Popconfirm>

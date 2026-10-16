@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Alert,
   Badge,
@@ -19,6 +20,7 @@ import { SchemaRenderer } from "@lcdp/renderer";
 import type { EntityAccess } from "@lcdp/renderer";
 import type { DataSchema, PageSchema } from "@naka1205/schema";
 import type {
+  AppInfo,
   AssistantContext,
   EntryResult,
   PublicEntryResult,
@@ -43,6 +45,11 @@ import FlowCenter from "./FlowCenter.js";
  *   入口模式  #<页面路由>?<页面参数>
  *   预览模式  #/app/<appId><页面路由>?<页面参数>（设计台「在运行态打开」兼容）
  *   待办中心  #/flow（外壳级视图，入口/预览模式均可达，侧边菜单顶部固定入口）
+ * M10 起入口视图为多应用装配：加载入口全部应用的已发布快照，页面取并集
+ * （每页带所属 appId，路由冲突按入口应用顺序先到先得），菜单跨应用合并，
+ * 当前页以其所属应用的快照与适配器渲染；待办/助手跟随当前页所属应用。
+ * 入口主应用（首个应用）appConfig.shell = "site" 时走站点型外壳
+ * （顶栏品牌 + 横排导航 + 搜索 + 页脚），公开面与登录态共用同一形态。
  * 界面统一走 Ant Design 组件（与设计文档的 UI 选型一致）。
  */
 
@@ -125,7 +132,7 @@ export default function App() {
         />
       ) : previewAppId ? (
         <AppView
-          appId={previewAppId}
+          apps={[{ id: previewAppId, name: "", scenario: null }]}
           inPath={previewInPath}
           params={route.params}
           user={user}
@@ -277,9 +284,156 @@ function AnonGate({
   return <LoginView onLoggedIn={onLoggedIn} />;
 }
 
+/* ---------- appConfig 宽松读取（M10：shell / globalVars / theme.logoText） ---------- */
+
+/** 应用配置视图：快照原样回传设计包 appConfig 体，这里只取外壳关心的键 */
+interface AppConfigView {
+  theme?: Record<string, unknown>;
+  shell?: string;
+  globalVars?: Record<string, unknown>;
+}
+
+function configOf(
+  raw: { theme: Record<string, unknown> } | null | undefined,
+): AppConfigView | null {
+  return (raw as AppConfigView | null | undefined) ?? null;
+}
+
+/** 外壳形态：主应用 appConfig.shell === "site" 为站点型，其余（含缺省）为系统型 */
+function isSiteShell(cfg: AppConfigView | null): boolean {
+  return cfg?.shell === "site";
+}
+
+function globalVarText(
+  cfg: AppConfigView | null,
+  key: string,
+): string | undefined {
+  const v = cfg?.globalVars?.[key];
+  return typeof v === "string" && v.trim() ? v : undefined;
+}
+
+/** 品牌文案：主题 logoText 优先（设计台「Logo 文案」口径），缺省用应用/站点名 */
+function brandTextOf(cfg: AppConfigView | null, fallback: string): string {
+  const logo = cfg?.theme?.logoText;
+  return typeof logo === "string" && logo.trim() ? logo : fallback;
+}
+
+/** 站点页脚文案：globalVars.siteFooter 优先，缺省给一行版权占位 */
+function siteFooterText(cfg: AppConfigView | null, brand: string): string {
+  return (
+    globalVarText(cfg, "siteFooter") ??
+    `© ${new Date().getFullYear()} ${brand} 版权所有`
+  );
+}
+
+/** 站点横排导航：把菜单项拍平（分组展开为其子项，组标题不进横排） */
+function flatNavItems(items: MenuProps["items"]): MenuProps["items"] {
+  const out: NonNullable<MenuProps["items"]> = [];
+  for (const item of items ?? []) {
+    if (!item) continue;
+    const anyItem = item as { type?: string; children?: MenuProps["items"] };
+    if (anyItem.type === "group" && Array.isArray(anyItem.children)) {
+      out.push(...(flatNavItems(anyItem.children) ?? []));
+    } else {
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+/**
+ * 站点型页眉（公开面与登录态共用）：品牌区 + 横排栏目导航 + 搜索框（可选） + 右侧区。
+ * 搜索框仅在配置了 globalVars.siteSearchRoute 时出现，提交跳该路由并带 ?q= 关键词。
+ */
+function SiteHeader({
+  brand,
+  navItems,
+  selectedKey,
+  onNavigate,
+  searchRoute,
+  right,
+}: {
+  brand: string;
+  navItems: MenuProps["items"];
+  selectedKey: string | null;
+  onNavigate: (route: string) => void;
+  searchRoute?: string;
+  right?: ReactNode;
+}) {
+  return (
+    <Layout.Header
+      style={{
+        background: "#fff",
+        borderBottom: "1px solid #f0f0f0",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        padding: "0 20px",
+      }}
+    >
+      <span
+        style={{
+          fontWeight: 700,
+          fontSize: 16,
+          whiteSpace: "nowrap",
+          cursor: "pointer",
+        }}
+        onClick={() => onNavigate("/")}
+      >
+        {brand}
+      </span>
+      <Menu
+        mode="horizontal"
+        selectedKeys={selectedKey ? [selectedKey] : []}
+        items={navItems}
+        onClick={({ key }) => onNavigate(key)}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          borderBottom: "none",
+          background: "transparent",
+        }}
+      />
+      {searchRoute && (
+        <Input.Search
+          placeholder="搜索"
+          allowClear
+          style={{ width: 200, flexShrink: 0 }}
+          onSearch={(q) => {
+            const kw = q.trim();
+            if (kw) {
+              onNavigate(`${searchRoute}?q=${encodeURIComponent(kw)}`);
+            }
+          }}
+        />
+      )}
+      {right}
+    </Layout.Header>
+  );
+}
+
+/** 站点型页脚：居中一行文案（配置文案或版权占位） */
+function SiteFooter({ text }: { text: string }) {
+  return (
+    <Layout.Footer
+      style={{
+        textAlign: "center",
+        color: "#8c8c8c",
+        background: "#fafafa",
+        borderTop: "1px solid #f0f0f0",
+        padding: "18px 24px",
+      }}
+    >
+      {text}
+    </Layout.Footer>
+  );
+}
+
 /**
  * 公开外壳（匿名访客）：顶栏应用名 + 登录按钮；菜单走与登录外壳同一套页面 menu 装配；
  * 内容由公开适配器渲染（服务端按公开策略整形数据）、应用主题同样生效。
+ * M10：主应用 shell = site 时演进为站点形态（品牌顶栏 + 横排栏目导航 + 搜索 + 页脚、无侧栏）；
+ * 非 site 的公开页（如采购公开目录）保持原顶栏 + 侧栏形态不变。
  */
 function PublicShell({
   primary,
@@ -327,6 +481,46 @@ function PublicShell({
     return entities;
   }, [primary]);
 
+  const content = current ? (
+    <SchemaRenderer
+      page={current}
+      dataSchema={primary.data}
+      adapter={adapter}
+      params={params}
+      device={device}
+      access={access}
+    />
+  ) : (
+    <Typography.Text type="secondary">页面不存在：{inPath}</Typography.Text>
+  );
+
+  const cfg = configOf(primary.appConfig);
+  if (isSiteShell(cfg)) {
+    const brand = brandTextOf(cfg, primary.name);
+    return (
+      <ConfigProvider locale={zhCN} theme={{ token }}>
+        <Layout style={{ minHeight: "100vh" }}>
+          <SiteHeader
+            brand={brand}
+            navItems={flatNavItems(menu.items)}
+            selectedKey={current ? current.route : null}
+            onNavigate={goPage}
+            searchRoute={globalVarText(cfg, "siteSearchRoute")}
+            right={
+              <Button type="primary" onClick={onLogin}>
+                登录
+              </Button>
+            }
+          />
+          <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
+            {content}
+          </Layout.Content>
+          <SiteFooter text={siteFooterText(cfg, brand)} />
+        </Layout>
+      </ConfigProvider>
+    );
+  }
+
   return (
     <ConfigProvider locale={zhCN} theme={{ token }}>
       <Layout style={{ minHeight: "100vh" }}>
@@ -364,20 +558,7 @@ function PublicShell({
             />
           </Layout.Sider>
           <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
-            {current ? (
-              <SchemaRenderer
-                page={current}
-                dataSchema={primary.data}
-                adapter={adapter}
-                params={params}
-                device={device}
-                access={access}
-              />
-            ) : (
-              <Typography.Text type="secondary">
-                页面不存在：{inPath}
-              </Typography.Text>
-            )}
+            {content}
           </Layout.Content>
         </Layout>
       </Layout>
@@ -385,7 +566,7 @@ function PublicShell({
   );
 }
 
-/** 入口视图：按当前域名解析入口，取其装配的首个应用进入系统壳 */
+/** 入口视图：按当前域名解析入口，把其装配的全部应用交给系统壳做多应用装配（M10） */
 function EntryView({
   inPath,
   params,
@@ -433,8 +614,7 @@ function EntryView({
       </div>
     );
   }
-  const app = entry.apps[0];
-  if (!app) {
+  if (entry.apps.length === 0) {
     return (
       <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
         <Alert
@@ -448,7 +628,7 @@ function EntryView({
   }
   return (
     <AppView
-      appId={app.id}
+      apps={entry.apps}
       inPath={inPath}
       params={params}
       user={user}
@@ -475,6 +655,72 @@ interface AssembledMenu {
 }
 
 /**
+ * 菜单项构建（单应用与多应用合并共用同一算法）：
+ * 有 menu 声明时按 order 升序（稳定排序，同 order 保持输入顺序），
+ * 分组项在其首个成员的位置出现一次、汇集该组全部成员——跨应用同名分组由此自动合并；
+ * 无任何 menu 声明时回退为列表页平铺项（fallbackItems 由调用方按各自实体口径算好标签）。
+ */
+function buildMenuItems(
+  menuPages: MenuPage[],
+  fallbackItems: NonNullable<MenuProps["items"]>,
+): MenuProps["items"] {
+  if (menuPages.length === 0) return fallbackItems;
+  const arr: NonNullable<MenuProps["items"]> = [];
+  const seenGroups = new Set<string>();
+  for (const mp of menuPages) {
+    if (!mp.group) {
+      arr.push({ key: mp.page.route, label: mp.label });
+      continue;
+    }
+    if (seenGroups.has(mp.group)) continue;
+    seenGroups.add(mp.group);
+    arr.push({
+      type: "group",
+      key: `group:${mp.group}`,
+      label: mp.group,
+      children: menuPages
+        .filter((g) => g.group === mp.group)
+        .map((g) => ({ key: g.page.route, label: g.label })),
+    });
+  }
+  return arr;
+}
+
+/**
+ * 菜单组装核心：入参为带各自实体口径的页面集合（单应用即全量同属一应用；
+ * 多应用为页面并集，实体口径按页所属应用取——回退标签解析不串应用）。
+ */
+function collectMenu(
+  entries: { page: PageSchema; entities: DataSchema["entities"] }[],
+): AssembledMenu {
+  const menuPages: MenuPage[] = entries
+    .filter((e) => e.page.menu && !e.page.menu.hidden)
+    .map((e) => ({
+      page: e.page,
+      label: e.page.menu!.label,
+      order: e.page.menu!.order ?? 0,
+      group: e.page.menu!.group,
+    }))
+    .sort((a, b) => a.order - b.order);
+  const listEntries = entries.filter((e) =>
+    e.page.root.children?.some((ch) => ch.type === "DataTable"),
+  );
+  const navLabel = (page: PageSchema, entities: DataSchema["entities"]) => {
+    const ref = page.dataSources[0]?.ref;
+    const entity = entities.find((e) => e.key === ref);
+    return entity?.label ?? page.name;
+  };
+  const items = buildMenuItems(
+    menuPages,
+    listEntries.map((e) => ({
+      key: e.page.route,
+      label: navLabel(e.page, e.entities),
+    })),
+  );
+  return { items, menuPages, listPages: listEntries.map((e) => e.page) };
+}
+
+/**
  * 菜单组装（登录外壳与公开外壳共用同一逻辑）：
  * 页面 menu 声明优先；无任何页面声明 menu 时回退旧逻辑（列表页 + 实体名）。
  */
@@ -482,54 +728,87 @@ function assembleMenu(
   pages: PageSchema[],
   entities: DataSchema["entities"],
 ): AssembledMenu {
-  const menuPages: MenuPage[] = pages
-    .filter((p) => p.menu && !p.menu.hidden)
-    .map((p) => ({
-      page: p,
-      label: p.menu!.label,
-      order: p.menu!.order ?? 0,
-      group: p.menu!.group,
-    }))
-    .sort((a, b) => a.order - b.order);
-  const listPages = pages.filter((p) =>
-    p.root.children?.some((ch) => ch.type === "DataTable"),
-  );
+  return collectMenu(pages.map((page) => ({ page, entities })));
+}
 
-  const navLabel = (page: PageSchema): string => {
-    const ref = page.dataSources[0]?.ref;
-    const entity = entities.find((e) => e.key === ref);
-    return entity?.label ?? page.name;
-  };
+/* ---------- 多应用装配（M10）：入口全部应用的快照并集 ---------- */
 
-  let items: MenuProps["items"];
-  if (menuPages.length > 0) {
-    // 分组项在其首个成员的位置出现一次，组内保持 order 顺序
-    const arr: NonNullable<MenuProps["items"]> = [];
-    const seenGroups = new Set<string>();
-    for (const mp of menuPages) {
-      if (!mp.group) {
-        arr.push({ key: mp.page.route, label: mp.label });
+/** 已加载快照的应用（顺序即入口 app_ids 顺序，首个为主应用） */
+interface LoadedApp {
+  app: AppInfo;
+  snapshot: Snapshot;
+}
+
+/** 并集中的一页：页面本体 + 所属应用 */
+interface OwnedPage {
+  page: PageSchema;
+  appId: string;
+}
+
+interface PageUnion {
+  /** 全部页面（含路由冲突的落败页，顺序为应用序 → 页序） */
+  all: OwnedPage[];
+  /** 按路由去重后的页面（先到先得，菜单与解析都以此为准） */
+  deduped: OwnedPage[];
+  byRoute: Map<string, OwnedPage>;
+}
+
+/**
+ * 页面并集：按入口应用顺序逐应用并入快照页面；
+ * 同一路由被多个应用占用时先到先得，落败页保留在 all 中但不进菜单/解析，并 console 警告。
+ */
+function buildPageUnion(loaded: LoadedApp[]): PageUnion {
+  const all: OwnedPage[] = [];
+  const deduped: OwnedPage[] = [];
+  const byRoute = new Map<string, OwnedPage>();
+  for (const { app, snapshot } of loaded) {
+    for (const page of snapshot.pages) {
+      const owned: OwnedPage = { page, appId: app.id };
+      all.push(owned);
+      const winner = byRoute.get(page.route);
+      if (winner) {
+        console.warn(
+          `[runtime] 路由冲突：${page.route} 已由应用 ${winner.appId} 占用，忽略应用 ${app.id} 的同名页面「${page.name}」`,
+        );
         continue;
       }
-      if (seenGroups.has(mp.group)) continue;
-      seenGroups.add(mp.group);
-      arr.push({
-        type: "group",
-        key: `group:${mp.group}`,
-        label: mp.group,
-        children: menuPages
-          .filter((g) => g.group === mp.group)
-          .map((g) => ({ key: g.page.route, label: g.label })),
-      });
+      byRoute.set(page.route, owned);
+      deduped.push(owned);
     }
-    items = arr;
-  } else {
-    items = listPages.map((page) => ({
-      key: page.route,
-      label: navLabel(page),
-    }));
   }
-  return { items, menuPages, listPages };
+  return { all, deduped, byRoute };
+}
+
+/** 跨应用合并菜单：对并集（去重后）页面跑同一套组装算法，同名分组跨应用合并 */
+function assembleMergedMenu(
+  union: PageUnion,
+  loaded: LoadedApp[],
+): AssembledMenu {
+  const entitiesByApp = new Map(
+    loaded.map((l) => [l.app.id, l.snapshot.data.entities] as const),
+  );
+  return collectMenu(
+    union.deduped.map((o) => ({
+      page: o.page,
+      entities: entitiesByApp.get(o.appId) ?? [],
+    })),
+  );
+}
+
+/** 并集内当前页解析：口径同 resolveCurrentPage（根路径落首个菜单页 → route='/' 页 → 首个列表页） */
+function resolveOwnedCurrent(
+  union: PageUnion,
+  menu: AssembledMenu,
+  inPath: string,
+): OwnedPage | undefined {
+  if (inPath === "/") {
+    const first =
+      menu.menuPages[0]?.page ??
+      union.deduped.find((o) => o.page.route === "/")?.page ??
+      menu.listPages[0];
+    return first ? union.byRoute.get(first.route) : undefined;
+  }
+  return union.byRoute.get(inPath);
 }
 
 /** 当前页解析：根路径落到首个菜单页，其次 route='/' 的页，再次首个列表页 */
@@ -564,7 +843,7 @@ function themeTokenOf(appConfig: {
 }
 
 function AppView({
-  appId,
+  apps,
   inPath,
   params,
   user,
@@ -573,7 +852,8 @@ function AppView({
   preview,
   entryName,
 }: {
-  appId: string;
+  /** 入口装配的应用（顺序即入口 app_ids 顺序，首个为主应用）；预览模式为单元素数组 */
+  apps: AppInfo[];
   inPath: string;
   params: Record<string, string>;
   user: UserInfo;
@@ -584,34 +864,71 @@ function AppView({
   /** 入口名（侧栏副标题）；预览模式传 null 并显示「预览」 */
   entryName: string | null;
 }) {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const primaryAppId = apps[0]?.id ?? "";
+  const appIdsKey = apps.map((a) => a.id).join(",");
+  const [loaded, setLoaded] = useState<LoadedApp[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** 待办数（侧边菜单 Badge）：挂载时拉一次，失败静默为 0；待办中心内动作后由其回告刷新 */
+  /** 待办数（菜单 Badge）：多应用时为各应用待办之和 */
   const [todoCount, setTodoCount] = useState(0);
+  /** 待办/助手跟随的当前应用：随当前页归属更新；停在外壳级视图（#/flow）时保持最近归属 */
+  const [activeAppId, setActiveAppId] = useState<string>(primaryAppId);
 
-  useEffect(() => {
-    setSnapshot(null);
-    setError(null);
-    api
-      .snapshot(appId)
-      .then(setSnapshot)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [appId]);
-
+  // 全部应用快照并行加载：主应用失败按原口径整页报错；
+  // 其余应用失败仅从本次装配剔除并警告，不拖垮整个入口
   useEffect(() => {
     let alive = true;
-    api.flow
-      .todos(appId)
-      .then((tasks) => {
-        if (alive) setTodoCount(tasks.length);
-      })
-      .catch(() => {
-        // 待办数仅作角标提示，拉取失败不打扰主流程
-      });
+    setLoaded(null);
+    setError(null);
+    setActiveAppId(primaryAppId);
+    void (async () => {
+      const results = await Promise.all(
+        apps.map(async (app, idx): Promise<LoadedApp | null> => {
+          try {
+            const snapshot = await api.snapshot(app.id);
+            return { app, snapshot };
+          } catch (err) {
+            if (idx === 0) throw err;
+            console.warn(
+              `[runtime] 应用 ${app.id} 快照加载失败，已从本次装配中剔除`,
+              err,
+            );
+            return null;
+          }
+        }),
+      );
+      if (alive) {
+        setLoaded(results.filter((r): r is LoadedApp => r !== null));
+      }
+    })().catch((err: unknown) => {
+      if (alive) setError(err instanceof Error ? err.message : String(err));
+    });
     return () => {
       alive = false;
     };
-  }, [appId]);
+    // apps 以 appIdsKey 标识（顺序敏感），primaryAppId 随之而变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appIdsKey]);
+
+  /** 待办数刷新：逐应用拉取后求和，单个应用失败按 0 计（角标仅作提示） */
+  const refreshTodoCount = useCallback(async () => {
+    const counts = await Promise.all(
+      apps.map((a) =>
+        api.flow
+          .todos(a.id)
+          .then((tasks) => tasks.length)
+          .catch(() => 0),
+      ),
+    );
+    setTodoCount(counts.reduce((sum, n) => sum + n, 0));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appIdsKey]);
+  useEffect(() => {
+    void refreshTodoCount();
+  }, [refreshTodoCount]);
+  /** FlowCenter 内动作后回告：不直接采用其单应用计数，统一重拉求和 */
+  const handleTodoCountChange = useCallback(() => {
+    void refreshTodoCount();
+  }, [refreshTodoCount]);
 
   /** 待办中心是外壳级视图（#/flow），不属于任何页面 Schema */
   const isFlow = inPath === "/flow";
@@ -620,15 +937,32 @@ function AppView({
     () =>
       (to: string) => {
         window.location.hash = preview
-          ? `#/app/${encodeURIComponent(appId)}${to}`
+          ? `#/app/${encodeURIComponent(primaryAppId)}${to}`
           : `#${to}`;
       },
-    [appId, preview],
+    [primaryAppId, preview],
   );
 
+  const union = useMemo(
+    () => (loaded ? buildPageUnion(loaded) : null),
+    [loaded],
+  );
+  const menu = useMemo(
+    () => (loaded && union ? assembleMergedMenu(union, loaded) : null),
+    [loaded, union],
+  );
+  const currentOwned =
+    union && menu ? resolveOwnedCurrent(union, menu, inPath) : undefined;
+
+  useEffect(() => {
+    if (currentOwned) setActiveAppId(currentOwned.appId);
+  }, [currentOwned?.appId]);
+
+  /** 渲染器适配器绑定当前页所属应用（无当前页时退回当前应用，仅作占位不会被调用） */
+  const adapterAppId = currentOwned?.appId ?? activeAppId;
   const adapter = useMemo(
-    () => makeAdapter(appId, goPage, notify),
-    [appId, goPage],
+    () => makeAdapter(adapterAppId, goPage, notify),
+    [adapterAppId, goPage],
   );
 
   if (error) {
@@ -645,7 +979,7 @@ function AppView({
       </div>
     );
   }
-  if (!snapshot) {
+  if (!loaded || !union || !menu) {
     return (
       <div style={{ padding: 80, textAlign: "center" }}>
         <Spin size="large" tip="正在加载应用…" />
@@ -653,9 +987,17 @@ function AppView({
     );
   }
 
-  const menu = assembleMenu(snapshot.pages, snapshot.data.entities);
-  const current = resolveCurrentPage(snapshot.pages, menu, inPath);
-  const token = themeTokenOf(snapshot.appConfig);
+  const primary = loaded[0]!;
+  const current = currentOwned?.page;
+  /** 当前页所属应用的快照（渲染取其数据模型与权限摘要） */
+  const currentLoaded = currentOwned
+    ? (loaded.find((l) => l.app.id === currentOwned.appId) ?? primary)
+    : primary;
+  /** 待办/助手所属应用：当前页归属优先，其次最近归属，兜底主应用 */
+  const activeLoaded =
+    loaded.find((l) => l.app.id === (currentOwned?.appId ?? activeAppId)) ??
+    primary;
+  const token = themeTokenOf(primary.snapshot.appConfig);
   /**
    * 助手页面上下文（尽力推导）：派生实体路由（/e/<entity>[/form]）直接给 entityKey；
    * 设计页取其首个数据源绑定的实体；记录 id 取页面参数 id（编辑表单/详情页）。
@@ -688,6 +1030,56 @@ function AppView({
     ...(menu.items ?? []),
   ];
 
+  const content = isFlow ? (
+    <FlowCenter
+      key={activeLoaded.app.id}
+      appId={activeLoaded.app.id}
+      user={user}
+      entities={activeLoaded.snapshot.data.entities}
+      onTodoCountChange={handleTodoCountChange}
+    />
+  ) : current ? (
+    <SchemaRenderer
+      page={current}
+      dataSchema={currentLoaded.snapshot.data}
+      adapter={adapter}
+      params={params}
+      device={device}
+      access={currentLoaded.snapshot.myAccess?.entities}
+    />
+  ) : (
+    <Typography.Text type="secondary">页面不存在：{inPath}</Typography.Text>
+  );
+
+  const cfg = configOf(primary.snapshot.appConfig);
+  /** 站点型外壳（M10）：仅入口模式且主应用声明 shell = site 时启用，预览恒走系统外壳 */
+  if (!preview && isSiteShell(cfg)) {
+    const brand = brandTextOf(cfg, primary.snapshot.app.name);
+    return (
+      <ConfigProvider locale={zhCN} theme={{ token }}>
+        <Layout style={{ minHeight: "100vh" }}>
+          <SiteHeader
+            brand={brand}
+            navItems={flatNavItems(menuItems)}
+            selectedKey={isFlow ? "/flow" : current ? current.route : null}
+            onNavigate={goPage}
+            searchRoute={globalVarText(cfg, "siteSearchRoute")}
+            right={<Button onClick={onLogout}>退出（{user.username}）</Button>}
+          />
+          <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
+            {content}
+          </Layout.Content>
+          <SiteFooter text={siteFooterText(cfg, brand)} />
+        </Layout>
+        <AssistantPanel
+          appId={activeLoaded.app.id}
+          context={assistantContext}
+          navigate={goPage}
+        />
+      </ConfigProvider>
+    );
+  }
+
   return (
     <ConfigProvider locale={zhCN} theme={{ token }}>
       <Layout style={{ minHeight: "100vh" }}>
@@ -708,7 +1100,7 @@ function AppView({
           >
             <div style={{ padding: "0 8px" }}>
               <div style={{ fontWeight: 700, fontSize: 15 }}>
-                {snapshot.app.name}
+                {primary.snapshot.app.name}
               </div>
               <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 2 }}>
                 {preview ? "预览" : (entryName ?? "运行入口")}
@@ -740,31 +1132,11 @@ function AppView({
           </div>
         </Layout.Sider>
         <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
-          {isFlow ? (
-            <FlowCenter
-              appId={appId}
-              user={user}
-              entities={snapshot.data.entities}
-              onTodoCountChange={setTodoCount}
-            />
-          ) : current ? (
-            <SchemaRenderer
-              page={current}
-              dataSchema={snapshot.data}
-              adapter={adapter}
-              params={params}
-              device={device}
-              access={snapshot.myAccess?.entities}
-            />
-          ) : (
-            <Typography.Text type="secondary">
-              页面不存在：{inPath}
-            </Typography.Text>
-          )}
+          {content}
         </Layout.Content>
       </Layout>
       <AssistantPanel
-        appId={appId}
+        appId={activeLoaded.app.id}
         context={assistantContext}
         navigate={goPage}
       />
