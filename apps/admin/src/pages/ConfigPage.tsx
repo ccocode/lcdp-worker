@@ -44,11 +44,21 @@ const KEY_LABELS: Record<string, string> = {
   "embedding.model": "向量模型 model",
   "embedding.dimensions": "向量维度 dimensions",
   "llm.tenantTokenBudget": "租户日 Token 上限 tenantTokenBudget",
+  "storage.endpoint": "对象存储端点 endpoint",
+  "storage.bucket": "桶 bucket",
+  "storage.region": "区域 region",
+  "storage.accessKeyId": "AccessKey accessKeyId",
+  "storage.secretAccessKey": "SecretKey secretAccessKey",
 };
 
-const GROUPS: { title: string; prefix: string; channel?: "chat" | "embedding" }[] = [
+const GROUPS: {
+  title: string;
+  prefix: string;
+  channel?: "chat" | "embedding" | "storage";
+}[] = [
   { title: "对话网关（chat）", prefix: "chat.", channel: "chat" },
   { title: "向量网关（embedding）", prefix: "embedding.", channel: "embedding" },
+  { title: "对象存储（storage）", prefix: "storage.", channel: "storage" },
   { title: "LLM 全局（llm）", prefix: "llm." },
 ];
 
@@ -128,7 +138,7 @@ export default function ConfigPage() {
     }
   };
 
-  const runTest = async (channel: "chat" | "embedding") => {
+  const runTest = async (channel: "chat" | "embedding" | "storage") => {
     setTesting(channel);
     try {
       const res = await api.config.test(channel);
@@ -139,8 +149,10 @@ export default function ConfigPage() {
       ]
         .filter(Boolean)
         .join("，");
-      // 成功响应无 message 字段，不能直接拼接（曾显示「连通：undefined」）
-      const detail = res.message ?? (res.ok ? "网关响应正常" : "未知错误");
+      // 成功响应无 message 字段，不能直接拼接（曾显示「连通：undefined」）；
+      // storage 不是网关，默认文案单独区分（契约 M9：headBucket → {ok, latencyMs}）
+      const okText = channel === "storage" ? "存储可用" : "网关响应正常";
+      const detail = res.message ?? (res.ok ? okText : "未知错误");
       const text = `${res.ok ? "连通" : "不通"}：${detail}${extra ? `（${extra}）` : ""}`;
       setTestResult((s) => ({ ...s, [channel]: text }));
       if (res.ok) message.success(text);

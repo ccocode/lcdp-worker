@@ -18,6 +18,7 @@ import {
   DashboardOutlined,
   DollarOutlined,
   LogoutOutlined,
+  PictureOutlined,
   PlayCircleOutlined,
   SafetyOutlined,
   SettingOutlined,
@@ -33,6 +34,7 @@ import Apps from "./pages/Apps";
 import Audit from "./pages/Audit";
 import Replay from "./pages/Replay";
 import Kb from "./pages/Kb";
+import Assets from "./pages/Assets";
 import Usage from "./pages/Usage";
 import ConfigPage from "./pages/ConfigPage";
 import Switches from "./pages/Switches";
@@ -47,6 +49,7 @@ type PageKey =
   | "audit"
   | "replay"
   | "kb"
+  | "assets"
   | "usage"
   | "config"
   | "switches";
@@ -59,6 +62,7 @@ const MENU: { key: PageKey; label: string; icon: React.ReactNode }[] = [
   { key: "audit", label: "审计中心", icon: <AuditOutlined /> },
   { key: "replay", label: "审计回放", icon: <PlayCircleOutlined /> },
   { key: "kb", label: "知识库", icon: <BookOutlined /> },
+  { key: "assets", label: "媒体资产", icon: <PictureOutlined /> },
   { key: "usage", label: "成本看板", icon: <DollarOutlined /> },
   { key: "config", label: "系统配置", icon: <SettingOutlined /> },
   { key: "switches", label: "熔断与配额", icon: <StopOutlined /> },
@@ -208,6 +212,7 @@ export default function App() {
           {page === "audit" && <Audit />}
           {page === "replay" && <Replay />}
           {page === "kb" && <Kb />}
+          {page === "assets" && <Assets />}
           {page === "usage" && <Usage />}
           {page === "config" && <ConfigPage />}
           {page === "switches" && <Switches />}

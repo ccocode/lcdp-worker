@@ -35,6 +35,36 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/**
+ * 资产内容打开地址（契约 M9 §2.3）：contentUrl 是相对路径，拼上 API 基址，
+ * 并带 ?t=<当前 admin token>（内容端点支持 Authorization 头或 ?t= 两种鉴权，
+ * 新窗打开无法带头，只能走 ?t=）。
+ */
+export function assetOpenUrl(contentUrl: string): string {
+  const token = getToken();
+  const sep = contentUrl.includes("?") ? "&" : "?";
+  return `${API_BASE}${contentUrl}${token ? `${sep}t=${encodeURIComponent(token)}` : ""}`;
+}
+
+/** 平台资产（契约 M9 §2.3 资产 JSON 形状；列表多返回租户字段，前端防御式取值） */
+export interface AssetItem {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  visibility: string;
+  appId?: string | null;
+  entity?: string | null;
+  recordId?: string | null;
+  field?: string | null;
+  tenantId?: string | null;
+  tenant_id?: string | null;
+  createdBy?: string | null;
+  created_at?: string | null;
+  createdAt?: string | null;
+  contentUrl: string;
+}
+
 export function getStoredUser(): UserInfo | null {
   try {
     const raw = localStorage.getItem(USER_KEY);
@@ -331,7 +361,7 @@ export const api = {
       });
     },
     async test(
-      channel: "chat" | "embedding",
+      channel: "chat" | "embedding" | "storage",
     ): Promise<{
       ok: boolean;
       // 成功响应不带 message（只有 ok/model/dimensions/latencyMs），失败才有 message
@@ -366,6 +396,51 @@ export const api = {
         method: "PUT",
         body: JSON.stringify(body),
       });
+    },
+  },
+
+  /** 管理台跨租户资产列表与删除（契约 M9 §2.3：GET /admin/assets；删除走 DELETE /assets/:id） */
+  adminAssets: {
+    async list(params: {
+      tenant?: string;
+      q?: string;
+      appId?: string;
+      limit?: number;
+      offset?: number;
+    }): Promise<PageResult<AssetItem>> {
+      const res = await apiFetch<unknown>(`/admin/assets${qs(params)}`);
+      return pageOf<AssetItem>(res, "items");
+    },
+    async remove(id: string): Promise<void> {
+      await apiFetch(`/assets/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    },
+  },
+
+  /** 普通资产端点（管理台以上传人身份走 /assets，契约 M9 §2.3） */
+  assets: {
+    /** multipart 上传：不能走 apiFetch（它固定 JSON 头），FormData 的 Content-Type 由浏览器补 boundary */
+    async upload(file: File): Promise<AssetItem> {
+      const token = getToken();
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await fetch(`${API_BASE}/assets`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      const body = (await res.json().catch(() => null)) as
+        | (Record<string, unknown> & { message?: string; error?: string })
+        | null;
+      if (!res.ok) {
+        const err = new Error(
+          body?.message ?? body?.error ?? `上传失败 (${res.status})`,
+        ) as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
+      return body as unknown as AssetItem;
     },
   },
 };
