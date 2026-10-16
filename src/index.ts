@@ -83,7 +83,7 @@ function syntheticPreflight(req: Request): Response | null {
   const headers = new Headers();
   headers.set("Access-Control-Allow-Origin", origin);
   headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Visitor-Key");
   headers.set("Access-Control-Max-Age", "86400");
   headers.set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
   return new Response(null, { status: 204, headers });
