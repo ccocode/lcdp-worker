@@ -41,6 +41,7 @@ import AgentsTab from "./AgentsTab.js";
 const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: "string", label: "短文本" },
   { value: "text", label: "长文本" },
+  { value: "richtext", label: "富文本" },
   { value: "int", label: "整数" },
   { value: "decimal", label: "小数/金额" },
   { value: "boolean", label: "布尔" },

@@ -96,6 +96,18 @@ export const componentCatalog: Array<{
     }),
   },
   {
+    type: "ContentList",
+    label: "内容列表",
+    category: "内容",
+    description: "卡片式内容列表（封面/标题/摘要/日期），点击进详情页，适合文章资讯类前台",
+    make: (id) => ({
+      id,
+      type: "ContentList",
+      binding: { source: "" },
+      props: { pageSize: 10 },
+    }),
+  },
+  {
     type: "TextBlock",
     label: "文本",
     category: "内容",

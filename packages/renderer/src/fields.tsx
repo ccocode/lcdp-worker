@@ -15,6 +15,7 @@ import dayjs from "dayjs";
 import type { Dayjs } from "dayjs";
 import type { AssetMeta, RuntimeAdapter, SelectOption } from "./adapter.js";
 import { parseAssetIds } from "./adapter.js";
+import { RichTextInput, RichTextView } from "./richtext.js";
 
 interface FieldInputProps {
   field: Field;
@@ -186,6 +187,10 @@ export function FieldInput({
   }, [adapter, field.type, field.refEntity]);
 
   if (readOnly) {
+    // 富文本只读态呈现净化后 HTML（而非把 HTML 源码塞进禁用输入框），与 Detail 同一口径
+    if (field.type === "richtext") {
+      return <RichTextView html={asInputString(value)} />;
+    }
     return (
       <Input
         disabled
@@ -250,6 +255,16 @@ export function FieldInput({
           autoSize={{ minRows: 3, maxRows: 8 }}
           value={asInputString(value)}
           onChange={(e) => onChange(e.target.value)}
+        />
+      );
+    case "richtext":
+      return (
+        <RichTextInput
+          value={value}
+          onChange={onChange}
+          adapter={adapter}
+          fieldKey={field.key}
+          linkage={linkage}
         />
       );
     case "json":

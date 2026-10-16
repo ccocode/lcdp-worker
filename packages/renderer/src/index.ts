@@ -27,6 +27,7 @@ export {
   Chart,
   ChartPlaceholder,
   Container,
+  ContentList,
   DataTable,
   Detail,
   EntityForm,
@@ -46,4 +47,5 @@ export {
 } from "./components.js";
 export { componentCatalog } from "./catalog.js";
 export { FieldInput } from "./fields.js";
+export { RichTextInput, RichTextView, htmlToText, sanitizeHtml } from "./richtext.js";
 export { styles } from "./styles.js";

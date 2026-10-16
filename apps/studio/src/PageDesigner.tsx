@@ -43,7 +43,7 @@ import "./designer.css";
 type CatalogItem = (typeof componentCatalog)[number];
 type Device = "desktop" | "mobile";
 
-const DATA_TYPES = ["DataTable", "EntityForm", "Detail", "StatCard", "Chart", "ChartPlaceholder"];
+const DATA_TYPES = ["DataTable", "EntityForm", "Detail", "StatCard", "Chart", "ChartPlaceholder", "ContentList"];
 
 /** 视图过滤算子（与服务端 vf 编译全集对齐）：字面量比较 + 字段间比较（*Field，value 为被比字段 key） */
 const FILTER_OP_OPTIONS = [
@@ -1375,6 +1375,93 @@ export default function PageDesigner({
               ]}
             />
             {renderAggregateEditor(node, entity)}
+            {renderViewEditors(node, entity)}
+          </>
+        )}
+
+        {node.type === "ContentList" && (
+          <>
+            {renderSourceSelect(node)}
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+              字段映射（卡片呈现）
+            </Typography.Text>
+            {(
+              [
+                {
+                  key: "titleField",
+                  label: "标题字段",
+                  types: null,
+                  placeholder: "默认取 title 字段",
+                },
+                {
+                  key: "summaryField",
+                  label: "摘要字段",
+                  types: ["string", "text", "richtext"],
+                  placeholder: "不显示摘要",
+                },
+                {
+                  key: "coverField",
+                  label: "封面字段",
+                  types: ["image", "file"],
+                  placeholder: "不显示封面",
+                },
+                {
+                  key: "dateField",
+                  label: "日期字段",
+                  types: ["date", "datetime"],
+                  placeholder: "不显示日期",
+                },
+              ] as Array<{
+                key: string;
+                label: string;
+                types: string[] | null;
+                placeholder: string;
+              }>
+            ).map((row) => (
+              <Space
+                key={row.key}
+                size={8}
+                style={{ marginBottom: 8, display: "flex" }}
+              >
+                <Typography.Text type="secondary" style={{ width: 64 }}>
+                  {row.label}
+                </Typography.Text>
+                <Select
+                  style={{ flex: 1 }}
+                  allowClear
+                  placeholder={row.placeholder}
+                  value={props[row.key] as string | undefined}
+                  onChange={(v) => patchProps(node.id, { [row.key]: v })}
+                  options={(entity?.fields ?? [])
+                    .filter((f) => !row.types || row.types.includes(f.type))
+                    .map((f) => ({
+                      value: f.key,
+                      label: `${f.label}（${f.key}）`,
+                    }))}
+                />
+              </Space>
+            ))}
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+              详情路由（点击条目跳往）
+            </Typography.Text>
+            <Select
+              style={{ width: "100%", marginBottom: 12 }}
+              allowClear
+              placeholder="不跳转"
+              value={props.detailRoute as string | undefined}
+              onChange={(v) => patchProps(node.id, { detailRoute: v })}
+              options={routeOptions}
+            />
+            <Space size={8} style={{ marginBottom: 12, display: "flex" }}>
+              <Typography.Text type="secondary">每页条数</Typography.Text>
+              <InputNumber
+                style={{ width: 90 }}
+                min={1}
+                max={100}
+                value={(props.pageSize as number | undefined) ?? 10}
+                onChange={(v) => patchProps(node.id, { pageSize: v ?? undefined })}
+              />
+            </Space>
             {renderViewEditors(node, entity)}
           </>
         )}

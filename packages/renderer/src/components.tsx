@@ -22,6 +22,7 @@ import {
   Card,
   Descriptions,
   Input,
+  Pagination,
   Space,
   Statistic,
   Table,
@@ -48,6 +49,7 @@ import type {
 } from "./adapter.js";
 import { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
 import { FieldInput } from "./fields.js";
+import { RichTextView, htmlToText } from "./richtext.js";
 import { styles } from "./styles.js";
 
 /** 组件注册表：组件类型 -> React 组件。设计器与运行态共用同一注册表，保证所见即所得 */
@@ -110,6 +112,9 @@ export function formatCellValue(
     }
     case "ref":
       return refLabels?.[String(value)] ?? String(value);
+    case "richtext":
+      // 纯文本场景（表格单元格等）：去标签摘要，绝不直出 HTML 源码
+      return htmlToText(typeof value === "string" ? value : String(value));
     case "json":
       return typeof value === "string" ? value : JSON.stringify(value);
     default:
@@ -1174,6 +1179,185 @@ export function ChartPlaceholder({ node }: NodeProps) {
   return <Chart node={node} />;
 }
 
+/**
+ * 内容列表（M10）：卡片式内容呈现——封面图 + 标题 + 日期 + 摘要，面向文章/资讯类前台页面。
+ * 取数与 DataTable 完全同口径：binding.view 的过滤走结构化 vf（eq 项同时以旧 filters 兼容双发）、
+ * 第一排序项经适配器下发、limit/offset 分页；栏目/搜索等条件都由设计器在数据视图里声明。
+ * 字段映射走 props：titleField（缺省取名为 title 的字段、再缺省取首个字段）、summaryField、
+ * coverField（image/file 字段，取首个资产）、dateField；detailRoute 配置后整卡可点，
+ * 跳 detailRoute?id=<记录 id>，详情页经页面参数取 id（与 DataTable 行点击同一线格式）。
+ */
+export function ContentList({ node }: NodeProps) {
+  const ctx = useRendererCtx();
+  const entity = resolveEntity(ctx, node.binding?.source);
+  const view = node.binding?.view;
+  const pageSize =
+    view?.pageSize ??
+    (typeof node.props?.pageSize === "number" ? node.props.pageSize : 10);
+  const strProp = (k: string): string | undefined =>
+    typeof node.props?.[k] === "string" && node.props[k]
+      ? (node.props[k] as string)
+      : undefined;
+  const titleKey =
+    strProp("titleField") ??
+    entity?.fields.find((f) => f.key === "title")?.key ??
+    entity?.fields[0]?.key;
+  const titleField = entity?.fields.find((f) => f.key === titleKey);
+  const summaryField = entity?.fields.find(
+    (f) => f.key === strProp("summaryField"),
+  );
+  const coverField = entity?.fields.find(
+    (f) => f.key === strProp("coverField"),
+  );
+  const dateField = entity?.fields.find((f) => f.key === strProp("dateField"));
+  const detailRoute = strProp("detailRoute");
+  const [pageIdx, setPageIdx] = useState(0);
+  const [rows, setRows] = useState<Row[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // 数据视图签名（内容变化才重拉）：与 DataTable 同一取数线格式
+  const viewSig = JSON.stringify(view ?? null);
+  const load = useCallback(async () => {
+    if (!entity) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const filters = eqFiltersOf(view);
+      const vf = viewFiltersOf(view);
+      const firstSort = view?.sort?.[0];
+      const res = await ctx.adapter.list(entity.key, {
+        limit: pageSize,
+        offset: pageIdx * pageSize,
+        filters: Object.keys(filters).length ? filters : undefined,
+        vf: vf.length ? vf : undefined,
+        sort: firstSort
+          ? { field: firstSort.field, dir: firstSort.dir }
+          : undefined,
+      });
+      setRows(res.rows);
+      setTotal(res.total);
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setLoading(false);
+    }
+    // view 的内容已由 viewSig 完整刻画
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.adapter, entity, pageIdx, pageSize, viewSig]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+
+  const summaryOf = (row: Row): string => {
+    if (!summaryField) return "";
+    const v = row[summaryField.key];
+    if (v === null || v === undefined || v === "") return "";
+    if (summaryField.type === "richtext") {
+      return htmlToText(String(v), 140);
+    }
+    const text = formatCellValue(summaryField, v);
+    return text.length > 140 ? `${text.slice(0, 140)}…` : text;
+  };
+
+  return (
+    <div>
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+      )}
+      {loading && rows.length === 0 ? (
+        <div style={styles.empty}>加载中…</div>
+      ) : rows.length === 0 ? (
+        <div style={styles.empty}>暂无内容</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {rows.map((row) => {
+            const coverId = coverField
+              ? parseAssetIds(row[coverField.key])[0]
+              : undefined;
+            const summary = summaryOf(row);
+            return (
+              <Card
+                key={String(row.id)}
+                size="small"
+                hoverable={Boolean(detailRoute)}
+                onClick={
+                  detailRoute
+                    ? () =>
+                        ctx.adapter.navigate(
+                          `${detailRoute}?id=${encodeURIComponent(String(row.id))}`,
+                        )
+                    : undefined
+                }
+                style={detailRoute ? { cursor: "pointer" } : undefined}
+              >
+                <div style={{ display: "flex", gap: 16 }}>
+                  {coverId && (
+                    <img
+                      src={ctx.adapter.assetContentUrl(coverId)}
+                      alt=""
+                      style={{
+                        width: 168,
+                        height: 106,
+                        objectFit: "cover",
+                        borderRadius: 4,
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Typography.Title
+                      level={5}
+                      style={{ margin: "0 0 6px" }}
+                      ellipsis={{ rows: 1 }}
+                    >
+                      {titleField
+                        ? formatCellValue(titleField, row[titleField.key])
+                        : String(row.id)}
+                    </Typography.Title>
+                    {dateField && row[dateField.key] != null && (
+                      <Typography.Text
+                        type="secondary"
+                        style={{ display: "block", fontSize: 12, marginBottom: 6 }}
+                      >
+                        {formatCellValue(dateField, row[dateField.key])}
+                      </Typography.Text>
+                    )}
+                    {summary && (
+                      <Typography.Paragraph
+                        type="secondary"
+                        style={{ margin: 0 }}
+                        ellipsis={{ rows: 2 }}
+                      >
+                        {summary}
+                      </Typography.Paragraph>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      {total > pageSize && (
+        <Pagination
+          style={{ marginTop: 16, textAlign: "right" }}
+          current={pageIdx + 1}
+          pageSize={pageSize}
+          total={total}
+          showSizeChanger={false}
+          showTotal={(t) => `共 ${t} 条`}
+          onChange={(p) => setPageIdx(p - 1)}
+        />
+      )}
+    </div>
+  );
+}
+
 /** 详情：按页面参数 id 拉单条记录，以描述列表展示字段（值经统一格式化、引用显示标签） */
 export function Detail({ node }: NodeProps) {
   const ctx = useRendererCtx();
@@ -1260,7 +1444,13 @@ export function Detail({ node }: NodeProps) {
         <Descriptions.Item label="ID">{String(row.id)}</Descriptions.Item>
         {visibleFields.map((f) => (
           <Descriptions.Item key={f.key} label={f.label}>
-            {f.type === "file" || f.type === "image" ? (
+            {f.type === "richtext" ? (
+              <RichTextView
+                html={
+                  typeof row[f.key] === "string" ? (row[f.key] as string) : ""
+                }
+              />
+            ) : f.type === "file" || f.type === "image" ? (
               <AssetValue
                 ids={parseAssetIds(row[f.key])}
                 image={f.type === "image"}
@@ -1368,7 +1558,7 @@ export function AgentChat({ node }: NodeProps) {
   );
 }
 
-/** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 13 类组件，含 M9 的 Chart） */
+/** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 14 类组件，含 M9 的 Chart 与 M10 的 ContentList） */
 export function createDefaultRegistry(): ComponentRegistry {
   const registry = createRegistry();
   registerComponent(registry, "Page", Page);
@@ -1380,6 +1570,7 @@ export function createDefaultRegistry(): ComponentRegistry {
   registerComponent(registry, "StatCard", StatCard);
   registerComponent(registry, "Chart", Chart);
   registerComponent(registry, "ChartPlaceholder", ChartPlaceholder);
+  registerComponent(registry, "ContentList", ContentList);
   registerComponent(registry, "TextBlock", TextBlock);
   registerComponent(registry, "Image", ImageBlock);
   registerComponent(registry, "Button", ActionButton);
