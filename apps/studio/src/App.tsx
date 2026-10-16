@@ -794,6 +794,17 @@ function Designer({
     updateBundle((b) => {
       b.appConfig = { ...(b.appConfig ?? { theme: {} }), shell: v };
     });
+  /** 站点配置（M10 补强）：shell=site 时编辑 appConfig.globalVars 的站点外壳键（此前无 UI 可填） */
+  const globalVars = working.appConfig?.globalVars ?? {};
+  const globalVarText = (key: string) =>
+    typeof globalVars[key] === "string" ? (globalVars[key] as string) : "";
+  const setGlobalVar = (key: string, v: string) =>
+    updateBundle((b) => {
+      const next = { ...(b.appConfig?.globalVars ?? {}) };
+      if (v) next[key] = v;
+      else delete next[key];
+      b.appConfig = { ...(b.appConfig ?? { theme: {} }), globalVars: next };
+    });
   const colorPrimary =
     typeof theme.colorPrimary === "string" ? theme.colorPrimary : "#1677ff";
 
@@ -820,6 +831,33 @@ function Designer({
       >
         入口以本应用为主应用（装配顺序首位）时，运行态登录面与公开面按所选外壳呈现；作为次应用装配进其他入口时，外壳由该入口的主应用决定。
       </Typography.Paragraph>
+      {shell === "site" && (
+        <>
+          <Typography.Title level={5} style={{ marginTop: 28 }}>
+            站点配置
+          </Typography.Title>
+          <Space direction="vertical" size={14} style={{ display: "flex" }}>
+            <Space size={10}>
+              <Typography.Text style={{ width: 90 }}>搜索页路由</Typography.Text>
+              <Input
+                style={{ width: 320 }}
+                defaultValue={globalVarText("siteSearchRoute")}
+                placeholder="如 /search（留空则顶栏不显示搜索框）"
+                onBlur={(e) => setGlobalVar("siteSearchRoute", e.target.value.trim())}
+              />
+            </Space>
+            <Space size={10}>
+              <Typography.Text style={{ width: 90 }}>页脚文案</Typography.Text>
+              <Input
+                style={{ width: 320 }}
+                defaultValue={globalVarText("siteFooter")}
+                placeholder="如 © 2026 星桥科技有限公司"
+                onBlur={(e) => setGlobalVar("siteFooter", e.target.value.trim())}
+              />
+            </Space>
+          </Space>
+        </>
+      )}
       <Typography.Title level={5} style={{ marginTop: 28 }}>
         主题
       </Typography.Title>
