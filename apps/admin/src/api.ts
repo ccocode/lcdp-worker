@@ -293,10 +293,11 @@ export const api = {
       return pageOf<Row>(res, "documents").rows;
     },
     async review(id: string, decision: "approve" | "reject"): Promise<void> {
-      await apiFetch(`/admin/kb/documents/${encodeURIComponent(id)}/review`, {
-        method: "POST",
-        body: JSON.stringify({ decision }),
-      });
+      // 服务端实况：通过/驳回是两个独立端点（无 decision 请求体）
+      await apiFetch(
+        `/admin/kb/documents/${encodeURIComponent(id)}/${decision === "approve" ? "approve" : "reject"}`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
     },
   },
 

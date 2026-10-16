@@ -23,7 +23,7 @@ function ToolCallCard({ call }: { call: Row }) {
   return (
     <Card size="small" style={{ marginTop: 8 }} title={<Mono>{asText(call.tool)}</Mono>}>
       <Typography.Text type="secondary">参数</Typography.Text>
-      <JsonBlock value={call.args} />
+      <JsonBlock value={call.args_summary ?? call.args} />
       <Typography.Text type="secondary">结果</Typography.Text>
       <JsonBlock value={call.result} />
       <Typography.Text type="secondary">放行依据（basis 原文）</Typography.Text>

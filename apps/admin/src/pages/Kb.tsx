@@ -60,7 +60,7 @@ function Documents() {
         title: v.title.trim(),
         content: v.content,
       });
-      message.success("已提交，向量化处理中（状态 pending → ready）");
+      message.success("已上传并完成向量化（结果见列表「向量化」列）");
       setUploadOpen(false);
       form.resetFields();
       void load();
@@ -74,6 +74,10 @@ function Documents() {
     { title: "应用", render: (_, r) => asText(r.app_id ?? r.appId) },
     { title: "来源", dataIndex: "source", render: (v) => asText(v) },
     { title: "状态", dataIndex: "status", render: (v) => statusTag(v) },
+    {
+      title: "向量化",
+      render: (_, r) => statusTag(r.embedStatus ?? r.embed_status),
+    },
     {
       title: "Chunk 数",
       render: (_, r) => asText(r.chunks ?? r.chunk_count ?? r.chunkCount),
