@@ -6,18 +6,25 @@ export function resolveRootNode(page: PageSchema): ComponentNode {
 }
 
 export type {
+  AggregateGroupItem,
+  AggregateQuery,
+  AssetLinkage,
+  AssetMeta,
   EntityAccess,
   ListResult,
   RendererContextValue,
   Row,
   RuntimeAdapter,
   SelectOption,
+  ViewFilter,
 } from "./adapter.js";
-export { childEntities, resolveEntity } from "./adapter.js";
+export { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
 export type { ComponentRegistry, NodeProps, SchemaRendererProps } from "./components.js";
 export {
   ActionButton,
   AgentChat,
+  AssetValue,
+  Chart,
   ChartPlaceholder,
   Container,
   DataTable,
@@ -35,6 +42,7 @@ export {
   formatCellValue,
   registerComponent,
   useRendererCtx,
+  viewFiltersOf,
 } from "./components.js";
 export { componentCatalog } from "./catalog.js";
 export { FieldInput } from "./fields.js";

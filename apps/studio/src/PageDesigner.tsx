@@ -43,7 +43,23 @@ import "./designer.css";
 type CatalogItem = (typeof componentCatalog)[number];
 type Device = "desktop" | "mobile";
 
-const DATA_TYPES = ["DataTable", "EntityForm", "Detail", "StatCard", "ChartPlaceholder"];
+const DATA_TYPES = ["DataTable", "EntityForm", "Detail", "StatCard", "Chart", "ChartPlaceholder"];
+
+/** 视图过滤算子（与服务端 vf 编译全集对齐）：字面量比较 + 字段间比较（*Field，value 为被比字段 key） */
+const FILTER_OP_OPTIONS = [
+  { value: "eq", label: "等于" },
+  { value: "ne", label: "不等于" },
+  { value: "gt", label: "大于" },
+  { value: "gte", label: "大于等于" },
+  { value: "lt", label: "小于" },
+  { value: "lte", label: "小于等于" },
+  { value: "contains", label: "包含" },
+  { value: "ltField", label: "小于字段" },
+  { value: "lteField", label: "小于等于字段" },
+  { value: "gtField", label: "大于字段" },
+  { value: "gteField", label: "大于等于字段" },
+];
+const FIELD_OPS = ["ltField", "lteField", "gtField", "gteField"];
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
@@ -888,7 +904,7 @@ export default function PageDesigner({
     </div>
   );
 
-  /** 数据视图编辑：过滤行（eq 语义）+ 排序第一项 */
+  /** 数据视图编辑：过滤行（全 op：字面量比较 + 字段间比较）+ 排序第一项 */
   const renderViewEditors = (node: ComponentNode, entity: Entity | null) => {
     if (!entity || !node.binding?.source) return null;
     const view = node.binding.view ?? {};
@@ -897,46 +913,91 @@ export default function PageDesigner({
       patchView(node.id, { filters: next.length > 0 ? next : undefined });
     const sortField = view.sort?.[0]?.field;
     const sortDir = view.sort?.[0]?.dir ?? "asc";
+    const numericFieldOptions = entity.fields
+      .filter((f) => f.type === "int" || f.type === "decimal")
+      .map((f) => ({ value: f.key, label: `${f.label}（${f.key}）` }));
     return (
       <div style={{ marginBottom: 12 }}>
         <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
           数据视图（过滤 / 排序）
         </Typography.Text>
-        {filters.map((f, i) => (
-          <Space key={i} size={6} style={{ display: "flex", marginBottom: 6 }}>
-            <Select
-              style={{ width: 130 }}
-              value={f.field || undefined}
-              placeholder="字段"
-              onChange={(v) =>
-                writeFilters(
-                  filters.map((x, j) => (j === i ? { ...x, field: v } : x)),
-                )
-              }
-              options={fieldOptions(entity)}
-            />
-            <Input
-              style={{ flex: 1 }}
-              placeholder="等于该值"
-              defaultValue={f.value == null ? "" : String(f.value)}
-              key={`${node.id}-f-${i}-${String(f.value ?? "")}`}
-              onBlur={(ev) =>
-                writeFilters(
-                  filters.map((x, j) =>
-                    j === i ? { ...x, op: "eq" as const, value: ev.target.value } : x,
-                  ),
-                )
-              }
-            />
-            <Button
-              size="small"
-              danger
-              onClick={() => writeFilters(filters.filter((_, j) => j !== i))}
-            >
-              删
-            </Button>
-          </Space>
-        ))}
+        {filters.map((f, i) => {
+          const isFieldOp = FIELD_OPS.includes(f.op);
+          return (
+            <Space key={i} size={6} style={{ display: "flex", marginBottom: 6 }}>
+              <Select
+                style={{ width: 118 }}
+                value={f.field || undefined}
+                placeholder="字段"
+                onChange={(v) =>
+                  writeFilters(
+                    filters.map((x, j) => (j === i ? { ...x, field: v } : x)),
+                  )
+                }
+                options={fieldOptions(entity)}
+              />
+              <Select
+                style={{ width: 104 }}
+                value={f.op}
+                onChange={(v) =>
+                  writeFilters(
+                    filters.map((x, j) =>
+                      j === i
+                        ? {
+                            ...x,
+                            op: v as typeof x.op,
+                            // 切到字段间比较时旧字面量不再有意义，清空待重选被比字段
+                            value: FIELD_OPS.includes(v) ? "" : x.value,
+                          }
+                        : x,
+                    ),
+                  )
+                }
+                options={FILTER_OP_OPTIONS}
+              />
+              {isFieldOp ? (
+                <Select
+                  style={{ flex: 1 }}
+                  value={
+                    typeof f.value === "string" && f.value
+                      ? f.value
+                      : undefined
+                  }
+                  placeholder="被比字段（数字）"
+                  onChange={(v) =>
+                    writeFilters(
+                      filters.map((x, j) =>
+                        j === i ? { ...x, value: v } : x,
+                      ),
+                    )
+                  }
+                  options={numericFieldOptions}
+                />
+              ) : (
+                <Input
+                  style={{ flex: 1 }}
+                  placeholder="比较值"
+                  defaultValue={f.value == null ? "" : String(f.value)}
+                  key={`${node.id}-f-${i}-${f.op}-${String(f.value ?? "")}`}
+                  onBlur={(ev) =>
+                    writeFilters(
+                      filters.map((x, j) =>
+                        j === i ? { ...x, value: ev.target.value } : x,
+                      ),
+                    )
+                  }
+                />
+              )}
+              <Button
+                size="small"
+                danger
+                onClick={() => writeFilters(filters.filter((_, j) => j !== i))}
+              >
+                删
+              </Button>
+            </Space>
+          );
+        })}
         <Button
           size="small"
           style={{ marginBottom: 10 }}
@@ -984,7 +1045,7 @@ export default function PageDesigner({
     );
   };
 
-  /** 聚合编辑（StatCard / ChartPlaceholder 共用，存 binding.view.aggregate） */
+  /** 聚合编辑（StatCard / Chart 共用，存 binding.view.aggregate；groupBy 供图表分组绘图） */
   const renderAggregateEditor = (node: ComponentNode, entity: Entity | null) => {
     if (!entity || !node.binding?.source) return null;
     const agg = node.binding.view?.aggregate;
@@ -992,24 +1053,28 @@ export default function PageDesigner({
     const numericFields = entity.fields.filter(
       (f) => f.type === "int" || f.type === "decimal",
     );
+    // 分组字段候选：与服务端校验一致（file/image/json/boolean 不可分组）
+    const groupableFields = entity.fields.filter(
+      (f) => !["file", "image", "json", "boolean"].includes(f.type),
+    );
     return (
       <div style={{ marginBottom: 12 }}>
         <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
           聚合
         </Typography.Text>
-        <Space size={6} style={{ display: "flex" }}>
+        <Space size={6} style={{ display: "flex", marginBottom: 6 }}>
           <Select
             style={{ width: 110 }}
             value={fn}
             onChange={(v) =>
               patchView(node.id, {
-                aggregate:
-                  v === "count"
-                    ? { fn: "count" as const }
-                    : {
-                        fn: v as "sum" | "avg",
-                        ...(agg?.field ? { field: agg.field } : {}),
-                      },
+                aggregate: {
+                  fn: v as "count" | "sum" | "avg",
+                  ...(v !== "count" && agg?.field
+                    ? { field: agg.field }
+                    : {}),
+                  ...(agg?.groupBy ? { groupBy: agg.groupBy } : {}),
+                },
               })
             }
             options={[
@@ -1025,7 +1090,11 @@ export default function PageDesigner({
               value={agg?.field}
               onChange={(v) =>
                 patchView(node.id, {
-                  aggregate: { fn: fn as "sum" | "avg", field: v },
+                  aggregate: {
+                    fn: fn as "sum" | "avg",
+                    field: v,
+                    ...(agg?.groupBy ? { groupBy: agg.groupBy } : {}),
+                  },
                 })
               }
               options={numericFields.map((f) => ({
@@ -1034,6 +1103,30 @@ export default function PageDesigner({
               }))}
             />
           )}
+        </Space>
+        <Space size={6} style={{ display: "flex" }}>
+          <Typography.Text type="secondary">分组</Typography.Text>
+          <Select
+            style={{ flex: 1 }}
+            allowClear
+            placeholder="不分组（单值）"
+            value={agg?.groupBy}
+            onChange={(v) =>
+              patchView(node.id, {
+                aggregate: {
+                  fn,
+                  ...(fn !== "count" && agg?.field
+                    ? { field: agg.field }
+                    : {}),
+                  ...(v ? { groupBy: v } : {}),
+                },
+              })
+            }
+            options={groupableFields.map((f) => ({
+              value: f.key,
+              label: `${f.label}（${f.key}）`,
+            }))}
+          />
         </Space>
       </div>
     );
@@ -1239,7 +1332,7 @@ export default function PageDesigner({
           </>
         )}
 
-        {node.type === "ChartPlaceholder" && (
+        {(node.type === "Chart" || node.type === "ChartPlaceholder") && (
           <>
             {renderSourceSelect(node)}
             <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
@@ -1252,7 +1345,21 @@ export default function PageDesigner({
               key={`${node.id}-title`}
               onBlur={(ev) => patchProps(node.id, { title: ev.target.value })}
             />
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+              图表类型
+            </Typography.Text>
+            <Select
+              style={{ width: "100%", marginBottom: 12 }}
+              value={(props.chartType as string | undefined) ?? "bar"}
+              onChange={(v) => patchProps(node.id, { chartType: v })}
+              options={[
+                { value: "bar", label: "柱状图" },
+                { value: "line", label: "折线图" },
+                { value: "pie", label: "饼图" },
+              ]}
+            />
             {renderAggregateEditor(node, entity)}
+            {renderViewEditors(node, entity)}
           </>
         )}
 

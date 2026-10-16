@@ -14,6 +14,83 @@ export interface SelectOption {
 }
 
 /**
+ * 结构化视图过滤项（与服务端 vf 查询参数同构）：
+ * op 全集 = eq/ne/gt/gte/lt/lte/contains + 字段间比较 ltField/lteField/gtField/gteField
+ * （*Field 时 value 为同实体被比字段的 key，其余 op 时 value 为字面量）。
+ */
+export interface ViewFilter {
+  field: string;
+  op: string;
+  value?: unknown;
+}
+
+/** 聚合查询参数（统计卡片/图表共用） */
+export interface AggregateQuery {
+  fn: "count" | "sum" | "avg";
+  field?: string;
+  /** 旧式等值过滤（兼容保留；服务端以 vf 为准） */
+  filters?: Record<string, string>;
+  /** 结构化过滤（M9 起统一走 vf） */
+  vf?: ViewFilter[];
+}
+
+/** 分组聚合的一项：key 为分组列原值转字符串（ref=目标 id、enum=枚举值），null 组 key=null */
+export interface AggregateGroupItem {
+  key: string | null;
+  value: number;
+}
+
+/** 平台资产元数据（platform_assets 的前端视图；文件本体经 assetContentUrl 取） */
+export interface AssetMeta {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  visibility?: string;
+  appId?: string | null;
+  entity?: string | null;
+  recordId?: string | null;
+  field?: string | null;
+  createdBy?: string;
+  createdAt?: string;
+  contentUrl?: string;
+}
+
+/** 上传资产时的可选关联标注（归属应用/实体/记录/字段，供资产管理与回查） */
+export interface AssetLinkage {
+  appId?: string;
+  entity?: string;
+  recordId?: string;
+  field?: string;
+  visibility?: string;
+}
+
+/**
+ * 解析 file/image 字段值 → 资产 id 数组。
+ * 字段值约定 = 资产 id 数组的 JSON 字符串；兼容已是数组、单个 id 字符串两种历史形态。
+ */
+export function parseAssetIds(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v)).filter((v) => v.length > 0);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const s = value.trim();
+    if (s.startsWith("[")) {
+      try {
+        const parsed: unknown = JSON.parse(s);
+        if (Array.isArray(parsed)) {
+          return parsed.map((v) => String(v)).filter((v) => v.length > 0);
+        }
+      } catch {
+        // 解析失败按单个 id 处理
+      }
+    }
+    return [s];
+  }
+  return [];
+}
+
+/**
  * 运行态适配器：渲染器与宿主（runtime 应用）之间的唯一契约。
  * 渲染器只管按 Schema 画界面与编排交互，数据存取、路由、提示都经适配器，
  * 保证同一渲染器可用于运行态、设计器预览与将来的移动端壳。
@@ -25,19 +102,25 @@ export interface RuntimeAdapter {
       limit?: number;
       offset?: number;
       filters?: Record<string, string>;
+      /** 结构化过滤（M9 起统一走 vf，服务端优先于旧 filters） */
+      vf?: ViewFilter[];
       /** 排序（数据视图 sort 的第一项经此下发，服务端执行） */
       sort?: { field: string; dir: "asc" | "desc" };
     },
   ): Promise<ListResult>;
-  /** 聚合查询（统计卡片/图表用）：对实体做 count/sum/avg，可带等值过滤 */
-  aggregate(
+  /** 聚合查询（统计卡片/图表用）：对实体做 count/sum/avg，可带过滤 */
+  aggregate(entity: string, q: AggregateQuery): Promise<number>;
+  /** 分组聚合（图表用）：按 groupBy 字段分组返回数值序列（服务端按值降序、最多 50 组） */
+  aggregateGrouped(
     entity: string,
-    q: {
-      fn: "count" | "sum" | "avg";
-      field?: string;
-      filters?: Record<string, string>;
-    },
-  ): Promise<number>;
+    q: AggregateQuery & { groupBy: string },
+  ): Promise<AggregateGroupItem[]>;
+  /** 上传文件为平台资产（本体走 R2、元数据登记 PG），返回资产元数据 */
+  uploadAsset(file: File, linkage?: AssetLinkage): Promise<AssetMeta>;
+  /** 批量取资产元数据（缺失 id 由服务端略过，调用方按 id 自行对齐） */
+  assetsMeta(ids: string[]): Promise<AssetMeta[]>;
+  /** 资产内容地址（宿主拼 API 基址并附当前 token 的 ?t=，供 <img>/<a> 直用） */
+  assetContentUrl(id: string): string;
   get(entity: string, id: string): Promise<Row | null>;
   create(entity: string, data: Row): Promise<Row>;
   update(entity: string, id: string, data: Row): Promise<Row>;

@@ -6,10 +6,13 @@ import type {
   WorkflowSchema,
 } from "@naka1205/schema";
 import type {
+  AggregateGroupItem,
+  AssetMeta,
   ListResult,
   Row,
   RuntimeAdapter,
   SelectOption,
+  ViewFilter,
 } from "@lcdp/renderer";
 import { message as antdMessage } from "antd";
 
@@ -284,6 +287,7 @@ export interface DataListParams {
   limit?: number;
   offset?: number;
   filters?: Record<string, string>;
+  vf?: ViewFilter[];
   sort?: { field: string; dir: "asc" | "desc" };
 }
 
@@ -432,6 +436,7 @@ export const api = {
     if (params?.offset) qs.set("offset", String(params.offset));
     if (params?.sort) qs.set("sort", `${params.sort.field}:${params.sort.dir}`);
     for (const [k, v] of Object.entries(params?.filters ?? {})) qs.set(k, v);
+    if (params?.vf?.length) qs.set("vf", JSON.stringify(params.vf));
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return apiFetch<ListResult>(
       `/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}${suffix}`,
@@ -447,7 +452,7 @@ export const api = {
       return null;
     }
   },
-  /** 聚合取数（统计卡片/图表预览）：fn=count 不需 field，sum/avg 需数字字段 */
+  /** 聚合取数（统计卡片/图表预览）：fn=count 不需 field，sum/avg 需数字字段；过滤走 vf（服务端以 vf 为准） */
   async aggregate(
     appId: string,
     entity: string,
@@ -455,17 +460,95 @@ export const api = {
       fn: "count" | "sum" | "avg";
       field?: string;
       filters?: Record<string, string>;
+      vf?: ViewFilter[];
     },
   ): Promise<number> {
     const qs = new URLSearchParams();
     qs.set("fn", args.fn);
     if (args.field) qs.set("field", args.field);
     for (const [k, v] of Object.entries(args.filters ?? {})) qs.set(k, v);
+    if (args.vf?.length) qs.set("vf", JSON.stringify(args.vf));
     const res = await apiFetch<{ value: unknown }>(
       `/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
     );
     const n = Number(res.value);
     return Number.isFinite(n) ? n : 0;
+  },
+  /** 分组聚合（图表预览）：按 groupBy 返回 {key,value} 序列（服务端按值降序、最多 50 组） */
+  async aggregateGrouped(
+    appId: string,
+    entity: string,
+    args: {
+      fn: "count" | "sum" | "avg";
+      field?: string;
+      groupBy: string;
+      filters?: Record<string, string>;
+      vf?: ViewFilter[];
+    },
+  ): Promise<AggregateGroupItem[]> {
+    const qs = new URLSearchParams();
+    qs.set("fn", args.fn);
+    if (args.field) qs.set("field", args.field);
+    qs.set("groupBy", args.groupBy);
+    for (const [k, v] of Object.entries(args.filters ?? {})) qs.set(k, v);
+    if (args.vf?.length) qs.set("vf", JSON.stringify(args.vf));
+    const res = await apiFetch<{ series: AggregateGroupItem[] }>(
+      `/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
+    );
+    return res.series;
+  },
+
+  // ---------------------------------------------------------- 平台资产（M9，与运行态同一组端点）
+  assets: {
+    /** 上传单个文件为资产（multipart；设计器画布预览不走此路，见 makePreviewAdapter 的写拦截） */
+    async upload(
+      file: File,
+      linkage?: {
+        appId?: string;
+        entity?: string;
+        recordId?: string;
+        field?: string;
+        visibility?: string;
+      },
+    ): Promise<AssetMeta> {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (linkage?.appId) fd.append("appId", linkage.appId);
+      if (linkage?.entity) fd.append("entity", linkage.entity);
+      if (linkage?.recordId) fd.append("recordId", linkage.recordId);
+      if (linkage?.field) fd.append("field", linkage.field);
+      if (linkage?.visibility) fd.append("visibility", linkage.visibility);
+      const token = getToken();
+      // 不走 apiFetch：FormData 需浏览器自带 multipart Content-Type（含 boundary）
+      const res = await fetch(`${API_BASE}/assets`, {
+        method: "POST",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: fd,
+      });
+      const body = (await res.json().catch(() => null)) as
+        | (AssetMeta & { message?: string; error?: string })
+        | null;
+      if (!res.ok || !body) {
+        throw new ApiError(
+          body?.message ?? body?.error ?? `上传失败 (${res.status})`,
+        );
+      }
+      return body;
+    },
+    /** 批量取资产元数据（缺失 id 由服务端略过） */
+    async meta(ids: string[]): Promise<AssetMeta[]> {
+      if (!ids.length) return [];
+      const res = await apiFetch<{ items: AssetMeta[] }>(
+        `/assets/meta?ids=${ids.map((i) => encodeURIComponent(i)).join(",")}`,
+      );
+      return res.items;
+    },
+    /** 资产内容地址：附当前 token 的 ?t=（<img>/<a> 无法带 Authorization 头） */
+    contentUrl(id: string): string {
+      const token = getToken();
+      const base = `${API_BASE}/assets/${encodeURIComponent(id)}/content`;
+      return token ? `${base}?t=${encodeURIComponent(token)}` : base;
+    },
   },
 };
 
@@ -504,8 +587,32 @@ export function makePreviewAdapter(appId: string): RuntimeAdapter {
         fn: "count" | "sum" | "avg";
         field?: string;
         filters?: Record<string, string>;
+        vf?: ViewFilter[];
       },
     ) => api.aggregate(appId, entity, args),
+    aggregateGrouped: (
+      entity: string,
+      args: {
+        fn: "count" | "sum" | "avg";
+        field?: string;
+        groupBy: string;
+        filters?: Record<string, string>;
+        vf?: ViewFilter[];
+      },
+    ) => api.aggregateGrouped(appId, entity, args),
+    // 资产读方法走真实接口（预览能看到已传文件）；上传是写操作，与其余写方法一致拦截
+    uploadAsset: (
+      _file: File,
+      _linkage?: {
+        appId?: string;
+        entity?: string;
+        recordId?: string;
+        field?: string;
+        visibility?: string;
+      },
+    ): Promise<AssetMeta> => blocked("设计预览模式：文件上传已禁用"),
+    assetsMeta: (ids: string[]) => api.assets.meta(ids),
+    assetContentUrl: (id: string) => api.assets.contentUrl(id),
     options: async (entity: string): Promise<SelectOption[]> => {
       const res = await api.dataList(appId, entity, { limit: 200 });
       return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));

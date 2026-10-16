@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import type { ReactNode } from "react";
@@ -29,12 +30,23 @@ import {
 } from "antd";
 import type { TableProps } from "antd";
 import dayjs from "dayjs";
+import * as echarts from "echarts/core";
+import { BarChart, LineChart, PieChart } from "echarts/charts";
+import {
+  GridComponent,
+  LegendComponent,
+  TooltipComponent,
+} from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
+import type { EChartsOption } from "echarts";
 import type {
+  AggregateGroupItem,
   RendererContextValue,
   Row,
   RuntimeAdapter,
+  ViewFilter,
 } from "./adapter.js";
-import { childEntities, resolveEntity } from "./adapter.js";
+import { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
 import { FieldInput } from "./fields.js";
 import { styles } from "./styles.js";
 
@@ -116,6 +128,83 @@ export function eqFiltersOf(view: DataView | undefined): Record<string, string> 
   return out;
 }
 
+/**
+ * 数据视图过滤 → 结构化 vf（M9）：全部 op 原样产出（含字段间比较 *Field，其 value 为被比字段 key），
+ * 服务端统一编译与权限校验；DataTable/StatCard/Chart 取数一律带 vf（旧 eq filters 兼容并行发送）。
+ */
+export function viewFiltersOf(view: DataView | undefined): ViewFilter[] {
+  return (view?.filters ?? []).map((f) => ({
+    field: f.field,
+    op: f.op,
+    value: f.value,
+  }));
+}
+
+/**
+ * 资产值渲染（file/image 字段的表格单元格与详情共用）：
+ * 解析资产 id 数组 → 批量取元数据得文件名 → 新窗打开内容地址；
+ * image 字段渲染 40px 缩略图（点开看原图）。元数据缺失（资产已删）时降级显示 id 本身，不断链。
+ */
+export function AssetValue({
+  ids,
+  image,
+  adapter,
+}: {
+  ids: string[];
+  image?: boolean;
+  adapter: RuntimeAdapter;
+}) {
+  const [names, setNames] = useState<Record<string, string>>({});
+  const idsSig = ids.join(",");
+  useEffect(() => {
+    if (!idsSig) return;
+    let alive = true;
+    adapter
+      .assetsMeta(idsSig.split(","))
+      .then((metas) => {
+        if (alive) {
+          setNames(
+            Object.fromEntries(metas.map((m) => [m.id, m.name || m.id])),
+          );
+        }
+      })
+      .catch(() => {
+        // 元数据取不到时以 id 兜底显示，不阻断页面
+      });
+    return () => {
+      alive = false;
+    };
+  }, [adapter, idsSig]);
+  if (!ids.length) return <>—</>;
+  return (
+    <Space size={8} wrap>
+      {ids.map((id) => {
+        const url = adapter.assetContentUrl(id);
+        const name = names[id] ?? id;
+        return image ? (
+          <a key={id} href={url} target="_blank" rel="noreferrer" title={name}>
+            <img
+              src={url}
+              alt={name}
+              style={{
+                width: 40,
+                height: 40,
+                objectFit: "cover",
+                borderRadius: 4,
+                display: "block",
+              }}
+            />
+          </a>
+        ) : (
+          <a key={id} href={url} target="_blank" rel="noreferrer">
+            {name}
+          </a>
+        );
+      })}
+    </Space>
+  );
+}
+
 /** 取节点在当前设备上的布局变体 */
 function layoutFor(
   node: ComponentNode,
@@ -173,7 +262,7 @@ export function DataTable({ node }: NodeProps) {
   // 每个被引实体的标签映射是否已就绪（成功或失败都算就绪，失败时回退显示原始值）
   const [labelsDone, setLabelsDone] = useState<Record<string, boolean>>({});
 
-  // 数据视图签名（内容变化才重拉）：eq 过滤与第一排序项经适配器下发服务端
+  // 数据视图签名（内容变化才重拉）：过滤（vf 全量 op + eq 兼容）与第一排序项经适配器下发服务端
   const viewSig = JSON.stringify(view ?? null);
   const load = useCallback(async () => {
     if (!entity) return;
@@ -181,11 +270,13 @@ export function DataTable({ node }: NodeProps) {
     setError(null);
     try {
       const filters = eqFiltersOf(view);
+      const vf = viewFiltersOf(view);
       const firstSort = view?.sort?.[0];
       const res = await ctx.adapter.list(entity.key, {
         limit: pageSize,
         offset: pageIdx * pageSize,
         filters: Object.keys(filters).length ? filters : undefined,
+        vf: vf.length ? vf : undefined,
         sort: firstSort
           ? { field: firstSort.field, dir: firstSort.dir }
           : undefined,
@@ -270,7 +361,16 @@ export function DataTable({ node }: NodeProps) {
       dataIndex: f.key,
       key: f.key,
       ellipsis: true,
-      render: (_: unknown, row: Row) => cellText(row, f),
+      render: (_: unknown, row: Row) =>
+        f.type === "file" || f.type === "image" ? (
+          <AssetValue
+            ids={parseAssetIds(row[f.key])}
+            image={f.type === "image"}
+            adapter={ctx.adapter}
+          />
+        ) : (
+          cellText(row, f)
+        ),
     })),
   ];
 
@@ -410,6 +510,11 @@ function ChildEditor({
                     onChange={(v) => updateRow(idx, f.key, v)}
                     adapter={ctx.adapter}
                     inChild
+                    linkage={{
+                      entity: child.key,
+                      recordId:
+                        typeof row.id === "string" ? row.id : undefined,
+                    }}
                     readOnly={f.key === "amount" && hasAmount}
                   />
                 </td>
@@ -688,6 +793,7 @@ export function EntityForm({ node }: NodeProps) {
                 value={values[f.key]}
                 onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
                 adapter={ctx.adapter}
+                linkage={{ entity: entity.key, recordId: id }}
                 readOnly={
                   locked || (rollupActive && f.key === rollupField?.key)
                 }
@@ -765,8 +871,9 @@ export function Tabs({ node, children }: NodeProps) {
 }
 
 /**
- * 聚合数值取数（StatCard / ChartPlaceholder 共用）：
- * 实体经 binding.source 解析，过滤取数据视图的 eq 项，fn 缺省时按 fallbackCount 决定是否计数。
+ * 聚合数值取数（StatCard / Chart 共用）：
+ * 实体经 binding.source 解析，过滤统一走结构化 vf（eq 项同时以旧 filters 兼容发送），
+ * fn 缺省时按 fallbackCount 决定是否计数。
  */
 function useAggregateValue(
   node: ComponentNode,
@@ -778,6 +885,7 @@ function useAggregateValue(
   const fn = view?.aggregate?.fn ?? (fallbackCount ? "count" : undefined);
   const field = view?.aggregate?.field;
   const filtersSig = JSON.stringify(eqFiltersOf(view));
+  const vfSig = JSON.stringify(viewFiltersOf(view));
   const [value, setValue] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [denied, setDenied] = useState(false);
@@ -791,6 +899,7 @@ function useAggregateValue(
         fn,
         field,
         filters: JSON.parse(filtersSig) as Record<string, string>,
+        vf: JSON.parse(vfSig) as ViewFilter[],
       })
       .then((v) => {
         if (alive) {
@@ -810,7 +919,7 @@ function useAggregateValue(
     return () => {
       alive = false;
     };
-  }, [ctx.adapter, entity, fn, field, filtersSig]);
+  }, [ctx.adapter, entity, fn, field, filtersSig, vfSig]);
   return { entity, value, error, denied };
 }
 
@@ -840,8 +949,25 @@ export function StatCard({ node }: NodeProps) {
   );
 }
 
-/** 图表占位：图表引擎后续接入；已声明聚合时先展示聚合数值 */
-export function ChartPlaceholder({ node }: NodeProps) {
+echarts.use([
+  BarChart,
+  LineChart,
+  PieChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  CanvasRenderer,
+]);
+
+type ChartType = "bar" | "line" | "pie";
+
+function chartTypeOf(node: ComponentNode): ChartType {
+  const t = node.props?.chartType;
+  return t === "line" || t === "pie" ? t : "bar";
+}
+
+/** 图表单值形态（无 groupBy）：沿用统计口径展示聚合数值 */
+function ChartSingleValue({ node }: NodeProps) {
   const hasAggregate = Boolean(node.binding?.view?.aggregate);
   const { entity, value, error, denied } = useAggregateValue(node, false);
   const title =
@@ -872,11 +998,180 @@ export function ChartPlaceholder({ node }: NodeProps) {
             borderRadius: 8,
           }}
         >
-          图表占位（图表组件将在后续里程碑接入）
+          图表未配置聚合（在设计器中为图表设置聚合与分组字段）
         </div>
       )}
     </Card>
   );
+}
+
+/**
+ * 图表分组形态（aggregate.groupBy 已声明）：走分组聚合取序列，ECharts 渲染柱/折/饼。
+ * 分组标签：ref 用引用标签解析、enum 用选项 label、null 组显示「未填」；
+ * 403（分组/指标字段被权限拒绝）→ 整卡不渲染，与统计卡同一口径。
+ */
+function GroupedChart({
+  node,
+  entity,
+}: {
+  node: ComponentNode;
+  entity: Entity;
+}) {
+  const ctx = useRendererCtx();
+  const view = node.binding?.view;
+  const agg = view?.aggregate;
+  const fn = agg?.fn ?? "count";
+  const field = agg?.field;
+  const groupBy = agg?.groupBy ?? "";
+  const chartType = chartTypeOf(node);
+  const title =
+    typeof node.props?.title === "string" ? node.props.title : "图表";
+  const groupField = entity.fields.find((f) => f.key === groupBy);
+  const groupRefEntity =
+    groupField?.type === "ref" ? groupField.refEntity : undefined;
+  const groupOptionsSig = JSON.stringify(groupField?.options ?? null);
+  const filtersSig = JSON.stringify(eqFiltersOf(view));
+  const vfSig = JSON.stringify(viewFiltersOf(view));
+  const [series, setSeries] = useState<AggregateGroupItem[] | null>(null);
+  const [refLabels, setRefLabels] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [denied, setDenied] = useState(false);
+  const chartRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    setDenied(false);
+    ctx.adapter
+      .aggregateGrouped(entity.key, {
+        fn,
+        field,
+        groupBy,
+        filters: JSON.parse(filtersSig) as Record<string, string>,
+        vf: JSON.parse(vfSig) as ViewFilter[],
+      })
+      .then((s) => {
+        if (alive) setSeries(s);
+      })
+      .catch((err) => {
+        if (!alive) return;
+        if ((err as { status?: number } | null)?.status === 403) {
+          setDenied(true);
+        } else {
+          setError(errText(err));
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [ctx.adapter, entity, fn, field, groupBy, filtersSig, vfSig]);
+
+  // ref 分组：拉被引实体选项表做 id→label 映射（与表格的引用标签同一来源）
+  useEffect(() => {
+    if (!groupRefEntity) return;
+    let alive = true;
+    ctx.adapter
+      .options(groupRefEntity)
+      .then((opts) => {
+        if (alive) {
+          setRefLabels(
+            Object.fromEntries(opts.map((o) => [o.value, o.label])),
+          );
+        }
+      })
+      .catch(() => {
+        // 标签拉取失败时回退显示原始 id
+      });
+    return () => {
+      alive = false;
+    };
+  }, [ctx.adapter, groupRefEntity]);
+
+  useEffect(() => {
+    if (!chartRef.current || !series) return;
+    const groupOptions = JSON.parse(groupOptionsSig) as
+      | Array<{ value: string; label: string }>
+      | null;
+    const labelOf = (key: string | null): string => {
+      if (key === null) return "未填";
+      if (!groupField) return key;
+      if (groupField.type === "ref") return refLabels[key] ?? key;
+      if (groupField.type === "enum") {
+        return groupOptions?.find((o) => o.value === key)?.label ?? key;
+      }
+      if (groupField.type === "boolean") return key === "true" ? "是" : "否";
+      return key;
+    };
+    const chart = echarts.init(chartRef.current);
+    let option: EChartsOption;
+    if (chartType === "pie") {
+      option = {
+        tooltip: { trigger: "item" },
+        legend: { bottom: 0 },
+        series: [
+          {
+            type: "pie",
+            radius: "62%",
+            data: series.map((s) => ({
+              name: labelOf(s.key),
+              value: s.value,
+            })),
+          },
+        ],
+      };
+    } else {
+      option = {
+        tooltip: { trigger: "axis" },
+        grid: { left: 8, right: 16, top: 30, bottom: 4, containLabel: true },
+        xAxis: { type: "category", data: series.map((s) => labelOf(s.key)) },
+        yAxis: { type: "value" },
+        series: [{ type: chartType, data: series.map((s) => s.value) }],
+      };
+    }
+    chart.setOption(option);
+    const onResize = () => chart.resize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      chart.dispose();
+    };
+    // labelOf 的输入（分组字段类型/枚举选项/ref 标签）已由 groupOptionsSig 与 refLabels 完整刻画
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, chartType, refLabels, groupOptionsSig, groupField?.type]);
+
+  if (denied) return null;
+  return (
+    <Card title={title}>
+      {error ? (
+        <Alert type="error" message={error} />
+      ) : series === null ? (
+        <div style={styles.empty}>加载中…</div>
+      ) : series.length === 0 ? (
+        <div style={styles.empty}>暂无数据</div>
+      ) : (
+        <div ref={chartRef} style={{ width: "100%", height: 300 }} />
+      )}
+    </Card>
+  );
+}
+
+/**
+ * 图表（M9）：ECharts 预置图表（柱/折/饼）。
+ * binding.view.aggregate 带 groupBy → 分组序列绘图；无 groupBy → 单值展示（同 StatCard 口径）。
+ */
+export function Chart({ node }: NodeProps) {
+  const ctx = useRendererCtx();
+  const entity = resolveEntity(ctx, node.binding?.source);
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (node.binding?.view?.aggregate?.groupBy) {
+    return <GroupedChart node={node} entity={entity} />;
+  }
+  return <ChartSingleValue node={node} />;
+}
+
+/** 兼容旧页面：ChartPlaceholder 保留注册，渲染转发 Chart（M9 起图表引擎已接入） */
+export function ChartPlaceholder({ node }: NodeProps) {
+  return <Chart node={node} />;
 }
 
 /** 详情：按页面参数 id 拉单条记录，以描述列表展示字段（值经统一格式化、引用显示标签） */
@@ -965,10 +1260,18 @@ export function Detail({ node }: NodeProps) {
         <Descriptions.Item label="ID">{String(row.id)}</Descriptions.Item>
         {visibleFields.map((f) => (
           <Descriptions.Item key={f.key} label={f.label}>
-            {formatCellValue(
-              f,
-              row[f.key],
-              f.refEntity ? labels[f.refEntity] : undefined,
+            {f.type === "file" || f.type === "image" ? (
+              <AssetValue
+                ids={parseAssetIds(row[f.key])}
+                image={f.type === "image"}
+                adapter={ctx.adapter}
+              />
+            ) : (
+              formatCellValue(
+                f,
+                row[f.key],
+                f.refEntity ? labels[f.refEntity] : undefined,
+              )
             )}
           </Descriptions.Item>
         ))}
@@ -1065,7 +1368,7 @@ export function AgentChat({ node }: NodeProps) {
   );
 }
 
-/** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 12 类组件） */
+/** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 13 类组件，含 M9 的 Chart） */
 export function createDefaultRegistry(): ComponentRegistry {
   const registry = createRegistry();
   registerComponent(registry, "Page", Page);
@@ -1075,6 +1378,7 @@ export function createDefaultRegistry(): ComponentRegistry {
   registerComponent(registry, "EntityForm", EntityForm);
   registerComponent(registry, "Detail", Detail);
   registerComponent(registry, "StatCard", StatCard);
+  registerComponent(registry, "Chart", Chart);
   registerComponent(registry, "ChartPlaceholder", ChartPlaceholder);
   registerComponent(registry, "TextBlock", TextBlock);
   registerComponent(registry, "Image", ImageBlock);

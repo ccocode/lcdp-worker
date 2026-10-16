@@ -5,11 +5,15 @@ import type {
   PublicPolicy,
 } from "@naka1205/schema";
 import type {
+  AggregateGroupItem,
+  AssetLinkage,
+  AssetMeta,
   EntityAccess,
   ListResult,
   Row,
   RuntimeAdapter,
   SelectOption,
+  ViewFilter,
 } from "@lcdp/renderer";
 
 /**
@@ -316,6 +320,7 @@ export const api = {
         limit?: number;
         offset?: number;
         filters?: Record<string, string>;
+        vf?: ViewFilter[];
         sort?: { field: string; dir: "asc" | "desc" };
       },
     ): Promise<ListResult> {
@@ -324,12 +329,13 @@ export const api = {
       if (params?.offset) qs.set("offset", String(params.offset));
       if (params?.sort) qs.set("sort", `${params.sort.field}:${params.sort.dir}`);
       for (const [k, v] of Object.entries(params?.filters ?? {})) qs.set(k, v);
+      if (params?.vf?.length) qs.set("vf", JSON.stringify(params.vf));
       const suffix = qs.toString() ? `?${qs.toString()}` : "";
       return apiFetch<ListResult>(
         `/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}${suffix}`,
       );
     },
-    /** 聚合查询（统计卡片/图表）：服务端对实体做 count/sum/avg，等值过滤走查询参数 */
+    /** 聚合查询（统计卡片/图表）：服务端对实体做 count/sum/avg；过滤走旧 filters 兼容 + 结构化 vf（服务端以 vf 为准） */
     async aggregate(
       appId: string,
       entity: string,
@@ -337,16 +343,41 @@ export const api = {
         fn: "count" | "sum" | "avg";
         field?: string;
         filters?: Record<string, string>;
+        vf?: ViewFilter[];
       },
     ): Promise<number> {
       const qs = new URLSearchParams();
       qs.set("fn", q.fn);
       if (q.field) qs.set("field", q.field);
       for (const [k, v] of Object.entries(q.filters ?? {})) qs.set(k, v);
+      if (q.vf?.length) qs.set("vf", JSON.stringify(q.vf));
       const res = await apiFetch<{ value: number }>(
         `/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
       );
       return res.value;
+    },
+    /** 分组聚合（图表）：按 groupBy 分组返回 {key,value} 序列（服务端按值降序、最多 50 组） */
+    async aggregateGrouped(
+      appId: string,
+      entity: string,
+      q: {
+        fn: "count" | "sum" | "avg";
+        field?: string;
+        groupBy: string;
+        filters?: Record<string, string>;
+        vf?: ViewFilter[];
+      },
+    ): Promise<AggregateGroupItem[]> {
+      const qs = new URLSearchParams();
+      qs.set("fn", q.fn);
+      if (q.field) qs.set("field", q.field);
+      qs.set("groupBy", q.groupBy);
+      for (const [k, v] of Object.entries(q.filters ?? {})) qs.set(k, v);
+      if (q.vf?.length) qs.set("vf", JSON.stringify(q.vf));
+      const res = await apiFetch<{ series: AggregateGroupItem[] }>(
+        `/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
+      );
+      return res.series;
     },
     async get(appId: string, entity: string, id: string): Promise<Row | null> {
       try {
@@ -382,6 +413,51 @@ export const api = {
         `/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       );
+    },
+  },
+  /** 平台资产（M9）：文件本体在 R2、元数据登记 PG；上传/取数走登录态，内容经 api 代理流 */
+  assets: {
+    /** 上传单个文件为资产（multipart，文件字段名 file；关联标注经表单字段附带） */
+    async upload(file: File, linkage?: AssetLinkage): Promise<AssetMeta> {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (linkage?.appId) fd.append("appId", linkage.appId);
+      if (linkage?.entity) fd.append("entity", linkage.entity);
+      if (linkage?.recordId) fd.append("recordId", linkage.recordId);
+      if (linkage?.field) fd.append("field", linkage.field);
+      if (linkage?.visibility) fd.append("visibility", linkage.visibility);
+      const token = getToken();
+      // 不走 apiFetch：FormData 需浏览器自带 multipart Content-Type（含 boundary），不能覆写为 JSON
+      const res = await fetch(`${API_BASE}/assets`, {
+        method: "POST",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: fd,
+      });
+      const body = (await res.json().catch(() => null)) as
+        | (AssetMeta & { message?: string; error?: string })
+        | null;
+      if (!res.ok || !body) {
+        const err = new Error(
+          body?.message ?? body?.error ?? `上传失败 (${res.status})`,
+        ) as Error & { status?: number };
+        err.status = res.status;
+        throw err;
+      }
+      return body;
+    },
+    /** 批量取资产元数据（缺失 id 由服务端略过） */
+    async meta(ids: string[]): Promise<AssetMeta[]> {
+      if (!ids.length) return [];
+      const res = await apiFetch<{ items: AssetMeta[] }>(
+        `/assets/meta?ids=${ids.map((i) => encodeURIComponent(i)).join(",")}`,
+      );
+      return res.items;
+    },
+    /** 资产内容地址：附当前 token 的 ?t=（<img>/<a> 无法带 Authorization 头，服务端亦认查询参数鉴权） */
+    contentUrl(id: string): string {
+      const token = getToken();
+      const base = `${API_BASE}/assets/${encodeURIComponent(id)}/content`;
+      return token ? `${base}?t=${encodeURIComponent(token)}` : base;
     },
   },
   /** 流程与待办（M5）：全部按当前登录用户在服务端过滤，前端只做呈现 */
@@ -553,6 +629,12 @@ export function makeAdapter(
   return {
     list: (entity, params) => api.data.list(appId, entity, params),
     aggregate: (entity, q) => api.data.aggregate(appId, entity, q),
+    aggregateGrouped: (entity, q) =>
+      api.data.aggregateGrouped(appId, entity, q),
+    uploadAsset: (file, linkage) =>
+      api.assets.upload(file, { appId, ...linkage }),
+    assetsMeta: (ids) => api.assets.meta(ids),
+    assetContentUrl: (id) => api.assets.contentUrl(id),
     get: (entity, id) => api.data.get(appId, entity, id),
     create: (entity, data) => api.data.create(appId, entity, data),
     update: (entity, id, data) => api.data.update(appId, entity, id, data),
@@ -583,6 +665,7 @@ export function makePublicAdapter(
       limit?: number;
       offset?: number;
       filters?: Record<string, string>;
+      vf?: ViewFilter[];
       sort?: { field: string; dir: "asc" | "desc" };
     },
   ): Promise<ListResult> => {
@@ -591,6 +674,7 @@ export function makePublicAdapter(
     if (params?.offset) qs.set("offset", String(params.offset));
     if (params?.sort) qs.set("sort", `${params.sort.field}:${params.sort.dir}`);
     for (const [k, v] of Object.entries(params?.filters ?? {})) qs.set(k, v);
+    if (params?.vf?.length) qs.set("vf", JSON.stringify(params.vf));
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     return apiFetch<ListResult>(
       `${base}/data/${encodeURIComponent(entity)}${suffix}`,
@@ -601,6 +685,21 @@ export function makePublicAdapter(
     aggregate: () => {
       throw new Error("公开访问不支持聚合查询");
     },
+    aggregateGrouped: () => {
+      throw new Error("公开访问不支持聚合查询");
+    },
+    uploadAsset: () => {
+      throw new Error("公开访问不支持文件上传");
+    },
+    // 公开面尽力取资产名（private 资产需登录，取不到时渲染层以 id 兜底）；public 资产可直读
+    assetsMeta: async (ids: string[]): Promise<AssetMeta[]> => {
+      try {
+        return await api.assets.meta(ids);
+      } catch {
+        return [];
+      }
+    },
+    assetContentUrl: (id: string) => api.assets.contentUrl(id),
     get: async (entity, id) => {
       try {
         const res = await apiFetch<{ row: Row }>(

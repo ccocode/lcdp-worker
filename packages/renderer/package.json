@@ -10,9 +10,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@naka1205/schema": "0.3.0",
+    "@naka1205/schema": "^0.5.0",
     "antd": "^5.27.0",
-    "dayjs": "^1.11.13"
+    "dayjs": "^1.11.13",
+    "echarts": "^5.6.0"
   },
   "peerDependencies": {
     "react": "^18.3.1"

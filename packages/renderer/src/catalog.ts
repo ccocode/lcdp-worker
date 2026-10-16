@@ -2,7 +2,8 @@ import type { ComponentNode } from "@naka1205/schema";
 
 /**
  * 组件目录：注册中心 v1 的物料清单（设计器物料面板的数据源）。
- * 与 createDefaultRegistry 的注册类型一一对应；make 生成可直接落进页面树的默认节点，
+ * 与 createDefaultRegistry 的注册类型基本一一对应（ChartPlaceholder 仅作旧页面兼容注册、
+ * 不再进物料栏，新图表统一用 Chart）；make 生成可直接落进页面树的默认节点，
  * 数据类组件的 binding.source 先留空字符串，由设计器在画布上绑定实体
  * （未绑定时服务端校验与运行态都会明确报错，属预期）。
  */
@@ -83,14 +84,15 @@ export const componentCatalog: Array<{
     }),
   },
   {
-    type: "ChartPlaceholder",
+    type: "Chart",
     label: "图表",
     category: "数据",
-    description: "图表占位：可先展示聚合数值，图表引擎后续里程碑接入",
+    description: "预置图表（柱/折/饼）：数据视图聚合带分组字段时按组绘图，无分组时展示单值",
     make: (id) => ({
       id,
-      type: "ChartPlaceholder",
-      props: { title: "图表" },
+      type: "Chart",
+      binding: { source: "", view: { aggregate: { fn: "count" } } },
+      props: { title: "图表", chartType: "bar" },
     }),
   },
   {
