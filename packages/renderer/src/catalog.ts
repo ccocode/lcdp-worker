@@ -143,4 +143,17 @@ export const componentCatalog: Array<{
       props: { title: "智能助手" },
     }),
   },
+  {
+    type: "SupportTranscript",
+    label: "客服会话记录",
+    category: "智能",
+    description:
+      "按当前记录的会话字段展示访客客服会话全文与转人工摘要，坐席可将问答沉淀为 FAQ 草稿",
+    make: (id) => ({
+      id,
+      type: "SupportTranscript",
+      binding: { source: "" },
+      props: { title: "会话记录", conversationField: "conversation_id" },
+    }),
+  },
 ];

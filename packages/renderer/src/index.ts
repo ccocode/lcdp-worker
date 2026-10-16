@@ -16,6 +16,8 @@ export type {
   Row,
   RuntimeAdapter,
   SelectOption,
+  SupportTranscriptData,
+  SupportTranscriptMessage,
   ViewFilter,
 } from "./adapter.js";
 export { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
@@ -35,6 +37,7 @@ export {
   Page,
   SchemaRenderer,
   StatCard,
+  SupportTranscript,
   Tabs,
   TextBlock,
   createDefaultRegistry,

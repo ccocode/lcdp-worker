@@ -13,6 +13,7 @@ import type {
   Row,
   RuntimeAdapter,
   SelectOption,
+  SupportTranscriptData,
   ViewFilter,
 } from "@lcdp/renderer";
 
@@ -232,6 +233,44 @@ export interface AssistantConfirmResult {
   message?: string;
 }
 
+/** 客服咨询窗配置（M12 support/config，公开可读）：enabled 决定是否渲染咨询窗 */
+export interface SupportConfig {
+  enabled: boolean;
+  title?: string;
+  /** Turnstile 站点密钥；null = 未启用 Turnstile（限流模式），前端不渲染 widget */
+  turnstileSiteKey: string | null;
+}
+
+/** 客服会话消息（与助手消息同构；role 含 visitor/user、assistant、system 三态） */
+export interface SupportMessage {
+  id: string;
+  role: string;
+  text: string;
+  citations?: AssistantCitation[];
+  /** 待确认动作（kind='humanHandoff' 时为转人工提案卡） */
+  pendingAction?: AssistantPendingAction;
+  status?: string;
+  createdAt?: string;
+}
+
+/** 客服会话头（访客详情与坐席列表共用字段的宽容视图） */
+export interface SupportSessionInfo {
+  id: string;
+  /** active / handoff / closed */
+  status?: string;
+  ticketId?: string | null;
+  rating?: number | null;
+  summary?: string | null;
+  visitorName?: string | null;
+  updatedAt?: string;
+  messageCount?: number;
+}
+
+export interface SupportSessionDetail {
+  session: SupportSessionInfo;
+  messages: SupportMessage[];
+}
+
 /** 公开（匿名）入口解析结果：primary 为入口首个应用的公开面（无公开页时为 null） */
 export interface PublicEntryResult {
   entry: { id: string; name: string } | null;
@@ -297,6 +336,106 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw err;
   }
   return body as T;
+}
+
+/**
+ * 客服访客组请求（M12）：不带登录 token，能力凭证走 X-Visitor-Key 头
+ * （visitorKey 只在创建会话响应中出现一次，之后由前端从本地保存回带）。
+ * 错误处理与 apiFetch 同构（错误对象挂 HTTP 状态码）。
+ */
+async function supportFetch<T>(
+  path: string,
+  visitorKey?: string,
+  init?: RequestInit,
+): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(visitorKey ? { "X-Visitor-Key": visitorKey } : {}),
+      ...(init?.headers ?? {}),
+    },
+  });
+  const body = (await res.json().catch(() => null)) as
+    | (Record<string, unknown> & { message?: string; error?: string })
+    | null;
+  if (!res.ok) {
+    const err = new Error(
+      body?.message ?? body?.error ?? `请求失败 (${res.status})`,
+    ) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return body as T;
+}
+
+type RawRecord = Record<string, unknown>;
+
+function strOrNull(v: unknown): string | null {
+  return typeof v === "string" && v ? v : null;
+}
+
+function numOrNull(v: unknown): number | null {
+  return typeof v === "number" ? v : null;
+}
+
+/** 客服消息归一化：pending_action / pendingAction 双写兼容（对齐 assistant 会话详情形状） */
+function normalizeSupportMessage(raw: RawRecord, idx: number): SupportMessage {
+  const pa = (raw.pendingAction ?? raw.pending_action) as
+    | RawRecord
+    | undefined;
+  return {
+    id: typeof raw.id === "string" ? raw.id : `m-${idx}`,
+    role: typeof raw.role === "string" ? raw.role : "assistant",
+    text: typeof raw.text === "string" ? raw.text : "",
+    citations: Array.isArray(raw.citations)
+      ? (raw.citations as SupportMessage["citations"])
+      : undefined,
+    pendingAction: pa
+      ? {
+          kind: typeof pa.kind === "string" ? pa.kind : "",
+          summary:
+            typeof pa.summary === "string"
+              ? pa.summary
+              : typeof pa.reason === "string"
+                ? pa.reason
+                : "",
+          fields: Array.isArray(pa.fields)
+            ? (pa.fields as AssistantPendingAction["fields"])
+            : [],
+          handled: pa.handled === true || Boolean(pa.handled),
+        }
+      : undefined,
+    status: typeof raw.status === "string" ? raw.status : undefined,
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : undefined,
+  };
+}
+
+function normalizeSupportSessionInfo(raw: RawRecord): SupportSessionInfo {
+  return {
+    id: typeof raw.id === "string" ? raw.id : "",
+    status: typeof raw.status === "string" ? raw.status : undefined,
+    ticketId: strOrNull(raw.ticketId ?? raw.ticket_id),
+    rating: numOrNull(raw.rating),
+    summary: strOrNull(raw.summary ?? raw.handoff_summary ?? raw.handoffSummary),
+    visitorName: strOrNull(raw.visitorName ?? raw.visitor_name),
+    updatedAt:
+      typeof raw.updatedAt === "string"
+        ? raw.updatedAt
+        : typeof raw.updated_at === "string"
+          ? raw.updated_at
+          : undefined,
+    messageCount: numOrNull(raw.messageCount ?? raw.message_count) ?? undefined,
+  };
+}
+
+/** 会话详情归一化：{session|conversation, messages} 两种头部键都认，字段蛇形/驼峰都认 */
+function normalizeSupportDetail(raw: RawRecord): SupportSessionDetail {
+  const head = (raw.session ?? raw.conversation ?? raw) as RawRecord;
+  const messages = Array.isArray(raw.messages)
+    ? (raw.messages as RawRecord[]).map(normalizeSupportMessage)
+    : [];
+  return { session: normalizeSupportSessionInfo(head), messages };
 }
 
 export const api = {
@@ -626,6 +765,162 @@ export const api = {
       return res;
     },
   },
+  /**
+   * 客服（M12）：访客组以 sessionId + X-Visitor-Key 能力凭证调用（匿名），
+   * 坐席组走登录 token（transcript / faq-drafts / 会话列表）。
+   */
+  support: {
+    /** 咨询窗配置（公开可读）：enabled=false 时前端不渲染咨询窗 */
+    async config(appId: string): Promise<SupportConfig> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/config`,
+      );
+      return {
+        enabled: raw.enabled === true,
+        title: typeof raw.title === "string" ? raw.title : undefined,
+        turnstileSiteKey: strOrNull(
+          raw.turnstileSiteKey ?? raw.turnstile_site_key,
+        ),
+      };
+    },
+    /** 创建访客会话：Turnstile 启用时须带 turnstileToken；响应含一次性 visitorKey */
+    async createSession(
+      appId: string,
+      body: { turnstileToken?: string; visitorName?: string; contact?: string },
+    ): Promise<{ sessionId: string; visitorKey: string }> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions`,
+        undefined,
+        { method: "POST", body: JSON.stringify(body) },
+      );
+      const sessionId = strOrNull(raw.sessionId ?? raw.session_id ?? raw.id);
+      const visitorKey = strOrNull(raw.visitorKey ?? raw.visitor_key);
+      if (!sessionId || !visitorKey) {
+        throw new Error("创建会话响应缺少 sessionId/visitorKey");
+      }
+      return { sessionId, visitorKey };
+    },
+    /** 访客会话详情（消息全量，轮询靠它） */
+    async session(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+    ): Promise<SupportSessionDetail> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}`,
+        visitorKey,
+      );
+      return normalizeSupportDetail(raw);
+    },
+    /** 发送访客消息：立即返回，助手回复经轮询会话详情取回（202） */
+    async postMessage(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+      text: string,
+    ): Promise<{ messageId: string }> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/messages`,
+        visitorKey,
+        { method: "POST", body: JSON.stringify({ text }) },
+      );
+      return { messageId: strOrNull(raw.messageId ?? raw.id) ?? "" };
+    },
+    /** 按钮路径转人工：立即执行（api 确定性），幂等返回既有工单号 */
+    async handoff(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+    ): Promise<{ ticketId: string | null }> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/handoff`,
+        visitorKey,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      return { ticketId: strOrNull(raw.ticketId ?? raw.ticket_id) };
+    },
+    /** 提案路径确认/取消（humanHandoff 提案卡）：确认才执行转人工 */
+    async confirmAction(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+      messageId: string,
+      decision: "confirm" | "cancel",
+    ): Promise<{ ok: boolean; ticketId: string | null }> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/actions/${encodeURIComponent(messageId)}/confirm`,
+        visitorKey,
+        { method: "POST", body: JSON.stringify({ decision }) },
+      );
+      return {
+        ok: raw.ok !== false,
+        ticketId: strOrNull(raw.ticketId ?? raw.ticket_id),
+      };
+    },
+    /** 满意度评分（1–5） */
+    async rate(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+      score: number,
+    ): Promise<void> {
+      await supportFetch(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/rating`,
+        visitorKey,
+        { method: "POST", body: JSON.stringify({ score }) },
+      );
+    },
+    /** 坐席组：访客会话列表（可按 status 过滤） */
+    async sessions(
+      appId: string,
+      status?: string,
+    ): Promise<SupportSessionInfo[]> {
+      const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+      const raw = await apiFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions${qs}`,
+      );
+      const rows = (raw.rows ?? raw.sessions ?? []) as RawRecord[];
+      return rows.map(normalizeSupportSessionInfo);
+    },
+    /** 坐席组：会话全文（摘要 + 消息全量），归一化为渲染器 SupportTranscript 视图 */
+    async transcript(
+      appId: string,
+      conversationId: string,
+    ): Promise<SupportTranscriptData> {
+      const raw = await apiFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(conversationId)}/transcript`,
+      );
+      const detail = normalizeSupportDetail(raw);
+      return {
+        sessionId: detail.session.id || conversationId,
+        status: detail.session.status,
+        summary: detail.session.summary,
+        ticketId: detail.session.ticketId,
+        rating: detail.session.rating,
+        messages: detail.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          text: m.text,
+          citations: m.citations,
+          createdAt: m.createdAt,
+        })),
+      };
+    },
+    /** 坐席组：沉淀 FAQ 草稿（写 kb_documents 待审队列，管理台审核入库） */
+    async faqDraft(
+      appId: string,
+      input: { question: string; answer: string },
+    ): Promise<{ docId: string; status: string }> {
+      const raw = await apiFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/faq-drafts`,
+        { method: "POST", body: JSON.stringify(input) },
+      );
+      return {
+        docId: strOrNull(raw.docId ?? raw.doc_id ?? raw.id) ?? "",
+        status: typeof raw.status === "string" ? raw.status : "pending_review",
+      };
+    },
+  },
 };
 
 /** 引用下拉的显示标签：优先取语义字段（名称/单号/编码），兜底用 id */
@@ -661,6 +956,10 @@ export function makeAdapter(
       const res = await api.data.list(appId, entity, { limit: 200 });
       return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
     },
+    /** 客服（M12）：坐席在工单详情页读会话全文 + 沉淀 FAQ（登录态，adapter 可选方法） */
+    getSupportTranscript: (conversationId) =>
+      api.support.transcript(appId, conversationId),
+    postSupportFaqDraft: (input) => api.support.faqDraft(appId, input),
     navigate,
     notify,
   };

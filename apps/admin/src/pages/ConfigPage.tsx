@@ -49,6 +49,8 @@ const KEY_LABELS: Record<string, string> = {
   "storage.region": "区域 region",
   "storage.accessKeyId": "AccessKey accessKeyId",
   "storage.secretAccessKey": "SecretKey secretAccessKey",
+  "turnstile.siteKey": "站点密钥 siteKey",
+  "turnstile.secretKey": "服务端密钥 secretKey",
 };
 
 const GROUPS: {
@@ -59,6 +61,7 @@ const GROUPS: {
   { title: "对话网关（chat）", prefix: "chat.", channel: "chat" },
   { title: "向量网关（embedding）", prefix: "embedding.", channel: "embedding" },
   { title: "对象存储（storage）", prefix: "storage.", channel: "storage" },
+  { title: "客服防刷（Turnstile）", prefix: "turnstile." },
   { title: "LLM 全局（llm）", prefix: "llm." },
 ];
 

@@ -28,6 +28,8 @@ import {
   Statistic,
   Table,
   Tabs as AntdTabs,
+  Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { TableProps } from "antd";
@@ -46,6 +48,7 @@ import type {
   RendererContextValue,
   Row,
   RuntimeAdapter,
+  SupportTranscriptData,
   ViewFilter,
 } from "./adapter.js";
 import { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
@@ -1656,6 +1659,254 @@ export function AgentChat({ node }: NodeProps) {
   );
 }
 
+/**
+ * 客服会话记录（M12）：坐席在工单详情页查看访客会话全文与转人工摘要。
+ * 记录上下文沿 Detail 既有机制——节点 binding.source 绑定工单实体，组件按页面参数 id
+ * 拉当前记录行、取 props.conversationField 指定字段（缺省 conversation_id）为会话 id，
+ * 再经宿主 adapter 的可选方法 getSupportTranscript 读坐席组 transcript 端点；
+ * adapter 未实现该方法（设计器预览以外的宿主）时降级为占位提示，宿主无关红线不变。
+ * 坐席可将任意一对「访客问 + 助手答」经 adapter.postSupportFaqDraft 沉淀为 FAQ 草稿
+ * （进知识库待审队列，管理台审核后入库）；adapter 未提供该方法时不渲染沉淀入口。
+ */
+export function SupportTranscript({ node }: NodeProps) {
+  const ctx = useRendererCtx();
+  const title =
+    typeof node.props?.title === "string" ? node.props.title : "会话记录";
+  const conversationField =
+    typeof node.props?.conversationField === "string" &&
+    node.props.conversationField
+      ? node.props.conversationField
+      : "conversation_id";
+  const [data, setData] = useState<SupportTranscriptData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [noConversation, setNoConversation] = useState(false);
+  /** 已沉淀为 FAQ 的助手消息 id 集合（防重复提交） */
+  const [faqDone, setFaqDone] = useState<Set<string>>(new Set());
+  const [faqBusyId, setFaqBusyId] = useState<string | null>(null);
+
+  const entity = resolveEntity(ctx, node.binding?.source);
+  const recordId = ctx.params.id;
+  const canRead = typeof ctx.adapter.getSupportTranscript === "function";
+
+  useEffect(() => {
+    if (ctx.design || !canRead || !entity || !recordId) return;
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      setNoConversation(false);
+      try {
+        const row = await ctx.adapter.get(entity.key, recordId);
+        if (!alive) return;
+        const cid = row?.[conversationField];
+        if (typeof cid !== "string" || !cid) {
+          setNoConversation(true);
+          return;
+        }
+        const transcript = await ctx.adapter.getSupportTranscript!(cid);
+        if (alive) setData(transcript);
+      } catch (err) {
+        if (alive) setError(errText(err));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.design, canRead, entity?.key, recordId, conversationField]);
+
+  if (ctx.design) {
+    return (
+      <Card title={title}>
+        <Typography.Paragraph type="secondary">
+          客服会话记录：发布后，坐席在工单详情页打开时，这里按当前记录的{" "}
+          {conversationField} 字段展示访客会话全文与转人工摘要，并可将问答沉淀为
+          FAQ 草稿（进知识库待审队列）。
+        </Typography.Paragraph>
+        <div
+          style={{
+            background: "#f5f5f5",
+            borderRadius: 8,
+            padding: "8px 12px",
+            color: "#8c8c8c",
+            fontSize: 13,
+          }}
+        >
+          （示例）访客：送货预约要提前多久？　客服助手：请提前 3 个工作日预约…
+        </div>
+      </Card>
+    );
+  }
+  if (!canRead) {
+    return (
+      <Card title={title}>
+        <Typography.Text type="secondary">
+          当前宿主未提供客服会话读取能力。
+        </Typography.Text>
+      </Card>
+    );
+  }
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!recordId)
+    return <Alert type="info" message="未选择记录（缺少 id 参数）" />;
+  if (loading) return <div style={styles.empty}>加载中…</div>;
+  if (error) return <Alert type="error" message={error} />;
+  if (noConversation)
+    return <Alert type="info" message="该记录未关联客服会话" />;
+  if (!data) return <div style={styles.empty}>加载中…</div>;
+
+  const submitFaq = async (question: string, answer: string, msgId: string) => {
+    const fn = ctx.adapter.postSupportFaqDraft;
+    if (!fn || faqBusyId) return;
+    setFaqBusyId(msgId);
+    try {
+      await fn({ question, answer });
+      setFaqDone((prev) => new Set(prev).add(msgId));
+      ctx.adapter.notify("已提交为 FAQ 草稿，等待管理台审核");
+    } catch (err) {
+      ctx.adapter.notify(errText(err), "error");
+    } finally {
+      setFaqBusyId(null);
+    }
+  };
+
+  const statusText =
+    data.status === "handoff"
+      ? "已转人工"
+      : data.status === "closed"
+        ? "已结束"
+        : "进行中";
+
+  return (
+    <Card title={title}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          marginBottom: 12,
+        }}
+      >
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          状态：{statusText}
+          {data.ticketId ? ` · 工单号：${data.ticketId}` : ""}
+          {data.rating ? ` · 访客评分：${data.rating} / 5` : ""}
+        </Typography.Text>
+        {data.summary ? (
+          <div
+            style={{
+              background: "#fffbe6",
+              border: "1px solid #ffe58f",
+              borderRadius: 8,
+              padding: "8px 12px",
+              fontSize: 13,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            <Typography.Text strong>对话摘要：</Typography.Text>
+            {data.summary}
+          </div>
+        ) : null}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {data.messages.length === 0 ? (
+          <Typography.Text type="secondary">暂无消息</Typography.Text>
+        ) : (
+          data.messages.map((m, i) => {
+            const isVisitor = m.role === "visitor" || m.role === "user";
+            if (m.role === "system") {
+              return (
+                <div
+                  key={m.id}
+                  style={{
+                    alignSelf: "center",
+                    color: "#8c8c8c",
+                    fontSize: 12,
+                    textAlign: "center",
+                  }}
+                >
+                  {m.text}
+                </div>
+              );
+            }
+            // 沉淀 FAQ：一问一答 = 本条助手消息 + 其前最近一条访客消息
+            let question: string | null = null;
+            if (!isVisitor) {
+              for (let j = i - 1; j >= 0; j--) {
+                const prev = data.messages[j]!;
+                if (prev.role === "visitor" || prev.role === "user") {
+                  question = prev.text;
+                  break;
+                }
+              }
+            }
+            return (
+              <div
+                key={m.id}
+                style={{
+                  alignSelf: isVisitor ? "flex-end" : "flex-start",
+                  maxWidth: "88%",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <div
+                  style={{
+                    background: isVisitor ? "#1677ff" : "#f5f5f5",
+                    color: isVisitor ? "#fff" : "inherit",
+                    borderRadius: 12,
+                    padding: "8px 12px",
+                    fontSize: 14,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {m.text}
+                </div>
+                {!isVisitor && m.citations && m.citations.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {m.citations.map((c, ci) => (
+                      <Tooltip key={ci} title={c.snippet}>
+                        <Tag style={{ cursor: "help", marginInlineEnd: 0 }}>
+                          📄 {c.docTitle}
+                        </Tag>
+                      </Tooltip>
+                    ))}
+                  </div>
+                )}
+                {!isVisitor &&
+                  question &&
+                  ctx.adapter.postSupportFaqDraft &&
+                  (faqDone.has(m.id) ? (
+                    <Tag color="green" style={{ alignSelf: "flex-start" }}>
+                      已提交 FAQ 待审
+                    </Tag>
+                  ) : (
+                    <Button
+                      size="small"
+                      type="link"
+                      style={{ alignSelf: "flex-start", padding: 0 }}
+                      loading={faqBusyId === m.id}
+                      onClick={() =>
+                        void submitFaq(question!, m.text, m.id)
+                      }
+                    >
+                      沉淀为 FAQ
+                    </Button>
+                  ))}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </Card>
+  );
+}
+
 /** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 14 类组件，含 M9 的 Chart 与 M10 的 ContentList） */
 export function createDefaultRegistry(): ComponentRegistry {
   const registry = createRegistry();
@@ -1673,6 +1924,7 @@ export function createDefaultRegistry(): ComponentRegistry {
   registerComponent(registry, "Image", ImageBlock);
   registerComponent(registry, "Button", ActionButton);
   registerComponent(registry, "AgentChat", AgentChat);
+  registerComponent(registry, "SupportTranscript", SupportTranscript);
   return registry;
 }
 

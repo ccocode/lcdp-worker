@@ -92,6 +92,25 @@ export function parseAssetIds(value: unknown): string[] {
   return [];
 }
 
+/** 客服会话消息（坐席看全文用；role 三态 visitor/assistant/system，历史数据可能为 user） */
+export interface SupportTranscriptMessage {
+  id: string;
+  role: string;
+  text: string;
+  citations?: { docTitle: string; snippet: string }[];
+  createdAt?: string;
+}
+
+/** 客服会话全文（M12 坐席组 transcript 的渲染器视图：摘要 + 消息全量，只读） */
+export interface SupportTranscriptData {
+  sessionId: string;
+  status?: string;
+  summary?: string | null;
+  ticketId?: string | null;
+  rating?: number | null;
+  messages: SupportTranscriptMessage[];
+}
+
 /**
  * 运行态适配器：渲染器与宿主（runtime 应用）之间的唯一契约。
  * 渲染器只管按 Schema 画界面与编排交互，数据存取、路由、提示都经适配器，
@@ -129,6 +148,21 @@ export interface RuntimeAdapter {
   remove(entity: string, id: string): Promise<void>;
   /** 引用字段的下拉选项（label 由宿主按实体语义挑显示字段） */
   options(entity: string): Promise<SelectOption[]>;
+  /**
+   * 客服会话全文（M12，可选）：宿主以坐席登录态读客服 transcript 端点。
+   * 可选方法——未实现的宿主（设计器预览、公开面）上 SupportTranscript 组件降级为占位提示。
+   */
+  getSupportTranscript?(
+    conversationId: string,
+  ): Promise<SupportTranscriptData>;
+  /**
+   * 沉淀 FAQ 草稿（M12，可选）：把一问一答写进知识库待审队列（管理台审核后入库），
+   * 返回新建文档 id；未实现的宿主上 SupportTranscript 组件不渲染沉淀入口。
+   */
+  postSupportFaqDraft?(input: {
+    question: string;
+    answer: string;
+  }): Promise<{ docId: string }>;
   /** 跳转到某页面路由（可带 ?id= 等查询参数） */
   navigate(to: string): void;
   notify(message: string, kind?: "ok" | "error"): void;

@@ -28,6 +28,7 @@ import type {
   UserInfo,
 } from "./api.js";
 import AssistantPanel from "./AssistantPanel.js";
+import SupportWidget, { SupportAutoMount } from "./SupportWidget.js";
 import {
   api,
   getStoredUser,
@@ -265,6 +266,10 @@ function AnonGate({
     );
   }
   const primary = pub?.primary ?? null;
+  /** 匿名面客服咨询窗：逐个装配应用探测 support/config，首个 enabled 挂载（M12） */
+  const anonSupport = (
+    <SupportAutoMount appIds={(pub?.apps ?? []).map((a) => a.id)} />
+  );
   if (
     primary &&
     primary.pages.length > 0 &&
@@ -272,16 +277,24 @@ function AnonGate({
     !route.path.startsWith("/app/")
   ) {
     return (
-      <PublicShell
-        primary={primary}
-        inPath={route.path}
-        params={route.params}
-        device={device}
-        onLogin={() => setShowLogin(true)}
-      />
+      <>
+        <PublicShell
+          primary={primary}
+          inPath={route.path}
+          params={route.params}
+          device={device}
+          onLogin={() => setShowLogin(true)}
+        />
+        {anonSupport}
+      </>
     );
   }
-  return <LoginView onLoggedIn={onLoggedIn} />;
+  return (
+    <>
+      <LoginView onLoggedIn={onLoggedIn} />
+      {anonSupport}
+    </>
+  );
 }
 
 /* ---------- appConfig 宽松读取（M10：shell / globalVars / theme.logoText） ---------- */
@@ -989,6 +1002,34 @@ function AppView({
 
   const primary = loaded[0]!;
   const current = currentOwned?.page;
+  /**
+   * 客服咨询窗挂载门控（M12）：遍历已装配应用的 appConfig.globalVars.support，
+   * 首个 {enabled:true} 命中即挂 SupportWidget 绑该应用；设计态预览不挂。
+   */
+  const supportTarget = !preview
+    ? loaded.find((l) => {
+        const s = configOf(l.snapshot.appConfig)?.globalVars?.support;
+        return (
+          !!s &&
+          typeof s === "object" &&
+          (s as { enabled?: unknown }).enabled === true
+        );
+      })
+    : undefined;
+  const supportFallbackTitle = (() => {
+    const s = supportTarget
+      ? configOf(supportTarget.snapshot.appConfig)?.globalVars?.support
+      : undefined;
+    const t =
+      s && typeof s === "object" ? (s as { title?: unknown }).title : undefined;
+    return typeof t === "string" && t ? t : undefined;
+  })();
+  const supportWidget = supportTarget ? (
+    <SupportWidget
+      appId={supportTarget.app.id}
+      fallbackTitle={supportFallbackTitle}
+    />
+  ) : null;
   /** 当前页所属应用的快照（渲染取其数据模型与权限摘要） */
   const currentLoaded = currentOwned
     ? (loaded.find((l) => l.app.id === currentOwned.appId) ?? primary)
@@ -1076,6 +1117,7 @@ function AppView({
           context={assistantContext}
           navigate={goPage}
         />
+        {supportWidget}
       </ConfigProvider>
     );
   }
@@ -1140,6 +1182,7 @@ function AppView({
         context={assistantContext}
         navigate={goPage}
       />
+      {supportWidget}
     </ConfigProvider>
   );
 }
