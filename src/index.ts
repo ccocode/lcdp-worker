@@ -9,6 +9,12 @@ import { Hono } from "hono";
  * 不改写业务体、不落业务事实；KV 只装源站 200 应答的派生副本，权威源
  * 始终是服务器 PostgreSQL。建库由 platform 资源声明驱动（见 platform 仓
  * infra/cloudflare/resources.md），本仓只回填 binding 执行部署。
+ *
+ * CORS 口径：源站在线时一律透传、源站为单一 CORS 权威。唯独降级应答是
+ * 网关在边缘合成的新响应——信封只存正文，若不补 CORS 头，浏览器会以
+ * 「No Access-Control-Allow-Origin」拦下正文、应用仍打不开（步骤 8 首演
+ * 实证）。故降级 GET 命中与白名单预检（回源失败时）由网关镜像源站
+ * platformCors 语义应答：名单内 Origin 回显 + 源站同款 allow 列表。
  */
 
 type Env = {
@@ -33,6 +39,55 @@ const WRITE_COALESCE_MS = 60_000;
 const SNAPSHOT_TTL_SECONDS = 86_400;
 /** 视为「源站不可达」的回源状态（触发降级读） */
 const DOWN_STATUSES = new Set([502, 503, 504]);
+
+/**
+ * 源站 platformCors 名单镜像（仅降级路径用；与 api index.ts 的 platformCors
+ * 保持一致——源站在线时一律透传、此名单不参与决策）。
+ */
+const CORS_ORIGINS = new Set([
+  "https://coode.cc.cd",
+  "https://www.coode.cc.cd",
+  "https://dev.coode.cc.cd",
+  "https://admin.coode.cc.cd",
+  "https://lcdp-runtime.pages.dev",
+  "https://lcdp-studio.pages.dev",
+  "https://lcdp-admin.pages.dev",
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+]);
+
+/** 请求 Origin 在源站名单内则回显，否则 null（与源站 cors 行为一致） */
+function corsOriginFor(req: Request): string | null {
+  const origin = req.headers.get("Origin");
+  return origin && CORS_ORIGINS.has(origin) ? origin : null;
+}
+
+/** 是否 CORS 预检请求 */
+function isPreflight(req: Request): boolean {
+  return (
+    req.method === "OPTIONS" &&
+    !!req.headers.get("Origin") &&
+    !!req.headers.get("Access-Control-Request-Method")
+  );
+}
+
+/**
+ * 降级预检应答：仅在白名单路径回源失败时合成，语义镜像源站 platformCors
+ * （名单回显 + allowMethods/allowHeaders/maxAge 同源站配置）。源站在线时
+ * 预检一律透传、永不走此分支。名单外 Origin 回 null（不予合成）。
+ */
+function syntheticPreflight(req: Request): Response | null {
+  const origin = corsOriginFor(req);
+  if (!origin) return null;
+  const headers = new Headers();
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  headers.set("Access-Control-Max-Age", "86400");
+  headers.set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
+  return new Response(null, { status: 204, headers });
+}
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -83,14 +138,23 @@ async function maybeWriteSnapshot(kv: KVNamespace, key: string, res: Response): 
   }
 }
 
-/** 降级读：命中 KV 副本则应答并标注 x-lcdp-degraded，未命中返回 null */
-async function readSnapshot(kv: KVNamespace, key: string): Promise<Response | null> {
+/**
+ * 降级读：命中 KV 副本则应答并标注 x-lcdp-degraded，未命中返回 null。
+ * 降级响应是边缘合成的新响应，须按请求 Origin 镜像源站 CORS 头，
+ * 否则浏览器拦下正文（信封只存正文，CORS 值按请求现算、不入缓存）。
+ */
+async function readSnapshot(kv: KVNamespace, key: string, req: Request): Promise<Response | null> {
   try {
     const env = await kv.get<SnapshotEnvelope>(key, "json");
     if (!env) return null;
     const headers = new Headers();
     if (env.contentType) headers.set("content-type", env.contentType);
     headers.set("x-lcdp-degraded", "snapshot");
+    const origin = corsOriginFor(req);
+    if (origin) {
+      headers.set("Access-Control-Allow-Origin", origin);
+      headers.set("Vary", "Origin");
+    }
     return new Response(env.body, { status: env.status, headers });
   } catch {
     return null;
@@ -103,6 +167,8 @@ app.all("*", async (c) => {
   const kv = c.env.SNAP_KV;
   const degradable = req.method === "GET" && isDegradable(url.pathname) && !!kv;
   const key = degradable ? await cacheKey(req, url.pathname + url.search) : null;
+  /** 白名单路径的预检：回源失败时合成应答，使随后的降级 GET 不被预检挡住 */
+  const preflightDegradable = isPreflight(req) && isDegradable(url.pathname) && !!kv;
 
   let res: Response;
   try {
@@ -110,8 +176,12 @@ app.all("*", async (c) => {
   } catch {
     // 回源网络不可达：白名单走降级，其余回网关 502
     if (degradable && key) {
-      const hit = await readSnapshot(kv!, key);
+      const hit = await readSnapshot(kv!, key, req);
       if (hit) return hit;
+    }
+    if (preflightDegradable) {
+      const pf = syntheticPreflight(req);
+      if (pf) return pf;
     }
     return c.json({ error: "origin_unreachable" }, 502);
   }
@@ -122,9 +192,13 @@ app.all("*", async (c) => {
       return res;
     }
     if (DOWN_STATUSES.has(res.status)) {
-      const hit = await readSnapshot(kv!, key);
+      const hit = await readSnapshot(kv!, key, req);
       if (hit) return hit;
     }
+  }
+  if (preflightDegradable && DOWN_STATUSES.has(res.status)) {
+    const pf = syntheticPreflight(req);
+    if (pf) return pf;
   }
   return res;
 });
