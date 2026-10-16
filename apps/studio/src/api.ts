@@ -18,11 +18,11 @@ import { message as antdMessage } from "antd";
 
 /**
  * 设计台的平台 api 客户端（与运行态同源接口，token 独立存储互不影响）。
- * 后续流量改走 Worker 网关时只改 API_BASE。
+ * M11 起经 Worker 网关 api.coode.cc.cd 转发回源。
  */
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
-  "https://service.coode.cc.cd";
+  "https://api.coode.cc.cd";
 
 const TOKEN_KEY = "lcdp.studio.token";
 const USER_KEY = "lcdp.studio.user";

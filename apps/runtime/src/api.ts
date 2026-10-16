@@ -17,12 +17,12 @@ import type {
 } from "@lcdp/renderer";
 
 /**
- * 平台 api 客户端（M1 阶段前端直连 service.coode.cc.cd；
- * 后续改走 Worker 网关 api.coode.cc.cd 转发时只改 API_BASE）。
+ * 平台 api 客户端（M11 起经 Worker 网关 api.coode.cc.cd 转发回源；
+ * M1–M10 的 service.coode.cc.cd 直连为临时形态，已收口）。
  */
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
-  "https://service.coode.cc.cd";
+  "https://api.coode.cc.cd";
 
 const TOKEN_KEY = "lcdp.token";
 const USER_KEY = "lcdp.user";

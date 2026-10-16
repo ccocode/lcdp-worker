@@ -1,7 +1,7 @@
 /**
  * 平台管理台 api 客户端（M8）。与 runtime/studio 同源接口、同基址口径：
- * 默认 https://service.coode.cc.cd，可经 VITE_API_BASE 或 localStorage
- * `lcdp.admin.apiBase` 覆盖。token 独立存储于本源 localStorage。
+ * 默认 https://api.coode.cc.cd（M11 起经 Worker 网关转发回源），可经
+ * VITE_API_BASE 或 localStorage `lcdp.admin.apiBase` 覆盖。token 独立存储于本源 localStorage。
  * 字段形状以契约 §4 与服务端实况为准；列表信封在客户端做防御式归一化。
  */
 const API_BASE =
@@ -9,7 +9,7 @@ const API_BASE =
   (typeof localStorage !== "undefined"
     ? (localStorage.getItem("lcdp.admin.apiBase") ?? undefined)
     : undefined) ??
-  "https://service.coode.cc.cd";
+  "https://api.coode.cc.cd";
 
 const TOKEN_KEY = "lcdp.admin.token";
 const USER_KEY = "lcdp.admin.user";

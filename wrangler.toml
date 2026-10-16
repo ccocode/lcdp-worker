@@ -3,19 +3,17 @@ name = "lcdp-edge-api"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
-# 统一入口网关（见架构文档第 5 节）：公开流量经本 Worker 鉴权前置、路由转发，
-# 回源请求经 Tunnel 调服务器 api；api 直连域名仅作内部通道（回源与运维，终端不直连）。
-# KV/D1 只装配置、特性开关与边缘运营数据（免费版 KV 写 1000 次/天），且建库一律由 platform
-# 资源声明驱动、本仓 provision 只负责执行；绑定 id 在 provision 后回填。
-# [env.demo]
-# [[env.demo.kv_namespaces]]
-# binding = "CONFIG_KV"
-# id = "<provision 后回填>"
-#
-# [env.production]
-# [[env.production.kv_namespaces]]
-# binding = "CONFIG_KV"
-# id = "<生产账号 provision 后回填>"
+# 统一入口网关（见最终文档第 5 节；M11 收口落地）：公开流量统一经本 Worker
+# 全路径透传回源服务器 api（公开反代 ORIGIN_BASE），并对「打开层」读路径
+# （入口解析 + 应用快照）做 KV cache-aside 只读降级；api 直连域名仅作回源
+# 与运维通道，终端不直连。KV 只装发布快照派生副本（免费版 KV 写 1000 次/天），
+# 建库一律由 platform 资源声明驱动（platform 仓 infra/cloudflare/resources.md），
+# 本仓 provision 只负责执行；绑定 id 在 provision 后回填。
+[[kv_namespaces]]
+binding = "SNAP_KV"
+id = "<provision 后回填>"
 
 [vars]
 ENVIRONMENT = "demo"
+# 回源基址：服务器公开反代（M11 决策②；生产环境切换新账号/启用隧道后改此值）
+ORIGIN_BASE = "https://service.coode.cc.cd"
