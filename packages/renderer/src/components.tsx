@@ -771,7 +771,7 @@ export function Tabs({ node, children }: NodeProps) {
 function useAggregateValue(
   node: ComponentNode,
   fallbackCount: boolean,
-): { entity: Entity | null; value: number | null; error: string | null } {
+): { entity: Entity | null; value: number | null; error: string | null; denied: boolean } {
   const ctx = useRendererCtx();
   const entity = resolveEntity(ctx, node.binding?.source);
   const view = node.binding?.view;
@@ -780,10 +780,12 @@ function useAggregateValue(
   const filtersSig = JSON.stringify(eqFiltersOf(view));
   const [value, setValue] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [denied, setDenied] = useState(false);
   useEffect(() => {
     if (!entity || !fn) return;
     let alive = true;
     setError(null);
+    setDenied(false);
     ctx.adapter
       .aggregate(entity.key, {
         fn,
@@ -797,24 +799,31 @@ function useAggregateValue(
         }
       })
       .catch((err) => {
-        if (alive) setError(errText(err));
+        if (!alive) return;
+        // 403 = 字段级权限拒绝（聚合目标字段 hidden/masked）：整卡隐藏，不报错、不示 0
+        if ((err as { status?: number } | null)?.status === 403) {
+          setDenied(true);
+        } else {
+          setError(errText(err));
+        }
       });
     return () => {
       alive = false;
     };
   }, [ctx.adapter, entity, fn, field, filtersSig]);
-  return { entity, value, error };
+  return { entity, value, error, denied };
 }
 
 /** 统计卡片：聚合数值大字展示（计数/求和/平均，缺省计数） */
 export function StatCard({ node }: NodeProps) {
-  const { entity, value, error } = useAggregateValue(node, true);
+  const { entity, value, error, denied } = useAggregateValue(node, true);
   const title =
     typeof node.props?.title === "string"
       ? node.props.title
       : (entity?.label ?? "统计");
   const suffix =
     typeof node.props?.suffix === "string" ? node.props.suffix : undefined;
+  if (denied) return null;
   if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
   return (
     <Card>
@@ -834,9 +843,10 @@ export function StatCard({ node }: NodeProps) {
 /** 图表占位：图表引擎后续接入；已声明聚合时先展示聚合数值 */
 export function ChartPlaceholder({ node }: NodeProps) {
   const hasAggregate = Boolean(node.binding?.view?.aggregate);
-  const { entity, value, error } = useAggregateValue(node, false);
+  const { entity, value, error, denied } = useAggregateValue(node, false);
   const title =
     typeof node.props?.title === "string" ? node.props.title : "图表";
+  if (hasAggregate && denied) return null;
   return (
     <Card title={title}>
       {hasAggregate && entity ? (

@@ -267,7 +267,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     | (Record<string, unknown> & { message?: string; error?: string })
     | null;
   if (!res.ok) {
-    throw new Error(body?.message ?? body?.error ?? `请求失败 (${res.status})`);
+    // 错误对象挂 HTTP 状态码：渲染层据此区分权限拒绝（403）与真故障（如统计卡 403 整卡隐藏）
+    const err = new Error(
+      body?.message ?? body?.error ?? `请求失败 (${res.status})`,
+    ) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   return body as T;
 }
