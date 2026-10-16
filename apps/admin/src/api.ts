@@ -332,7 +332,14 @@ export const api = {
     },
     async test(
       channel: "chat" | "embedding",
-    ): Promise<{ ok: boolean; message: string; model?: string; dimensions?: number }> {
+    ): Promise<{
+      ok: boolean;
+      // 成功响应不带 message（只有 ok/model/dimensions/latencyMs），失败才有 message
+      message?: string;
+      model?: string;
+      dimensions?: number;
+      latencyMs?: number;
+    }> {
       return apiFetch("/admin/config/test", {
         method: "POST",
         body: JSON.stringify({ channel }),

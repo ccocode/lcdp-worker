@@ -4,6 +4,7 @@ import {
   Card,
   Input,
   InputNumber,
+  Modal,
   Space,
   Switch,
   Table,
@@ -45,6 +46,7 @@ export default function Switches() {
   const [quotaValue, setQuotaValue] = useState<number | null>(null);
   const [globalBudget, setGlobalBudget] = useState<string>("—");
   const [tenantOverride, setTenantOverride] = useState<string>("—");
+  const [hasOverride, setHasOverride] = useState(false);
   const [todayTokens, setTodayTokens] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -133,9 +135,11 @@ export default function Switches() {
           asText(i.scope) === `tenant:${quotaTenant}`,
       );
       setTenantOverride(t ? asText(t.value) : "未覆写（用全局默认）");
+      setHasOverride(!!t);
     } catch {
       setGlobalBudget("—");
       setTenantOverride("—");
+      setHasOverride(false);
     }
     try {
       const res = await api.usage.query({
@@ -175,6 +179,33 @@ export default function Switches() {
     } catch (err) {
       message.error(err instanceof Error ? err.message : "保存失败");
     }
+  };
+
+  // 清除覆写 = PUT value:null，api 侧删 platform_config 覆写行、回落全局默认（审计记 (clear)）
+  const clearQuota = () => {
+    Modal.confirm({
+      title: `清除租户 ${quotaTenant} 的配额覆写？`,
+      content: "清除后该租户回落全局默认上限（全局默认为空则不限额）。",
+      okText: "清除覆写",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          await api.config.put([
+            {
+              key: "llm.tenantTokenBudget",
+              scope: `tenant:${quotaTenant}`,
+              value: null,
+            },
+          ]);
+          message.success(`已清除租户 ${quotaTenant} 的配额覆写`);
+          setQuotaValue(null);
+          void loadQuota();
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : "清除失败");
+        }
+      },
+    });
   };
 
   const columns: ColumnsType<ComboRow> = [
@@ -265,9 +296,14 @@ export default function Switches() {
             />
           </div>
           <div style={{ paddingTop: 22 }}>
-            <Button type="primary" onClick={() => void saveQuota()}>
-              保存覆写
-            </Button>
+            <Space>
+              <Button type="primary" onClick={() => void saveQuota()}>
+                保存覆写
+              </Button>
+              <Button danger disabled={!hasOverride} onClick={clearQuota}>
+                清除覆写
+              </Button>
+            </Space>
           </div>
         </Space>
         <div style={{ marginTop: 16, color: "#555" }}>

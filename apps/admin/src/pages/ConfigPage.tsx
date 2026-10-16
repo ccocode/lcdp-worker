@@ -135,10 +135,13 @@ export default function ConfigPage() {
       const extra = [
         res.model ? `模型 ${res.model}` : "",
         res.dimensions !== undefined ? `维度 ${res.dimensions}` : "",
+        res.latencyMs !== undefined ? `延迟 ${res.latencyMs}ms` : "",
       ]
         .filter(Boolean)
         .join("，");
-      const text = `${res.ok ? "连通" : "不通"}：${res.message}${extra ? `（${extra}）` : ""}`;
+      // 成功响应无 message 字段，不能直接拼接（曾显示「连通：undefined」）
+      const detail = res.message ?? (res.ok ? "网关响应正常" : "未知错误");
+      const text = `${res.ok ? "连通" : "不通"}：${detail}${extra ? `（${extra}）` : ""}`;
       setTestResult((s) => ({ ...s, [channel]: text }));
       if (res.ok) message.success(text);
       else message.error(text);
