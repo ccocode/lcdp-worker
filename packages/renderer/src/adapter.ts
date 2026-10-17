@@ -208,6 +208,17 @@ export interface RuntimeAdapter {
    * checkout_not_configured 等），组件按码给中文提示。
    */
   memberCheckout?(body: MemberCheckoutInput): Promise<MemberCheckoutResult>;
+  /**
+   * 会员发起支付（商城线，可选）：对自有待支付订单调会员面 pay 端点（v1 走沙箱渠道），
+   * 返回渠道支付页地址 payUrl 供组件跳转收银台；仅会员语境的宿主实现（同 memberCheckout）。
+   * 无会话时宿主实现先经 openMemberLogin 拉起登录并抛错，组件 catch 后提示。
+   */
+  memberPayOrder?(orderId: string): Promise<{ payUrl?: string | null }>;
+  /**
+   * 会员取消订单（商城线，可选）：调会员面取消端点——服务端按 appConfig.orderCancel
+   * 声明校验状态迁移并回补库存；仅会员语境的宿主实现（同 memberCheckout）。
+   */
+  memberCancelOrder?(orderId: string): Promise<void>;
   /** 跳转到某页面路由（可带 ?id= 等查询参数） */
   navigate(to: string): void;
   notify(message: string, kind?: "ok" | "error"): void;

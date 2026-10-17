@@ -1926,7 +1926,11 @@ export function Detail({ node }: NodeProps) {
  * 商城动作（props.action）：
  * - `cart-add`：把当前详情页商品（页面参数 $param.id）加入本地购物车 + 轻提示；
  * - `cart-add-checkout`：加入后按 props.route 直达购物车/结算页（立即购买）。
- * 两动作与既有 route 跳转并存：无 action 时行为与此前完全一致。
+ * - `order-pay`：对当前详情页订单（$param.id）调适配器 memberPayOrder 发起支付，
+ *   拿到 payUrl 后跳转收银台（绝对地址整页跳、站内 hash 路由走适配器导航）；
+ * - `order-cancel`：对当前详情页订单调适配器 memberCancelOrder 取消订单，
+ *   成功后提示并按 props.route 返回列表。
+ * 动作与既有 route 跳转并存：无 action 时行为与此前完全一致。
  */
 export function ActionButton({ node }: NodeProps) {
   const ctx = useRendererCtx();
@@ -1956,14 +1960,80 @@ export function ActionButton({ node }: NodeProps) {
     if (goCheckout && route) ctx.adapter.navigate(route);
   };
 
+  const payOrder = async () => {
+    if (ctx.design) {
+      ctx.adapter.notify("设计预览：发布后将调会员面发起支付并跳转收银台");
+      return;
+    }
+    // 订单 id 取当前详情页的页面参数 id（与 cart 动作同源）
+    const orderId = ctx.params.id;
+    if (!orderId) {
+      ctx.adapter.notify("未找到当前订单，无法发起支付", "error");
+      return;
+    }
+    if (typeof ctx.adapter.memberPayOrder !== "function") {
+      ctx.adapter.notify("当前宿主未提供会员支付能力", "error");
+      return;
+    }
+    try {
+      const res = await ctx.adapter.memberPayOrder(orderId);
+      const payUrl =
+        typeof res?.payUrl === "string" && res.payUrl ? res.payUrl : null;
+      if (!payUrl) {
+        ctx.adapter.notify("未获取到支付地址", "error");
+        return;
+      }
+      if (/^https?:\/\//i.test(payUrl)) {
+        // 渠道收银台绝对地址：整页跳转
+        window.location.href = payUrl;
+      } else if (payUrl.startsWith("/#") || payUrl.startsWith("#")) {
+        // 站内 hash 路由形态（/#/pay/sandbox?…）：剥掉前导 /# 或 # 后走适配器导航
+        const inner = payUrl.replace(/^\/?#/, "");
+        ctx.adapter.navigate(inner.startsWith("/") ? inner : `/${inner}`);
+      } else {
+        ctx.adapter.navigate(payUrl);
+      }
+    } catch (err) {
+      ctx.adapter.notify(errText(err), "error");
+    }
+  };
+
+  const cancelOrder = async () => {
+    if (ctx.design) {
+      ctx.adapter.notify("设计预览：发布后将调会员面取消订单");
+      return;
+    }
+    // 订单 id 取当前详情页的页面参数 id（与 cart 动作同源）
+    const orderId = ctx.params.id;
+    if (!orderId) {
+      ctx.adapter.notify("未找到当前订单，无法取消", "error");
+      return;
+    }
+    if (typeof ctx.adapter.memberCancelOrder !== "function") {
+      ctx.adapter.notify("当前宿主未提供会员取消订单能力", "error");
+      return;
+    }
+    try {
+      await ctx.adapter.memberCancelOrder(orderId);
+      ctx.adapter.notify("订单已取消");
+      if (route) ctx.adapter.navigate(route);
+    } catch (err) {
+      ctx.adapter.notify(errText(err), "error");
+    }
+  };
+
   const onClick =
     action === "cart-add"
       ? () => addToCart(false)
       : action === "cart-add-checkout"
         ? () => addToCart(true)
-        : route
-          ? () => ctx.adapter.navigate(route)
-          : undefined;
+        : action === "order-pay"
+          ? () => void payOrder()
+          : action === "order-cancel"
+            ? () => void cancelOrder()
+            : route
+              ? () => ctx.adapter.navigate(route)
+              : undefined;
   return (
     <Button type={type} onClick={onClick}>
       {label}
