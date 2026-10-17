@@ -1653,6 +1653,7 @@ export function makePublicAdapter(
     /**
      * 商城线会员钩子（可选注入）：公开页上的 CartView 借此判定会员登录态并结算——
      * 会话来自外壳状态（钩子 getSession），结算经会话令牌调会员面 checkout；
+     * 支付（memberPayOrder）/取消订单（memberCancelOrder）同口径，无会话先拉起登录弹窗再抛错；
      * 未注入钩子时三方方法按无会话/不可结算降级，公开面既有行为不变。
      */
     memberSession: () => {
@@ -1673,6 +1674,32 @@ export function makePublicAdapter(
         body,
         hooks?.onUnauthorized,
       ),
+    memberPayOrder: async (orderId) => {
+      if (!hooks?.getSession?.()) {
+        hooks?.openLogin?.();
+        throw new Error("请先登录会员账号");
+      }
+      const res = await payMemberOrder(
+        appId,
+        () => hooks?.getSession?.()?.token ?? null,
+        orderId,
+        "sandbox",
+        hooks?.onUnauthorized,
+      );
+      return { payUrl: res.payUrl };
+    },
+    memberCancelOrder: async (orderId) => {
+      if (!hooks?.getSession?.()) {
+        hooks?.openLogin?.();
+        throw new Error("请先登录会员账号");
+      }
+      await cancelMemberOrder(
+        appId,
+        () => hooks?.getSession?.()?.token ?? null,
+        orderId,
+        hooks?.onUnauthorized,
+      );
+    },
     navigate,
     notify,
   };
@@ -1681,7 +1708,8 @@ export function makePublicAdapter(
 /**
  * 会员钩子（商城线）：外壳把会员会话状态与登录弹窗入口注入适配器，
  * 供 CartView 等组件判定登录态（memberSession）、拉起登录（openMemberLogin）
- * 与结算（memberCheckout 内部经会话令牌调会员面）。员工适配器不注入、行为不变。
+ * 与结算/支付/取消订单（memberCheckout / memberPayOrder / memberCancelOrder 内部
+ * 经会话令牌调会员面）。员工适配器不注入、行为不变。
  */
 export interface MemberAdapterHooks {
   /** 当前会员会话（无会话返回 null）；缺省时适配器按「无会话」呈现 */
@@ -1698,7 +1726,8 @@ export interface MemberAdapterHooks {
  * 为唯一事实源），401 时 onUnauthorized 回调清会话。删除不在会员面口径内；
  * 文件上传会员面暂不支持（试点会员表单无文件字段），资产读取沿用公开口径。
  * 商城线补强：聚合走会员 aggregate 端点（StatCard 会员语境同名同形）、
- * 注入会员钩子后提供 memberSession / openMemberLogin / memberCheckout。
+ * 注入会员钩子后提供 memberSession / openMemberLogin / memberCheckout /
+ * memberPayOrder / memberCancelOrder。
  */
 export function makeMemberAdapter(
   appId: string,
@@ -1756,7 +1785,7 @@ export function makeMemberAdapter(
       const res = await list(entity, { limit: 200 });
       return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
     },
-    /** 商城线：会员会话快照与结算（钩子未注入时按无会话/不可结算降级） */
+    /** 商城线：会员会话快照与结算/支付/取消（钩子未注入时按无会话/不可结算降级） */
     memberSession: () => {
       const s = hooks?.getSession?.() ?? null;
       return s
@@ -1770,6 +1799,27 @@ export function makeMemberAdapter(
     openMemberLogin: hooks?.openLogin,
     memberCheckout: (body) =>
       checkoutMember(appId, getToken, body, onUnauthorized),
+    memberPayOrder: async (orderId) => {
+      if (!getToken()) {
+        hooks?.openLogin?.();
+        throw new Error("请先登录会员账号");
+      }
+      const res = await payMemberOrder(
+        appId,
+        getToken,
+        orderId,
+        "sandbox",
+        onUnauthorized,
+      );
+      return { payUrl: res.payUrl };
+    },
+    memberCancelOrder: async (orderId) => {
+      if (!getToken()) {
+        hooks?.openLogin?.();
+        throw new Error("请先登录会员账号");
+      }
+      await cancelMemberOrder(appId, getToken, orderId, onUnauthorized);
+    },
     navigate,
     notify,
   };
