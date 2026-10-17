@@ -47,6 +47,7 @@ const DOWN_STATUSES = new Set([502, 503, 504]);
 const CORS_ORIGINS = new Set([
   "https://coode.cc.cd",
   "https://www.coode.cc.cd",
+  "https://shop.coode.cc.cd",
   "https://dev.coode.cc.cd",
   "https://admin.coode.cc.cd",
   "https://lcdp-runtime.pages.dev",
