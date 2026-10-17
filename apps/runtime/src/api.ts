@@ -479,8 +479,10 @@ async function memberFetch<T>(
     if (res.status === 401) onUnauthorized?.();
     const err = new Error(
       body?.message ?? body?.error ?? `请求失败 (${res.status})`,
-    ) as Error & { status?: number };
+    ) as Error & { status?: number; code?: string };
     err.status = res.status;
+    // 业务错误码（如 captcha_invalid / mail_not_configured）随错误透传，UI 按码分支处理
+    err.code = body?.error;
     throw err;
   }
   return body as T;
@@ -508,10 +510,17 @@ function memberListSuffix(params?: {
  * 会员数据面 CRUD。数据面执法在服务端（策略 + 归属），前端只透传令牌。
  */
 export const memberApi = {
-  /** 注册：201 返回令牌 + 简档 + 策略（注册即登录态） */
+  /** 注册：201 返回令牌 + 简档 + 策略（注册即登录态）；captcha* 为图形验证码、emailCode 为邮箱验证码（邮件配置生效且标识为邮箱时服务端强制） */
   async register(
     appId: string,
-    body: { identifier: string; password: string; displayName?: string },
+    body: {
+      identifier: string;
+      password: string;
+      displayName?: string;
+      captchaId?: string;
+      captchaCode?: string;
+      emailCode?: string;
+    },
   ): Promise<MemberAuthResult> {
     return memberFetch<MemberAuthResult>(
       `/member/apps/${encodeURIComponent(appId)}/register`,
@@ -519,13 +528,63 @@ export const memberApi = {
       { method: "POST", body: JSON.stringify(body) },
     );
   },
-  /** 登录：200 返回令牌 + 简档 + 策略 */
+  /** 登录：200 返回令牌 + 简档 + 策略；连续失败后服务端回 captcha_required，此时须带图形验证码重试 */
   async login(
     appId: string,
-    body: { identifier: string; password: string },
+    body: {
+      identifier: string;
+      password: string;
+      captchaId?: string;
+      captchaCode?: string;
+    },
   ): Promise<MemberAuthResult> {
     return memberFetch<MemberAuthResult>(
       `/member/apps/${encodeURIComponent(appId)}/login`,
+      () => null,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
+  /** 图形验证码（自托管）：回 { captchaId, svg }，前端内联渲染 SVG、点击刷新；一次性、5 分钟有效 */
+  async fetchMemberCaptcha(
+    appId: string,
+  ): Promise<{ captchaId: string; svg: string }> {
+    return memberFetch<{ captchaId: string; svg: string }>(
+      `/member/apps/${encodeURIComponent(appId)}/captcha`,
+      () => null,
+    );
+  },
+  /** 发送注册邮箱验证码：须带图形验证码先过人机校验；邮件未配置时服务端回 mail_not_configured（前端降级为不强制验码） */
+  async sendMemberEmailCode(
+    appId: string,
+    body: { email: string; captchaId: string; captchaCode: string },
+  ): Promise<{ ok: boolean }> {
+    return memberFetch<{ ok: boolean }>(
+      `/member/apps/${encodeURIComponent(appId)}/email-code`,
+      () => null,
+      {
+        method: "POST",
+        body: JSON.stringify({ ...body, purpose: "register" }),
+      },
+    );
+  },
+  /** 请求找回密码：校验图形验证码后向注册邮箱发送重置验证码（发码与请求同一端点）；邮件未配置回 mail_not_configured */
+  async requestMemberPasswordReset(
+    appId: string,
+    body: { email: string; captchaId: string; captchaCode: string },
+  ): Promise<{ ok: boolean }> {
+    return memberFetch<{ ok: boolean }>(
+      `/member/apps/${encodeURIComponent(appId)}/password-reset/request`,
+      () => null,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
+  /** 确认找回密码：邮箱验证码 + 新密码，成功后回登录页签用新密码登录 */
+  async confirmMemberPasswordReset(
+    appId: string,
+    body: { email: string; emailCode: string; newPassword: string },
+  ): Promise<{ ok: boolean }> {
+    return memberFetch<{ ok: boolean }>(
+      `/member/apps/${encodeURIComponent(appId)}/password-reset/confirm`,
       () => null,
       { method: "POST", body: JSON.stringify(body) },
     );
