@@ -2514,27 +2514,9 @@ export function CartView({ node }: NodeProps) {
   const money = (n: number) => `¥${n.toFixed(2)}`;
 
   const session = ctx.adapter.memberSession?.() ?? null;
-  if (!session) {
-    return (
-      <div style={{ maxWidth: 520, margin: "32px auto", textAlign: "center" }}>
-        <Alert
-          type="info"
-          showIcon
-          message="请先登录会员账号"
-          description="登录会员后即可查看购物车并结算；购物车内容保存在本机，登录后不会丢失。"
-          style={{ marginBottom: 16, textAlign: "left" }}
-        />
-        {typeof ctx.adapter.openMemberLogin === "function" && (
-          <Button
-            type="primary"
-            onClick={() => ctx.adapter.openMemberLogin!()}
-          >
-            会员登录
-          </Button>
-        )}
-      </div>
-    );
-  }
+  /* 会话门只设在 checkout 变体：本地购物车是访客可达的（内容存本机、单价经
+     适配器公开读回），结算才需要会员身份——cart 变体的「去结算」经外壳导航
+     守卫引导登录，checkout 页自身再兜一层本门。 */
 
   const lineRow = (line: CartLine, editable: boolean) => (
     <Card
@@ -2621,6 +2603,27 @@ export function CartView({ node }: NodeProps) {
     ) : null;
 
   if (variant === "checkout") {
+    if (!session) {
+      return (
+        <div style={{ maxWidth: 520, margin: "32px auto", textAlign: "center" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="请先登录会员账号"
+            description="登录会员后即可结算下单；购物车内容保存在本机，登录后不会丢失。"
+            style={{ marginBottom: 16, textAlign: "left" }}
+          />
+          {typeof ctx.adapter.openMemberLogin === "function" && (
+            <Button
+              type="primary"
+              onClick={() => ctx.adapter.openMemberLogin!()}
+            >
+              会员登录
+            </Button>
+          )}
+        </div>
+      );
+    }
     const submitOrder = async (values: {
       contact_name: string;
       contact_phone: string;
