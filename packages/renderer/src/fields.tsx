@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Field } from "@naka1205/schema";
 import {
   Button,
@@ -16,6 +16,12 @@ import type { Dayjs } from "dayjs";
 import type { AssetMeta, RuntimeAdapter, SelectOption } from "./adapter.js";
 import { parseAssetIds } from "./adapter.js";
 import { RichTextInput, RichTextView } from "./richtext.js";
+import {
+  SCAN_EVENT,
+  bridgeCamera,
+  bridgeScanner,
+  scanTextOf,
+} from "./bridge.js";
 
 interface FieldInputProps {
   field: Field;
@@ -91,6 +97,42 @@ function AssetUploadInput({
 
   const nameOf = (id: string) => metas.find((m) => m.id === id)?.name ?? id;
 
+  /**
+   * 文件落资产链的唯一路径：系统文件选择（Upload customRequest）与设备桥拍照
+   * 共用——上传本体 → 追加资产 id 回填字段，后续口径（关联、治理）完全一致。
+   */
+  const pushFile = (file: File): Promise<AssetMeta> => {
+    setUploading(true);
+    return adapter
+      .uploadAsset(file, {
+        entity: linkage?.entity,
+        recordId: linkage?.recordId,
+        field: field.key,
+      })
+      .then((meta) => {
+        onChange(JSON.stringify([...ids, meta.id]));
+        return meta;
+      })
+      .finally(() => setUploading(false));
+  };
+
+  // 设备桥相机仅在原生壳内可用；Web 环境为 null，不渲染拍照入口、行为不变。
+  const camera = bridgeCamera();
+  const takePhoto = async () => {
+    if (!camera?.takePhoto) return;
+    const r = await camera.takePhoto().catch(() => null);
+    if (!r?.supported) {
+      adapter.notify("拍照不可用，请改用上传文件", "error");
+      return;
+    }
+    pushFile(r.value).catch((err: unknown) => {
+      adapter.notify(
+        err instanceof Error ? err.message : String(err),
+        "error",
+      );
+    });
+  };
+
   return (
     <div>
       {ids.length > 0 && (
@@ -123,33 +165,112 @@ function AssetUploadInput({
           ))}
         </Space>
       )}
-      <Upload
-        showUploadList={false}
-        customRequest={(options) => {
-          setUploading(true);
-          adapter
-            .uploadAsset(options.file as File, {
-              entity: linkage?.entity,
-              recordId: linkage?.recordId,
-              field: field.key,
-            })
-            .then((meta) => {
-              onChange(JSON.stringify([...ids, meta.id]));
-              options.onSuccess?.(meta, new XMLHttpRequest());
-            })
-            .catch((err: unknown) => {
-              options.onError?.(
-                err instanceof Error ? err : new Error(String(err)),
-              );
-            })
-            .finally(() => setUploading(false));
-        }}
-      >
-        <Button size={size} loading={uploading}>
-          {isImage ? "上传图片" : "上传文件"}
-        </Button>
-      </Upload>
+      <Space size={6}>
+        <Upload
+          showUploadList={false}
+          customRequest={(options) => {
+            pushFile(options.file as File)
+              .then((meta) => {
+                options.onSuccess?.(meta, new XMLHttpRequest());
+              })
+              .catch((err: unknown) => {
+                options.onError?.(
+                  err instanceof Error ? err : new Error(String(err)),
+                );
+              });
+          }}
+        >
+          <Button size={size} loading={uploading}>
+            {isImage ? "上传图片" : "上传文件"}
+          </Button>
+        </Upload>
+        {camera && (
+          <Button size={size} loading={uploading} onClick={takePhoto}>
+            拍照
+          </Button>
+        )}
+      </Space>
     </div>
+  );
+}
+
+/**
+ * 单行文本输入（string 字段，单号类字段的载体）：原生壳内额外接设备桥扫码——
+ * 聚焦期间监听 `lcdp:scan` 事件填充（外部触发的扫码回传），后缀另有「扫码」
+ * 按钮由本字段直接发起扫描并以返回值填充；两路都走同一 onChange 回填，与手动
+ * 输入无异。Web 环境桥不可用时退化为普通 Input，行为零变化。子表单元格
+ * （inChild）空间紧凑，不挂后缀按钮（事件填充仍生效）。
+ */
+function TextFieldInput({
+  value,
+  onChange,
+  size,
+  inChild,
+}: {
+  value: unknown;
+  onChange: (value: unknown) => void;
+  size: "small" | "middle";
+  inChild?: boolean;
+}) {
+  const scanner = bridgeScanner();
+  const [scanning, setScanning] = useState(false);
+  const focusedRef = useRef(false);
+  const changeRef = useRef(onChange);
+  changeRef.current = onChange;
+
+  useEffect(() => {
+    if (!scanner) return;
+    const onScan = (e: Event) => {
+      if (!focusedRef.current) return;
+      const text = scanTextOf(e);
+      if (text) changeRef.current(text);
+    };
+    window.addEventListener(SCAN_EVENT, onScan);
+    return () => window.removeEventListener(SCAN_EVENT, onScan);
+  }, [scanner]);
+
+  const runScan = async () => {
+    if (!scanner?.scan) return;
+    setScanning(true);
+    try {
+      const r = await scanner.scan();
+      // scan() 成功时桥已派发 lcdp:scan（聚焦中由上方监听填充）；此处再按返回值
+      // 填充一次兜底，保证本字段触发的扫码必达（同值重复赋值无副作用）。
+      // 失败（含用户取消）静默不填——降级为手动输入，不打扰录入。
+      if (r.supported) onChange(r.value);
+    } catch {
+      /* 桥承诺不抛，此处仅兜底 */
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  return (
+    <Input
+      style={fullWidth}
+      size={size}
+      value={asInputString(value)}
+      onChange={(e) => onChange(e.target.value)}
+      onFocus={() => {
+        focusedRef.current = true;
+      }}
+      onBlur={() => {
+        focusedRef.current = false;
+      }}
+      suffix={
+        scanner && !inChild ? (
+          <Button
+            type="link"
+            size="small"
+            loading={scanning}
+            onClick={runScan}
+            style={{ padding: 0 }}
+          >
+            扫码
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }
 
@@ -342,13 +463,13 @@ export function FieldInput({
         />
       );
     default:
-      // string：文本输入
+      // string：文本输入（壳内接扫码填充，见 TextFieldInput）
       return (
-        <Input
-          style={fullWidth}
+        <TextFieldInput
+          value={value}
+          onChange={onChange}
           size={size}
-          value={asInputString(value)}
-          onChange={(e) => onChange(e.target.value)}
+          inChild={inChild}
         />
       );
   }
