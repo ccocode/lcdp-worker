@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@lcdp/renderer": "workspace:*",
-    "@naka1205/schema": "^0.8.0",
+    "@naka1205/schema": "^0.9.0",
     "antd": "^5.27.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
