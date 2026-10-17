@@ -1055,7 +1055,7 @@ function Designer({
         <Button onClick={onBack}>← 应用列表</Button>
         <Button
           onClick={() =>
-            window.open(`https://coode.cc.cd/#/app/${encodeURIComponent(appId)}`, "_blank")
+            window.open(`https://coode.cc.cd/app/${encodeURIComponent(appId)}`, "_blank")
           }
         >
           在运行态打开
