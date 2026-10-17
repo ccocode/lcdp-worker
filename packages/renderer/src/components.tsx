@@ -526,13 +526,21 @@ function ChildEditor({
   child,
   rows,
   onChange,
+  readOnly = false,
 }: {
   child: Entity;
   rows: Row[];
   onChange: (rows: Row[]) => void;
+  readOnly?: boolean;
 }) {
   const ctx = useRendererCtx();
-  const fields = child.fields.filter((f) => f.key !== child.parentField);
+  // 权限门控：与主表字段同口径——hidden 子字段不渲染列，readonly/masked 子字段
+  // 渲染为禁用控件；readOnly（宿主表单不可保存，如只读角色）时整表只读。
+  // 无 access（如设计态预览）时不限制，保持设计器内行为不变。
+  const fieldAccessOf = (key: string) => ctx.access?.[child.key]?.fields?.[key];
+  const fields = child.fields.filter(
+    (f) => f.key !== child.parentField && fieldAccessOf(f.key) !== "hidden",
+  );
   const hasAmount = child.fields.some((f) => f.key === "amount");
 
   const updateRow = (idx: number, key: string, value: unknown) => {
@@ -565,7 +573,7 @@ function ChildEditor({
                 {f.required && <span style={styles.required}> *</span>}
               </th>
             ))}
-            <th style={styles.childTh}>操作</th>
+            {!readOnly && <th style={styles.childTh}>操作</th>}
           </tr>
         </thead>
         <tbody>
@@ -584,27 +592,36 @@ function ChildEditor({
                       recordId:
                         typeof row.id === "string" ? row.id : undefined,
                     }}
-                    readOnly={f.key === "amount" && hasAmount}
+                    readOnly={
+                      readOnly ||
+                      fieldAccessOf(f.key) === "readonly" ||
+                      fieldAccessOf(f.key) === "masked" ||
+                      (f.key === "amount" && hasAmount)
+                    }
                   />
                 </td>
               ))}
-              <td style={styles.childTd}>
-                <Button
-                  size="small"
-                  onClick={() => onChange(rows.filter((_, i) => i !== idx))}
-                >
-                  删除
-                </Button>
-              </td>
+              {!readOnly && (
+                <td style={styles.childTd}>
+                  <Button
+                    size="small"
+                    onClick={() => onChange(rows.filter((_, i) => i !== idx))}
+                  >
+                    删除
+                  </Button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
-      <div style={{ marginTop: 8 }}>
-        <Button onClick={() => onChange([...rows, {}])}>
-          添加{child.label}
-        </Button>
-      </div>
+      {!readOnly && (
+        <div style={{ marginTop: 8 }}>
+          <Button onClick={() => onChange([...rows, {}])}>
+            添加{child.label}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -887,6 +904,7 @@ export function EntityForm({ node }: NodeProps) {
           onChange={(rows) =>
             setChildRows((prev) => ({ ...prev, [child.key]: rows }))
           }
+          readOnly={!(isEdit ? canUpdate : canCreate)}
         />
       ))}
       <div style={{ ...styles.toolbar, marginTop: 20 }}>
