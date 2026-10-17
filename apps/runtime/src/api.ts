@@ -279,6 +279,12 @@ export interface MemberPolicy {
   readable: string[];
   /** 会员可写（新建/改己行）实体 key 列表 */
   writable: string[];
+  /**
+   * 会员可写字段白名单（商城线）：实体 key → 允许会员写的字段键数组；
+   * 未声明的实体沿用实体级 writable 口径（全字段可写）。
+   * TODO(mall-schema-0.10.0): @naka1205/schema 0.10.0 memberPolicySchema 落地后与之对齐
+   */
+  writableFields?: Record<string, string[]>;
   /** 归属映射：实体 key → 归属字段 key（行读写强制归属当前会员） */
   owners: Record<string, string>;
 }
@@ -312,6 +318,38 @@ export interface MemberAuthResult {
   token: string;
   member: MemberInfo;
   policy: MemberPolicy;
+}
+
+/** 会员结算请求体（商城线）：不带金额，服务端按现价重算 + 价快照 + 扣库存 */
+export interface MemberCheckoutBody {
+  items: { productId: string; quantity: number }[];
+  contact_name: string;
+  contact_phone: string;
+  address: string;
+  remark?: string;
+}
+
+/** 会员结算结果：order 为新建订单行，total 为服务端重算总额 */
+export interface MemberCheckoutResult {
+  order: Row;
+  total: number;
+}
+
+/** 支付单（商城线，payment 实体的前端视图） */
+export interface MemberPayment {
+  id: string;
+  order_id?: string;
+  provider: string;
+  amount: number | string;
+  status: string;
+  trade_no?: string;
+  [key: string]: unknown;
+}
+
+/** 发起支付结果：payment 为支付单行，payUrl 为渠道支付页地址（沙箱 = 平台沙箱支付页） */
+export interface MemberPayResult {
+  payment: MemberPayment;
+  payUrl: string;
 }
 
 function memberSessionKey(host: string): string {
@@ -674,8 +712,266 @@ export const memberApi = {
       );
       return res.row;
     },
+    /**
+     * 会员聚合（商城线）：与员工面同构（服务端按 readable + owners 归属下推，
+     * 只统计本人行），供会员中心 StatCard 取数。
+     */
+    async aggregate(
+      appId: string,
+      getToken: () => string | null,
+      entity: string,
+      q: {
+        fn: "count" | "sum" | "avg";
+        field?: string;
+        filters?: Record<string, string>;
+        vf?: ViewFilter[];
+      },
+      onUnauthorized?: () => void,
+    ): Promise<number> {
+      const qs = new URLSearchParams();
+      qs.set("fn", q.fn);
+      if (q.field) qs.set("field", q.field);
+      for (const [k, v] of Object.entries(q.filters ?? {})) qs.set(k, v);
+      if (q.vf?.length) qs.set("vf", JSON.stringify(q.vf));
+      const res = await memberFetch<{ value: number }>(
+        `/member/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
+        getToken,
+        undefined,
+        onUnauthorized,
+      );
+      return res.value;
+    },
+    /** 会员分组聚合（商城线）：与员工面同构，返回 {key,value} 序列 */
+    async aggregateGrouped(
+      appId: string,
+      getToken: () => string | null,
+      entity: string,
+      q: {
+        fn: "count" | "sum" | "avg";
+        field?: string;
+        groupBy: string;
+        filters?: Record<string, string>;
+        vf?: ViewFilter[];
+      },
+      onUnauthorized?: () => void,
+    ): Promise<AggregateGroupItem[]> {
+      const qs = new URLSearchParams();
+      qs.set("fn", q.fn);
+      if (q.field) qs.set("field", q.field);
+      qs.set("groupBy", q.groupBy);
+      for (const [k, v] of Object.entries(q.filters ?? {})) qs.set(k, v);
+      if (q.vf?.length) qs.set("vf", JSON.stringify(q.vf));
+      const res = await memberFetch<{ series: AggregateGroupItem[] }>(
+        `/member/apps/${encodeURIComponent(appId)}/aggregate/${encodeURIComponent(entity)}?${qs.toString()}`,
+        getToken,
+        undefined,
+        onUnauthorized,
+      );
+      return res.series;
+    },
+  },
+  /**
+   * 会员结算（商城线）：专用 checkout 端点——服务端按现价重算 + 价快照 + 扣库存，
+   * 订单不走通用写面。400 带业务码（product_unavailable / insufficient_stock /
+   * checkout_not_configured），错误对象经 memberFetch 透传 code。
+   */
+  async checkout(
+    appId: string,
+    getToken: () => string | null,
+    body: MemberCheckoutBody,
+    onUnauthorized?: () => void,
+  ): Promise<MemberCheckoutResult> {
+    return memberFetch<MemberCheckoutResult>(
+      `/member/apps/${encodeURIComponent(appId)}/checkout`,
+      getToken,
+      { method: "POST", body: JSON.stringify(body) },
+      onUnauthorized,
+    );
+  },
+  /**
+   * 发起支付（商城线）：订单须属本人且待支付；金额取订单总额（不收客户端金额）。
+   * provider 缺省 sandbox；真实渠道未配置时服务端回 provider_not_configured。
+   */
+  async payOrder(
+    appId: string,
+    getToken: () => string | null,
+    orderId: string,
+    provider?: string,
+    onUnauthorized?: () => void,
+  ): Promise<MemberPayResult> {
+    return memberFetch<MemberPayResult>(
+      `/member/apps/${encodeURIComponent(appId)}/orders/${encodeURIComponent(orderId)}/pay`,
+      getToken,
+      {
+        method: "POST",
+        body: JSON.stringify(provider ? { provider } : {}),
+      },
+      onUnauthorized,
+    );
+  },
+  /**
+   * 沙箱模拟支付确认（商城线）：仅沙箱支付页调用——服务端内部走与外部回调
+   * 完全相同的验签 + 结算路径，前端永不接触渠道 secret。
+   */
+  async simulatePayment(
+    appId: string,
+    getToken: () => string | null,
+    paymentId: string,
+    result: "success" | "fail",
+    onUnauthorized?: () => void,
+  ): Promise<{ ok: boolean }> {
+    return memberFetch<{ ok: boolean }>(
+      `/member/apps/${encodeURIComponent(appId)}/payments/${encodeURIComponent(paymentId)}/simulate`,
+      getToken,
+      { method: "POST", body: JSON.stringify({ result }) },
+      onUnauthorized,
+    );
+  },
+  /**
+   * 会员取消订单（商城线）：仅本人、仅声明允许的状态可取消；
+   * 有 checkout 声明的应用取消时服务端按明细回补库存。
+   */
+  async cancelOrder(
+    appId: string,
+    getToken: () => string | null,
+    orderId: string,
+    onUnauthorized?: () => void,
+  ): Promise<{ ok: boolean }> {
+    return memberFetch<{ ok: boolean }>(
+      `/member/apps/${encodeURIComponent(appId)}/orders/${encodeURIComponent(orderId)}/cancel`,
+      getToken,
+      { method: "POST", body: JSON.stringify({}) },
+      onUnauthorized,
+    );
   },
 };
+
+/** 会员结算（商城线独立函数形态，供外壳级页面与适配器共用；实现见 memberApi.checkout） */
+export function checkoutMember(
+  appId: string,
+  getToken: () => string | null,
+  body: MemberCheckoutBody,
+  onUnauthorized?: () => void,
+): Promise<MemberCheckoutResult> {
+  return memberApi.checkout(appId, getToken, body, onUnauthorized);
+}
+
+/** 会员发起支付（商城线）：见 memberApi.payOrder */
+export function payMemberOrder(
+  appId: string,
+  getToken: () => string | null,
+  orderId: string,
+  provider?: string,
+  onUnauthorized?: () => void,
+): Promise<MemberPayResult> {
+  return memberApi.payOrder(appId, getToken, orderId, provider, onUnauthorized);
+}
+
+/** 沙箱模拟支付（商城线）：见 memberApi.simulatePayment */
+export function simulateMemberPayment(
+  appId: string,
+  getToken: () => string | null,
+  paymentId: string,
+  result: "success" | "fail",
+  onUnauthorized?: () => void,
+): Promise<{ ok: boolean }> {
+  return memberApi.simulatePayment(
+    appId,
+    getToken,
+    paymentId,
+    result,
+    onUnauthorized,
+  );
+}
+
+/** 会员取消订单（商城线）：见 memberApi.cancelOrder */
+export function cancelMemberOrder(
+  appId: string,
+  getToken: () => string | null,
+  orderId: string,
+  onUnauthorized?: () => void,
+): Promise<{ ok: boolean }> {
+  return memberApi.cancelOrder(appId, getToken, orderId, onUnauthorized);
+}
+
+/** 会员聚合（商城线）：见 memberApi.data.aggregate */
+export function fetchMemberAggregate(
+  appId: string,
+  getToken: () => string | null,
+  entity: string,
+  q: {
+    fn: "count" | "sum" | "avg";
+    field?: string;
+    filters?: Record<string, string>;
+    vf?: ViewFilter[];
+  },
+  onUnauthorized?: () => void,
+): Promise<number> {
+  return memberApi.data.aggregate(appId, getToken, entity, q, onUnauthorized);
+}
+
+/** 收银台状态（§7）：仅回支付单/订单状态两字段，供收银台页轮询 */
+export interface SandboxPaymentStatus {
+  paymentStatus: string;
+  orderStatus: string;
+}
+
+/**
+ * 收银台组请求（§7）：顶层 /pay/sandbox/* ——无会话、靠支付令牌 t 作凭据
+ * （扫码设备无会员会话是常态）。错误处理与 memberFetch 同构（透传业务码）。
+ */
+async function sandboxFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  const body = (await res.json().catch(() => null)) as
+    | (Record<string, unknown> & { message?: string; error?: string })
+    | null;
+  if (!res.ok) {
+    const err = new Error(
+      body?.message ?? body?.error ?? `请求失败 (${res.status})`,
+    ) as Error & { status?: number; code?: string };
+    err.status = res.status;
+    err.code = body?.error;
+    throw err;
+  }
+  return body as T;
+}
+
+/**
+ * 收银台确认支付（§7）：凭令牌确认结算/失败，服务端走与外部回调相同的
+ * settle 路径（via 记 sandbox_cashier）；令牌篡改/过期回 400。
+ */
+export function confirmSandboxPayment(
+  t: string,
+  result: "success" | "fail",
+): Promise<{
+  ok: boolean;
+  paymentStatus?: string;
+  orderStatus?: string;
+}> {
+  return sandboxFetch<{
+    ok: boolean;
+    paymentStatus?: string;
+    orderStatus?: string;
+  }>("/pay/sandbox/confirm", {
+    method: "POST",
+    body: JSON.stringify({ t, result }),
+  });
+}
+
+/** 收银台状态轮询（§7）：GET /pay/sandbox/status?t=，字段最小化 */
+export function fetchSandboxPaymentStatus(
+  t: string,
+): Promise<SandboxPaymentStatus> {
+  return sandboxFetch<SandboxPaymentStatus>(
+    `/pay/sandbox/status?t=${encodeURIComponent(t)}`,
+  );
+}
 
 type RawRecord = Record<string, unknown>;
 
@@ -1282,6 +1578,7 @@ export function makePublicAdapter(
   appId: string,
   navigate: (to: string) => void,
   notify: (message: string, kind?: "ok" | "error") => void,
+  hooks?: MemberAdapterHooks,
 ): RuntimeAdapter {
   const base = `/public/apps/${encodeURIComponent(appId)}`;
   const list = async (
@@ -1353,16 +1650,55 @@ export function makePublicAdapter(
       const res = await list(entity, { limit: 200 });
       return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
     },
+    /**
+     * 商城线会员钩子（可选注入）：公开页上的 CartView 借此判定会员登录态并结算——
+     * 会话来自外壳状态（钩子 getSession），结算经会话令牌调会员面 checkout；
+     * 未注入钩子时三方方法按无会话/不可结算降级，公开面既有行为不变。
+     */
+    memberSession: () => {
+      const s = hooks?.getSession?.() ?? null;
+      return s
+        ? {
+            id: s.member.id,
+            identifier: s.member.identifier,
+            displayName: s.member.displayName,
+          }
+        : null;
+    },
+    openMemberLogin: hooks?.openLogin,
+    memberCheckout: (body) =>
+      checkoutMember(
+        appId,
+        () => hooks?.getSession?.()?.token ?? null,
+        body,
+        hooks?.onUnauthorized,
+      ),
     navigate,
     notify,
   };
 }
 
 /**
+ * 会员钩子（商城线）：外壳把会员会话状态与登录弹窗入口注入适配器，
+ * 供 CartView 等组件判定登录态（memberSession）、拉起登录（openMemberLogin）
+ * 与结算（memberCheckout 内部经会话令牌调会员面）。员工适配器不注入、行为不变。
+ */
+export interface MemberAdapterHooks {
+  /** 当前会员会话（无会话返回 null）；缺省时适配器按「无会话」呈现 */
+  getSession?: () => MemberSession | null;
+  /** 打开会员登录弹窗（公开外壳的 MemberAuthModal） */
+  openLogin?: () => void;
+  /** 会员面 401 时的会话清理回调（与适配器既有 onUnauthorized 同义，钩子场景合并传入） */
+  onUnauthorized?: () => void;
+}
+
+/**
  * 会员适配器（会员试点）：与公开适配器同构，数据走 /member 面——列表/详情/
  * 新建/改己行由服务端按会员策略 + 归属执法；令牌经 getter 注入（外壳会话状态
- * 为唯一事实源），401 时 onUnauthorized 回调清会话。聚合与删除不在会员面口径内；
+ * 为唯一事实源），401 时 onUnauthorized 回调清会话。删除不在会员面口径内；
  * 文件上传会员面暂不支持（试点会员表单无文件字段），资产读取沿用公开口径。
+ * 商城线补强：聚合走会员 aggregate 端点（StatCard 会员语境同名同形）、
+ * 注入会员钩子后提供 memberSession / openMemberLogin / memberCheckout。
  */
 export function makeMemberAdapter(
   appId: string,
@@ -1370,6 +1706,7 @@ export function makeMemberAdapter(
   notify: (message: string, kind?: "ok" | "error") => void,
   getToken: () => string | null,
   onUnauthorized?: () => void,
+  hooks?: MemberAdapterHooks,
 ): RuntimeAdapter {
   const list = (
     entity: string,
@@ -1384,12 +1721,16 @@ export function makeMemberAdapter(
     memberApi.data.list(appId, getToken, entity, params, onUnauthorized);
   return {
     list,
-    aggregate: () => {
-      throw new Error("会员面不支持聚合查询");
-    },
-    aggregateGrouped: () => {
-      throw new Error("会员面不支持聚合查询");
-    },
+    aggregate: (entity, q) =>
+      memberApi.data.aggregate(appId, getToken, entity, q, onUnauthorized),
+    aggregateGrouped: (entity, q) =>
+      memberApi.data.aggregateGrouped(
+        appId,
+        getToken,
+        entity,
+        q,
+        onUnauthorized,
+      ),
     uploadAsset: () => {
       throw new Error("会员面暂不支持文件上传");
     },
@@ -1415,6 +1756,20 @@ export function makeMemberAdapter(
       const res = await list(entity, { limit: 200 });
       return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
     },
+    /** 商城线：会员会话快照与结算（钩子未注入时按无会话/不可结算降级） */
+    memberSession: () => {
+      const s = hooks?.getSession?.() ?? null;
+      return s
+        ? {
+            id: s.member.id,
+            identifier: s.member.identifier,
+            displayName: s.member.displayName,
+          }
+        : null;
+    },
+    openMemberLogin: hooks?.openLogin,
+    memberCheckout: (body) =>
+      checkoutMember(appId, getToken, body, onUnauthorized),
     navigate,
     notify,
   };

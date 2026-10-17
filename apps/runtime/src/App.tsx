@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Descriptions,
   Drawer,
   Form,
   Input,
@@ -20,13 +21,15 @@ import {
 } from "antd";
 import type { MenuProps } from "antd";
 import zhCN from "antd/locale/zh_CN";
-import { SchemaRenderer } from "@lcdp/renderer";
+import { SchemaRenderer, cartStore } from "@lcdp/renderer";
+import QRCode from "qrcode";
 import type { EntityAccess } from "@lcdp/renderer";
 import type { DataSchema, PageSchema } from "@naka1205/schema";
 import type {
   AppInfo,
   AssistantContext,
   EntryResult,
+  MemberAdapterHooks,
   MemberAuthResult,
   MemberPolicy,
   MemberSession,
@@ -39,12 +42,15 @@ import SupportWidget, { SupportAutoMount } from "./SupportWidget.js";
 import {
   EMPTY_MEMBER_POLICY,
   api,
+  confirmSandboxPayment,
+  fetchSandboxPaymentStatus,
   getStoredUser,
   loadMemberSession,
   makeAdapter,
   makeMemberAdapter,
   makePublicAdapter,
   memberApi,
+  simulateMemberPayment,
   storeMemberSession,
   storeSession,
 } from "./api.js";
@@ -1436,6 +1442,334 @@ function MemberArea({
   );
 }
 
+/** 页眉购物车入口（商城线）：角标 = 本地购物车总件数，订阅 cartStore 变更刷新；仅快照含 /cart 页时由外壳渲染 */
+function CartEntry({ onOpen }: { onOpen: () => void }) {
+  const [count, setCount] = useState<number>(() => cartStore.count());
+  useEffect(
+    () => cartStore.subscribe(() => setCount(cartStore.count())),
+    [],
+  );
+  return (
+    <Badge count={count} size="small">
+      <Button size="small" onClick={onOpen}>
+        购物车
+      </Button>
+    </Badge>
+  );
+}
+
+/**
+ * 沙箱支付页 / 收银台（商城线，外壳级内置路由 `#/pay/sandbox`，pay 响应 payUrl 直达；
+ * 与 §7 收银台口径双模式）：
+ * - **收银台模式**（query 带签名令牌 t，pay 流程恒带）：令牌即收银台凭据，
+ *   **不要求会员会话**——展示金额/订单号/支付单号 + 本页绝对 URL 的二维码
+ *   （供另一设备扫码打开同一收银台）+ URL 文本兜底（可复制）；「确认支付」/
+ *   「模拟支付失败」走 POST /pay/sandbox/confirm（令牌确认结算），并定时轮询
+ *   GET /pay/sandbox/status 刷新状态；支付成功后：本设备有会员会话则跳订单详情，
+ *   无会话停在成功页（扫码设备无会话是常态）。
+ * - **会员模式**（无 t）：回退原契约路径，须会员会话，经 simulate 端点模拟
+ *   （服务端内部走同一验签 + 结算路径），完成后跳订单详情；无会话先引导登录。
+ */
+function SandboxPayPage({
+  appId,
+  params,
+  session,
+  getToken,
+  onLogin,
+  onUnauthorized,
+  goPage,
+}: {
+  appId: string;
+  params: Record<string, string>;
+  session: MemberSession | null;
+  getToken: () => string | null;
+  onLogin: () => void;
+  onUnauthorized: () => void;
+  goPage: (to: string) => void;
+}) {
+  const paymentId = params.paymentId ?? "";
+  const orderId = params.orderId ?? "";
+  const amount = params.amount ?? "";
+  const tradeNo = params.tradeNo ?? "";
+  const token = params.t ?? "";
+  const cashier = token.length > 0;
+  /** 收银台绝对 URL：payUrl 为相对形态（/#/pay/sandbox?…），以当前页地址为准拼绝对形态供扫码/复制 */
+  const absoluteUrl = window.location.href;
+
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"success" | "fail" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [payStatus, setPayStatus] = useState<string | null>(null);
+  const [ordStatus, setOrdStatus] = useState<string | null>(null);
+  const [memberDone, setMemberDone] = useState<"success" | "fail" | null>(
+    null,
+  );
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const jumpedRef = useRef(false);
+
+  const goOrder = useCallback(() => {
+    if (orderId) {
+      goPage(`/my-orders/detail?id=${encodeURIComponent(orderId)}`);
+    }
+  }, [goPage, orderId]);
+
+  // 收银台模式：二维码（本页绝对 URL，约 200px）
+  useEffect(() => {
+    if (!cashier) return;
+    let alive = true;
+    QRCode.toDataURL(absoluteUrl, { width: 200, margin: 1 })
+      .then((url) => {
+        if (alive) setQrDataUrl(url);
+      })
+      .catch(() => {
+        // 二维码生成失败不阻断支付：下方有 URL 文本兜底
+      });
+    return () => {
+      alive = false;
+    };
+  }, [cashier, absoluteUrl]);
+
+  // 收银台模式：状态轮询（支付单离开「待支付」即停轮询）
+  useEffect(() => {
+    if (!cashier) return;
+    let alive = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const s = await fetchSandboxPaymentStatus(token);
+        if (!alive) return;
+        setPayStatus(s.paymentStatus);
+        setOrdStatus(s.orderStatus);
+        if (s.paymentStatus === "待支付") {
+          timer = window.setTimeout(() => void poll(), 2500);
+        }
+      } catch {
+        // 轮询失败（令牌过期等）不刷屏：停轮询，错误经确认动作再呈现
+      }
+    };
+    void poll();
+    return () => {
+      alive = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [cashier, token]);
+
+  // 收银台支付成功：有会员会话跳订单详情，无会话停在成功页
+  useEffect(() => {
+    if (!cashier || payStatus !== "成功" || jumpedRef.current) return;
+    if (sessionRef.current && orderId) {
+      jumpedRef.current = true;
+      const timer = window.setTimeout(goOrder, 800);
+      return () => window.clearTimeout(timer);
+    }
+  }, [cashier, payStatus, orderId, goOrder]);
+
+  const confirmCashier = async (result: "success" | "fail") => {
+    setBusy(result);
+    setError(null);
+    try {
+      const s = await confirmSandboxPayment(token, result);
+      if (s.paymentStatus) setPayStatus(s.paymentStatus);
+      if (s.orderStatus) setOrdStatus(s.orderStatus);
+      // 成功/失败后主动刷一次状态（轮询可能已因终态停止）
+      try {
+        const st = await fetchSandboxPaymentStatus(token);
+        setPayStatus(st.paymentStatus);
+        setOrdStatus(st.orderStatus);
+      } catch {
+        // 状态刷新失败不影响已完成的确认结果
+      }
+    } catch (err) {
+      setError(memberErrorText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const simulateMember = async (result: "success" | "fail") => {
+    if (!paymentId) {
+      setError("缺少支付单参数");
+      return;
+    }
+    setBusy(result);
+    setError(null);
+    try {
+      await simulateMemberPayment(
+        appId,
+        getToken,
+        paymentId,
+        result,
+        onUnauthorized,
+      );
+      setMemberDone(result);
+      window.setTimeout(goOrder, 600);
+    } catch (err) {
+      setError(memberErrorText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const paid = payStatus === "成功" || ordStatus === "已支付";
+  const failed = payStatus === "失败" || payStatus === "已关闭";
+
+  return (
+    <div style={{ maxWidth: 480, margin: "48px auto", padding: "0 16px" }}>
+      <Card title={cashier ? "沙箱收银台" : "沙箱支付"}>
+        <Descriptions column={1} size="small">
+          <Descriptions.Item label="订单号">
+            {orderId || "—"}
+          </Descriptions.Item>
+          <Descriptions.Item label="支付单号">
+            {tradeNo || "—"}
+          </Descriptions.Item>
+          <Descriptions.Item label="应付金额">
+            <Typography.Text strong style={{ fontSize: 18, color: "#cf1322" }}>
+              {amount ? `¥${amount}` : "—"}
+            </Typography.Text>
+          </Descriptions.Item>
+          {cashier && (payStatus || ordStatus) && (
+            <Descriptions.Item label="支付状态">
+              {payStatus ?? "—"}
+              {ordStatus ? `（订单：${ordStatus}）` : ""}
+            </Descriptions.Item>
+          )}
+        </Descriptions>
+
+        {cashier && !paid && !failed && (
+          <div style={{ textAlign: "center", margin: "16px 0 4px" }}>
+            {qrDataUrl ? (
+              <img
+                src={qrDataUrl}
+                alt="收银台二维码"
+                style={{ width: 200, height: 200 }}
+              />
+            ) : (
+              <div style={{ height: 200, lineHeight: "200px", color: "#999" }}>
+                二维码生成中…
+              </div>
+            )}
+            <Typography.Paragraph
+              type="secondary"
+              style={{ fontSize: 12, margin: "4px 0 0" }}
+            >
+              用另一台设备扫码打开同一收银台完成支付
+            </Typography.Paragraph>
+            <Typography.Text
+              copyable
+              style={{
+                fontSize: 12,
+                wordBreak: "break-all",
+                display: "block",
+                marginTop: 4,
+              }}
+            >
+              {absoluteUrl}
+            </Typography.Text>
+          </div>
+        )}
+
+        <Typography.Paragraph
+          type="secondary"
+          style={{ fontSize: 12, marginTop: 12 }}
+        >
+          {cashier
+            ? "演示环境沙箱收银台：确认支付将把订单置为已支付；模拟失败则支付单置失败、订单保持待支付可再次支付。收银台链接含时效令牌，请勿转发给无关人员。"
+            : "演示环境沙箱支付：确认支付将经服务端回调把订单置为已支付；模拟失败则支付单置失败、订单保持待支付可再次支付。"}
+        </Typography.Paragraph>
+
+        {error && (
+          <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+        )}
+        {cashier && paid && (
+          <Alert
+            type="success"
+            message={
+              session
+                ? "支付成功，正在跳转订单详情…"
+                : "支付成功！可返回下单设备查看订单。"
+            }
+            style={{ marginBottom: 12 }}
+          />
+        )}
+        {cashier && failed && (
+          <Alert
+            type="warning"
+            message="支付未完成（支付单已失败/关闭），订单保持待支付，可返回订单重新发起支付。"
+            style={{ marginBottom: 12 }}
+          />
+        )}
+        {memberDone === "success" && (
+          <Alert
+            type="success"
+            message="支付成功，正在跳转订单详情…"
+            style={{ marginBottom: 12 }}
+          />
+        )}
+        {memberDone === "fail" && (
+          <Alert
+            type="warning"
+            message="已模拟支付失败，正在跳转订单详情…"
+            style={{ marginBottom: 12 }}
+          />
+        )}
+
+        {!cashier && !session ? (
+          <Space>
+            <Button type="primary" onClick={onLogin}>
+              会员登录
+            </Button>
+            {orderId && <Button onClick={goOrder}>返回订单详情</Button>}
+          </Space>
+        ) : cashier ? (
+          !paid &&
+          !failed && (
+            <Space>
+              <Button
+                type="primary"
+                loading={busy === "success"}
+                disabled={busy !== null}
+                onClick={() => void confirmCashier("success")}
+              >
+                确认支付
+              </Button>
+              <Button
+                danger
+                loading={busy === "fail"}
+                disabled={busy !== null}
+                onClick={() => void confirmCashier("fail")}
+              >
+                模拟支付失败
+              </Button>
+            </Space>
+          )
+        ) : (
+          <Space>
+            <Button
+              type="primary"
+              loading={busy === "success"}
+              disabled={busy !== null || memberDone !== null}
+              onClick={() => void simulateMember("success")}
+            >
+              确认支付
+            </Button>
+            <Button
+              danger
+              loading={busy === "fail"}
+              disabled={busy !== null || memberDone !== null}
+              onClick={() => void simulateMember("fail")}
+            >
+              模拟支付失败
+            </Button>
+            {orderId && <Button onClick={goOrder}>返回订单详情</Button>}
+          </Space>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 /**
  * 公开外壳（匿名访客）：顶栏应用名 + 登录按钮；菜单走与登录外壳同一套页面 menu 装配；
  * 内容由公开适配器渲染（服务端按公开策略整形数据）、应用主题同样生效。
@@ -1465,10 +1799,6 @@ function PublicShell({
     },
     [],
   );
-  const adapter = useMemo(
-    () => makePublicAdapter(primary.appId, goPage, publicNotify),
-    [primary.appId, goPage, publicNotify],
-  );
 
   /* 会员态（会员试点）：primary.member.pages 非空才启用。会话存 localStorage
      并在此恢复；会员页以会员适配器渲染、公开页照旧公开适配器（按当前页切换）。 */
@@ -1485,6 +1815,8 @@ function PublicShell({
   }>({ open: false, tab: "login" });
   const memberTokenRef = useRef<string | null>(memberSession?.token ?? null);
   memberTokenRef.current = memberSession?.token ?? null;
+  const memberSessionRef = useRef<MemberSession | null>(memberSession);
+  memberSessionRef.current = memberSession;
 
   const clearMemberSession = useCallback(() => {
     storeMemberSession(host, null);
@@ -1527,6 +1859,24 @@ function PublicShell({
     setAuthModal({ open: true, tab });
   }, []);
 
+  /**
+   * 商城线会员钩子：公开页上的组件（CartView）借此判定会员会话、拉起登录弹窗、
+   * 经会话令牌结算。getSession 走 ref 读最新会话，适配器本身不随会话变化重建。
+   */
+  const memberHooks = useMemo<MemberAdapterHooks>(
+    () => ({
+      getSession: () => memberSessionRef.current,
+      openLogin: () => openAuth("login"),
+      onUnauthorized: clearMemberSession,
+    }),
+    [openAuth, clearMemberSession],
+  );
+
+  const adapter = useMemo(
+    () => makePublicAdapter(primary.appId, goPage, publicNotify, memberHooks),
+    [primary.appId, goPage, publicNotify, memberHooks],
+  );
+
   const memberAdapter = useMemo(
     () =>
       memberSession
@@ -1536,9 +1886,10 @@ function PublicShell({
             notify,
             () => memberTokenRef.current,
             clearMemberSession,
+            memberHooks,
           )
         : null,
-    [primary.appId, goPage, memberSession, clearMemberSession],
+    [primary.appId, goPage, memberSession, clearMemberSession, memberHooks],
   );
 
   /** 导航守卫：未登录点会员页先弹登录弹窗（页面照常切过去，内容区呈占位引导） */
@@ -1633,6 +1984,28 @@ function PublicShell({
       publicContent
     );
 
+  /**
+   * 沙箱收银台（商城线 §7）：外壳级内置路由，不属任何应用设计页，
+   * 命中时优先于页面内容渲染（收银台模式不要求会员会话、靠令牌进页）。
+   */
+  const pageContent =
+    inPath === "/pay/sandbox" ? (
+      <SandboxPayPage
+        appId={params.appId || primary.appId}
+        params={params}
+        session={memberSession}
+        getToken={() => memberTokenRef.current}
+        onLogin={() => openAuth("login")}
+        onUnauthorized={clearMemberSession}
+        goPage={goPage}
+      />
+    ) : (
+      content
+    );
+
+  /** 快照含 /cart 页时页眉才出现购物车入口（商城线） */
+  const hasCartPage = primary.pages.some((p) => p.route === "/cart");
+
   /** 页眉右侧区：仅会员区（启用会员页时）；员工「登录」已按入口分离口径移至页脚文字链 */
   const memberArea = (small?: boolean) =>
     hasMemberPages ? (
@@ -1670,7 +2043,14 @@ function PublicShell({
             selectedKey={current ? current.route : null}
             onNavigate={goPageGuarded}
             searchRoute={globalVarText(cfg, "siteSearchRoute")}
-            right={memberArea()}
+            right={
+              <Space size={8}>
+                {hasCartPage && (
+                  <CartEntry onOpen={() => goPageGuarded("/cart")} />
+                )}
+                {memberArea()}
+              </Space>
+            }
           />
           <Layout.Content
             style={{
@@ -1678,7 +2058,7 @@ function PublicShell({
               background: "#fff",
             }}
           >
-            {content}
+            {pageContent}
           </Layout.Content>
           <SiteFooter text={siteFooterText(cfg, brand)} onStaffLogin={onLogin} />
         </Layout>
@@ -1706,7 +2086,7 @@ function PublicShell({
             </Space>
           }
         >
-          {content}
+          {pageContent}
         </MobileShell>
         {memberModal}
       </ConfigProvider>
@@ -1753,7 +2133,7 @@ function PublicShell({
             />
           </Layout.Sider>
           <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
-            {content}
+            {pageContent}
           </Layout.Content>
         </Layout>
         {memberModal}
