@@ -60,10 +60,11 @@ import FlowCenter from "./FlowCenter.js";
  * 运行态应用壳（M3 入口模型）：运行态是单一解释器，呈现中没有「应用」概念。
  * 登录后按当前域名解析入口（域名定入口），直达入口装配的应用系统；
  * 菜单由页面自身的 menu 声明组装（页面驱动、非实体驱动）。
- * 路由用 hash（Pages 静态托管免改写规则）：
- *   入口模式  #<页面路由>?<页面参数>
- *   预览模式  #/app/<appId><页面路由>?<页面参数>（设计台「在运行态打开」兼容）
- *   待办中心  #/flow（外壳级视图，入口/预览模式均可达，侧边菜单顶部固定入口）
+ * 路由用 history（M14 线一去 #；Pages 侧以 _redirects 回退 index.html）：
+ *   入口模式  <页面路由>?<页面参数>
+ *   预览模式  /app/<appId><页面路由>?<页面参数>（设计台「在运行态打开」兼容）
+ *   待办中心  /flow（外壳级视图，入口/预览模式均可达，侧边菜单顶部固定入口）
+ * 旧 # 链接在首载时由 migrateLegacyHash 以 replaceState 迁移到等价新路径。
  * M10 起入口视图为多应用装配：加载入口全部应用的已发布快照，页面取并集
  * （每页带所属 appId，路由冲突按入口应用顺序先到先得），菜单跨应用合并，
  * 当前页以其所属应用的快照与适配器渲染；待办/助手跟随当前页所属应用。
@@ -77,8 +78,8 @@ interface Route {
   params: Record<string, string>;
 }
 
-function parseHash(): Route {
-  const raw = window.location.hash.replace(/^#/, "") || "/";
+function parseRoute(): Route {
+  const raw = window.location.pathname + window.location.search;
   const [path, query] = raw.split("?");
   const params: Record<string, string> = {};
   if (query) {
@@ -87,12 +88,29 @@ function parseHash(): Route {
   return { path: path || "/", params };
 }
 
-function useHashRoute(): Route {
-  const [route, setRoute] = useState<Route>(() => parseHash());
+/** 旧 # 链接迁移（M14 线一）：首载时把 #<路径> 以 replaceState 落到等价新路径，不多留历史记录 */
+function migrateLegacyHash(): void {
+  const h = window.location.hash;
+  if (h.startsWith("#/")) {
+    window.history.replaceState(null, "", h.slice(1));
+  }
+}
+
+/** 站内导航统一写侧：pushState 后派发 popstate 让路由钩子重解析（pushState 本身不触发 popstate） */
+function navigateTo(to: string): void {
+  window.history.pushState(null, "", to);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function useHistoryRoute(): Route {
+  const [route, setRoute] = useState<Route>(() => {
+    migrateLegacyHash();
+    return parseRoute();
+  });
   useEffect(() => {
-    const onChange = () => setRoute(parseHash());
-    window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
+    const onChange = () => setRoute(parseRoute());
+    window.addEventListener("popstate", onChange);
+    return () => window.removeEventListener("popstate", onChange);
   }, []);
   return route;
 }
@@ -145,14 +163,14 @@ function notify(message: string, kind: "ok" | "error" = "ok"): void {
 }
 
 export default function App() {
-  const route = useHashRoute();
+  const route = useHistoryRoute();
   const [user, setUser] = useState<UserInfo | null>(() => getStoredUser());
   const device = useDevice();
 
   const logout = () => {
     storeSession(null, null);
     setUser(null);
-    window.location.hash = "#/";
+    navigateTo("/");
   };
 
   const match = route.path.match(/^\/app\/([^/]+)(\/.*)?$/);
@@ -168,8 +186,8 @@ export default function App() {
           onLoggedIn={(u) => {
             setUser(u);
             // 预览深链（设计台打开）登录后保留原路径，其余回入口首页
-            if (!window.location.hash.startsWith("#/app/")) {
-              window.location.hash = "#/";
+            if (!window.location.pathname.startsWith("/app/")) {
+              navigateTo("/");
             }
           }}
         />
@@ -1790,7 +1808,7 @@ function PublicShell({
   onLogin: () => void;
 }) {
   const goPage = useCallback((to: string) => {
-    window.location.hash = `#${to}`;
+    navigateTo(to);
   }, []);
   // 公开表单提交在渲染器内走既有「保存成功」提示路径，这里改写为待审口径
   const publicNotify = useCallback(
@@ -2510,15 +2528,15 @@ function AppView({
     void refreshTodoCount();
   }, [refreshTodoCount]);
 
-  /** 待办中心是外壳级视图（#/flow），不属于任何页面 Schema */
+  /** 待办中心是外壳级视图（/flow），不属于任何页面 Schema */
   const isFlow = inPath === "/flow";
 
   const goPage = useMemo(
     () =>
       (to: string) => {
-        window.location.hash = preview
-          ? `#/app/${encodeURIComponent(primaryAppId)}${to}`
-          : `#${to}`;
+        navigateTo(
+          preview ? `/app/${encodeURIComponent(primaryAppId)}${to}` : to,
+        );
       },
     [primaryAppId, preview],
   );
@@ -2551,7 +2569,7 @@ function AppView({
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
         <Button
           onClick={() => {
-            window.location.hash = "#/";
+            navigateTo("/");
           }}
         >
           返回入口首页
@@ -2716,7 +2734,7 @@ function AppView({
               <Button
                 size="small"
                 onClick={() => {
-                  window.location.hash = "#/";
+                  navigateTo("/");
                 }}
               >
                 入口首页
@@ -2780,7 +2798,7 @@ function AppView({
               <Button
                 block
                 onClick={() => {
-                  window.location.hash = "#/";
+                  navigateTo("/");
                 }}
               >
                 返回入口首页
