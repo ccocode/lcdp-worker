@@ -96,6 +96,17 @@ export interface MemberPolicyShape {
   writableFields: Record<string, string[]>;
   /** 归属映射：实体 key → 归属字段 key（行读写强制归属当前会员） */
   owners: Record<string, string>;
+  /**
+   * 只读全量实体（论坛立项，schema 0.11.0）：列于此的实体即使声明了归属，
+   * 会员读取仍见全量行（如论坛主题：人人可读、只改己行），写入仍按归属收口。
+   */
+  readAll: string[];
+  /**
+   * 显示名盖章字段（论坛立项，schema 0.11.0）：会员新建行时服务端把会员
+   * 显示名（缺省回退登录标识）盖入该字段（如 author_name），免逐行解析作者；
+   * 该字段不受字段白名单约束、会员不可自填。
+   */
+  stampDisplayNameAs?: string;
 }
 
 export const EMPTY_MEMBER_POLICY: MemberPolicyShape = {
@@ -104,6 +115,7 @@ export const EMPTY_MEMBER_POLICY: MemberPolicyShape = {
   writable: [],
   writableFields: {},
   owners: {},
+  readAll: [],
 };
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -132,6 +144,7 @@ export function defaultPermissions(appId: string): PermissionSchema {
     writable: [],
     writableFields: {},
     owners: {},
+    readAll: [],
   };
   return {
     id: `${appId}:permissions`,
@@ -291,6 +304,8 @@ export default function Permissions({
       writable: raw?.writable ?? [],
       writableFields: raw?.writableFields ?? {},
       owners: raw?.owners ?? {},
+      readAll: raw?.readAll ?? [],
+      stampDisplayNameAs: raw?.stampDisplayNameAs,
     };
   }, [permissions]);
 
@@ -945,6 +960,35 @@ export default function Permissions({
             options={entityOptions}
             onChange={(v: string[]) =>
               setMemberPolicy({ ...memberPolicy, readable: v })
+            }
+          />
+        </Space>
+        <Space size={10} wrap align="start">
+          <Typography.Text style={{ width: 110, paddingTop: 4 }}>只读全量实体</Typography.Text>
+          <Select
+            mode="multiple"
+            size="small"
+            style={{ width: 560 }}
+            placeholder="已声明归属但会员可读全量的实体（如论坛主题）"
+            value={memberPolicy.readAll}
+            options={entityOptions}
+            onChange={(v: string[]) =>
+              setMemberPolicy({ ...memberPolicy, readAll: v })
+            }
+          />
+        </Space>
+        <Space size={10} wrap align="start">
+          <Typography.Text style={{ width: 110, paddingTop: 4 }}>显示名盖章字段</Typography.Text>
+          <Input
+            size="small"
+            style={{ width: 560 }}
+            placeholder="如 author_name；留空 = 不盖章。会员新建行时服务端自动写入其显示名"
+            value={memberPolicy.stampDisplayNameAs ?? ""}
+            onChange={(e) =>
+              setMemberPolicy({
+                ...memberPolicy,
+                stampDisplayNameAs: e.target.value.trim() || undefined,
+              })
             }
           />
         </Space>
