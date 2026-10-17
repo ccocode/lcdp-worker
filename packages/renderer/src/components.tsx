@@ -184,15 +184,26 @@ const PARAM_REF_RE = /^\$param\.([A-Za-z0-9_]+)$/;
  * 以当前页面参数（URL 入参）替换——栏目/搜索等页把条件值留给访问地址决定。
  * 参数缺失或为空串时剔除该过滤项（页面未带参 = 不按此条件过滤），其余值原样保留；
  * 返回新 view（sort/pageSize/aggregate 不动），无过滤项时原样返回。
+ *
+ * 会员令牌（论坛立项）：value 整串严格等于 `$member.id` 时，以当前会员会话 id
+ * 替换（「我的帖子」等页把归属条件值留给登录态决定）。无会员会话（公开/员工面
+ * adapter 回 null）时令牌不解析、过滤项原样保留——原样值匹配不到任何行，
+ * 与误配 $param 时宁可空列表、不放全量的保守口径一致。
  */
 export function resolveViewParams(
   view: DataView | undefined,
   params: Record<string, string>,
+  memberId?: string | null,
 ): DataView | undefined {
   if (!view?.filters?.length) return view;
   const filters: NonNullable<DataView["filters"]> = [];
   for (const f of view.filters) {
     if (typeof f.value === "string") {
+      if (f.value === "$member.id") {
+        if (memberId) filters.push({ ...f, value: memberId });
+        else filters.push(f);
+        continue;
+      }
       const m = PARAM_REF_RE.exec(f.value);
       if (m) {
         const v = params[m[1]!];
@@ -337,9 +348,9 @@ export function DataTable({ node }: NodeProps) {
   // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
   // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
   const view = useMemo(
-    () => resolveViewParams(rawView, ctx.params),
+    () => resolveViewParams(rawView, ctx.params, ctx.adapter.memberSession?.()?.id ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rawViewSig, paramsSig],
+    [rawViewSig, paramsSig, ctx.adapter.memberSession?.()?.id ?? null],
   );
   const pageSize =
     view?.pageSize ??
@@ -1316,9 +1327,9 @@ function useAggregateValue(
   // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
   // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
   const view = useMemo(
-    () => resolveViewParams(rawView, ctx.params),
+    () => resolveViewParams(rawView, ctx.params, ctx.adapter.memberSession?.()?.id ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rawViewSig, paramsSig],
+    [rawViewSig, paramsSig, ctx.adapter.memberSession?.()?.id ?? null],
   );
   const fn = view?.aggregate?.fn ?? (fallbackCount ? "count" : undefined);
   const field = view?.aggregate?.field;
@@ -1462,9 +1473,9 @@ function GroupedChart({
   // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
   // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
   const view = useMemo(
-    () => resolveViewParams(rawView, ctx.params),
+    () => resolveViewParams(rawView, ctx.params, ctx.adapter.memberSession?.()?.id ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rawViewSig, paramsSig],
+    [rawViewSig, paramsSig, ctx.adapter.memberSession?.()?.id ?? null],
   );
   const agg = view?.aggregate;
   const fn = agg?.fn ?? "count";
@@ -1638,9 +1649,9 @@ export function ContentList({ node }: NodeProps) {
   // 过滤参数绑定（$param.<key> → 页面参数）：memo 以内容签名作依赖键，
   // 避免 resolvedView 每次渲染都是新对象、引发取数 effect 循环
   const view = useMemo(
-    () => resolveViewParams(rawView, ctx.params),
+    () => resolveViewParams(rawView, ctx.params, ctx.adapter.memberSession?.()?.id ?? null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rawViewSig, paramsSig],
+    [rawViewSig, paramsSig, ctx.adapter.memberSession?.()?.id ?? null],
   );
   const pageSize =
     view?.pageSize ??
