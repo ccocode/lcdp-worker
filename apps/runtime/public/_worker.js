@@ -1,16 +1,22 @@
 /**
- * LCDP Runtime 边缘分发（CMS 静态化/SEO 线，Pages 高级模式 _worker.js）。
+ * LCDP Runtime 边缘分发（Pages 高级模式 _worker.js）。
  *
- * 职责：在 SPA 资产服务之前，按入口运行模式（siteMode）分发静态快照：
- * - dynamic（缺省/未知/读配置失败）：纯透传，与无本文件时行为一致（零扰动）；
- * - pseudo / static：先按规范键查 R2（绑定 STATIC_R2 → 桶 lcdp-assets，
- *   键 = static/<host><path>[?规范 query]，与 api 侧 staticgen 同规则），
- *   命中回快照 HTML（x-lcdp-static: hit）；未命中一律回落 SPA。
+ * 判定序（自上而下，任一层未命中/异常都落回下一层，最终回落 SPA）：
+ * 1. 主题层（M14 线二）：入口绑定了主题（/public/entry 的 entry.theme 指针）
+ *    时，按 themes/<id>/<version>/<path> 查 R2 绑定 STATIC_R2（桶 lcdp-assets）；
+ *    命中直出（应答头 x-lcdp-theme: <id>@<version>，index.html 注入
+ *    window.__LCDP__ 上下文）；`/` 与无扩展名页面路径未命中文件时回退主题
+ *    index.html；主题文件缺失/异常 → 落回下一层。
+ * 2. 快照层（CMS 静态化/SEO 线）：按入口运行模式（siteMode）分发静态快照：
+ *    - dynamic（缺省/未知/读配置失败）：纯透传，与无本文件时行为一致（零扰动）；
+ *    - pseudo / static：按规范键查 R2（键 = static/<host><path>[?规范 query]，
+ *      与 api 侧 staticgen 同规则），命中回快照 HTML（x-lcdp-static: hit）；
+ *      未命中一律回落 SPA。
  *
- * siteMode 经网关读 /public/entry?host=（响应含 entry.siteMode），
- * 用 Cache API 缓存 60 秒；任何异常一律 fail-open 透传——宁可不静态，
- * 不可打挂站点。快照只覆盖公开页 GET/HEAD；其余方法/路径原样透传，
- * method、headers、query 不做任何改写。
+ * 入口配置（siteMode + theme）经网关读 /public/entry?host=，用 Cache API
+ * 缓存 60 秒；任何异常一律 fail-open 透传——宁可不分发，不可打挂站点。
+ * 两层都只覆盖 GET/HEAD；其余方法原样透传，method、headers、query 不改写。
+ * 未绑主题的入口在本文件的响应与旧版逐字节一致（主题层整体跳过）。
  *
  * _redirects 回落：资产服务对静态资产响应应用 _redirects（/* → index.html）；
  * 若某路径资产服务回 404（高级模式下规则未生效的情形），本文件在 worker 内
@@ -49,8 +55,17 @@ function isPagePath(pathname) {
   return !last.includes(".");
 }
 
-/** 读入口 siteMode（Cache API 缓存 60 秒；失败/未知一律 dynamic） */
-async function loadSiteMode(host, ctx) {
+const THEME_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * 读入口配置 { siteMode, theme }（Cache API 缓存 60 秒，与旧 siteMode 缓存同键
+ * 同信封扩展；失败/未知一律 { dynamic, null }，fail-open）。
+ * theme 为归一后的绑定上下文（指针 + 入口/主应用标识 + 已合并的 config），
+ * 形状非法视为未绑定；config 合并 = 主题清单 defaults ← 绑定 values，
+ * 清单从 R2 读 theme.json（读失败则 config 只含绑定 values，分发不因此中断）。
+ */
+async function loadEntryConfig(host, ctx, env) {
+  const fallback = { siteMode: "dynamic", theme: null };
   try {
     const cache = caches.default;
     const cacheKey = new Request(
@@ -59,10 +74,25 @@ async function loadSiteMode(host, ctx) {
     const hit = await cache.match(cacheKey);
     if (hit) {
       const data = await hit.json().catch(() => null);
-      const m = data?.siteMode;
-      return m === "pseudo" || m === "static" ? m : "dynamic";
+      if (data && typeof data === "object") {
+        return {
+          siteMode:
+            data.siteMode === "pseudo" || data.siteMode === "static"
+              ? data.siteMode
+              : "dynamic",
+          theme:
+            data.theme &&
+            typeof data.theme === "object" &&
+            typeof data.theme.id === "string" &&
+            typeof data.theme.version === "string"
+              ? data.theme
+              : null,
+        };
+      }
+      return fallback;
     }
-    let mode = "dynamic";
+    let siteMode = "dynamic";
+    let theme = null;
     try {
       const res = await fetch(
         `${API_BASE}/public/entry?host=${encodeURIComponent(host)}`,
@@ -71,22 +101,166 @@ async function loadSiteMode(host, ctx) {
       if (res.ok) {
         const data = await res.json().catch(() => null);
         const m = data?.entry?.siteMode;
-        if (m === "pseudo" || m === "static") mode = m;
+        if (m === "pseudo" || m === "static") siteMode = m;
+        const raw = data?.entry?.theme;
+        if (
+          raw &&
+          typeof raw === "object" &&
+          typeof raw.id === "string" &&
+          THEME_ID_RE.test(raw.id) &&
+          typeof raw.version === "string" &&
+          raw.version
+        ) {
+          const values =
+            raw.values &&
+            typeof raw.values === "object" &&
+            !Array.isArray(raw.values)
+              ? raw.values
+              : {};
+          const config = {};
+          try {
+            const mObj = await env.STATIC_R2.get(
+              `themes/${raw.id}/${raw.version}/theme.json`,
+            );
+            if (mObj) {
+              const manifest = JSON.parse(await mObj.text());
+              if (Array.isArray(manifest?.config)) {
+                for (const item of manifest.config) {
+                  if (
+                    item &&
+                    typeof item.key === "string" &&
+                    typeof item.default === "string"
+                  ) {
+                    config[item.key] = item.default;
+                  }
+                }
+              }
+            }
+          } catch {
+            // 清单读失败：config 只用绑定 values，不阻断主题分发
+          }
+          Object.assign(config, values);
+          theme = {
+            id: raw.id,
+            version: raw.version,
+            entryId: data.entry.id ?? null,
+            entryName: data.entry.name ?? null,
+            appId: data.primary?.appId ?? data.apps?.[0]?.id ?? null,
+            config,
+          };
+        }
       }
     } catch {
-      // 网关/源站不可达 → dynamic 透传（fail-open）
+      // 网关/源站不可达 → dynamic + 未绑定（fail-open）
     }
-    const resp = new Response(JSON.stringify({ siteMode: mode }), {
+    const resp = new Response(JSON.stringify({ siteMode, theme }), {
       headers: {
         "content-type": "application/json",
         "cache-control": "public, max-age=60",
       },
     });
     ctx.waitUntil(cache.put(cacheKey, resp));
-    return mode;
+    return { siteMode, theme };
   } catch {
-    return "dynamic";
+    return fallback;
   }
+}
+
+// ---------------------------------------------------------------- 主题层（M14 线二）
+
+const THEME_CONTENT_TYPES = {
+  html: "text/html; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  mjs: "text/javascript; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  ico: "image/x-icon",
+  woff: "font/woff",
+  woff2: "font/woff2",
+  ttf: "font/ttf",
+  map: "application/json; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
+};
+
+/** 主题资源 Content-Type（与 api 侧 themes.themeContentType 同表） */
+function themeContentType(path) {
+  const seg = path.split("/").pop() ?? "";
+  const i = seg.lastIndexOf(".");
+  const ext = i > 0 ? seg.slice(i + 1).toLowerCase() : "";
+  return THEME_CONTENT_TYPES[ext] ?? "application/octet-stream";
+}
+
+/**
+ * 向主题 index.html 注入运行时上下文（契约 §4）：window.__LCDP__ =
+ * { host, entryId, entryName, appId, themeId, version, config, apiBase }。
+ * JSON 做 <>& 转义防 `</script>` 突破；注入点为 <head> 之后（无 head 则置于文首）。
+ */
+function injectThemeContext(html, theme, host) {
+  const payload = {
+    host,
+    entryId: theme.entryId,
+    entryName: theme.entryName,
+    appId: theme.appId,
+    themeId: theme.id,
+    version: theme.version,
+    config: theme.config ?? {},
+    apiBase: API_BASE,
+  };
+  const json = JSON.stringify(payload)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
+  const tag = `<script>window.__LCDP__=${json};</script>`;
+  const m = /<head[^>]*>/i.exec(html);
+  if (m) {
+    return html.slice(0, m.index + m[0].length) + tag + html.slice(m.index + m[0].length);
+  }
+  return tag + html;
+}
+
+/**
+ * 主题分发：命中返回 Response，未命中/不适用返回 null（调用方落回快照/SPA）。
+ * - 精确路径命中主题文件 → 直出（index.html 走注入）；
+ * - `/` 与无扩展名页面路径未命中 → 回退主题 index.html（注入后应答）；
+ * - 文件型路径未命中、或主题 index.html 本身缺失 → null。
+ */
+async function serveTheme(env, theme, url, method) {
+  const prefix = `themes/${theme.id}/${theme.version}/`;
+  const rel = url.pathname.replace(/^\//, "");
+  const respond = async (path, obj, isIndex) => {
+    const headers = new Headers();
+    headers.set("content-type", themeContentType(path));
+    headers.set("x-lcdp-theme", `${theme.id}@${theme.version}`);
+    headers.set("cache-control", "public, max-age=60, s-maxage=300");
+    if (method === "HEAD" || !obj.body) {
+      if (obj.httpEtag) headers.set("etag", obj.httpEtag);
+      return new Response(null, { headers });
+    }
+    if (isIndex) {
+      // 注入后的正文与原 etag 不再对应，不回 etag
+      const html = await obj.text();
+      return new Response(injectThemeContext(html, theme, url.host), { headers });
+    }
+    if (obj.httpEtag) headers.set("etag", obj.httpEtag);
+    return new Response(obj.body, { headers });
+  };
+  const get = (key) =>
+    method === "HEAD" ? env.STATIC_R2.head(key) : env.STATIC_R2.get(key);
+  if (rel) {
+    const obj = await get(prefix + rel);
+    if (obj) return respond(rel, obj, rel === "index.html");
+  }
+  if (!rel || isPagePath(url.pathname)) {
+    const idx = await get(prefix + "index.html");
+    if (idx) return respond("index.html", idx, true);
+  }
+  return null;
 }
 
 function fallbackContentType(pathname) {
@@ -102,13 +276,19 @@ export default {
       const method = request.method.toUpperCase();
       const special =
         url.pathname === "/sitemap.xml" || url.pathname === "/robots.txt";
-      if (
-        (method === "GET" || method === "HEAD") &&
-        env.STATIC_R2 &&
-        (special || isPagePath(url.pathname))
-      ) {
-        const mode = await loadSiteMode(url.host, ctx);
-        if (mode !== "dynamic") {
+      if ((method === "GET" || method === "HEAD") && env.STATIC_R2) {
+        const entryCfg = await loadEntryConfig(url.host, ctx, env);
+        // 1. 主题层（M14 线二）：绑定存在时先行分发，未命中/异常落回下一层
+        if (entryCfg.theme) {
+          try {
+            const themed = await serveTheme(env, entryCfg.theme, url, method);
+            if (themed) return themed;
+          } catch {
+            // 主题层异常 → 落回快照/SPA（fail-open）
+          }
+        }
+        // 2. 快照层（静态化线）：仅页面路径与 sitemap/robots 进入
+        if ((special || isPagePath(url.pathname)) && entryCfg.siteMode !== "dynamic") {
           const key = snapshotKey(
             url.host,
             url.pathname,

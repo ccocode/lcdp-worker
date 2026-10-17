@@ -27,6 +27,7 @@ import {
   TeamOutlined,
   AppstoreOutlined,
   GlobalOutlined,
+  SkinOutlined,
 } from "@ant-design/icons";
 import { api, getStoredUser, storeSession, type UserInfo } from "./api";
 import Overview from "./pages/Overview";
@@ -42,6 +43,7 @@ import Usage from "./pages/Usage";
 import ConfigPage from "./pages/ConfigPage";
 import Switches from "./pages/Switches";
 import Sites from "./pages/Sites";
+import Themes from "./pages/Themes";
 
 const { Header, Sider, Content } = Layout;
 
@@ -58,7 +60,8 @@ type PageKey =
   | "usage"
   | "config"
   | "switches"
-  | "sites";
+  | "sites"
+  | "themes";
 
 const MENU: { key: PageKey; label: string; icon: React.ReactNode }[] = [
   { key: "overview", label: "概览", icon: <DashboardOutlined /> },
@@ -74,6 +77,7 @@ const MENU: { key: PageKey; label: string; icon: React.ReactNode }[] = [
   { key: "config", label: "系统配置", icon: <SettingOutlined /> },
   { key: "switches", label: "熔断与配额", icon: <StopOutlined /> },
   { key: "sites", label: "入口与站点", icon: <GlobalOutlined /> },
+  { key: "themes", label: "主题管理", icon: <SkinOutlined /> },
 ];
 
 function pageFromPath(): PageKey {
@@ -237,6 +241,7 @@ export default function App() {
           {page === "config" && <ConfigPage />}
           {page === "switches" && <Switches />}
           {page === "sites" && <Sites />}
+          {page === "themes" && <Themes />}
         </Content>
       </Layout>
     </Layout>

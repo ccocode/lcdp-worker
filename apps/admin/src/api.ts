@@ -28,6 +28,14 @@ export type Row = Record<string, unknown>;
 
 /** 运行入口（静态化线）：站点级装配与运行模式 */
 export type SiteMode = "dynamic" | "pseudo" | "static";
+
+/** 主题绑定指针（M14 线二）：入口 config.theme 的形状，无绑定为 null */
+export interface ThemePointer {
+  id: string;
+  version: string;
+  values: Record<string, unknown>;
+}
+
 export interface EntryView {
   id: string;
   name: string;
@@ -35,6 +43,8 @@ export interface EntryView {
   appIds: string[];
   isDefault: boolean;
   siteMode: SiteMode;
+  /** 主题绑定（M14 线二）：{id, version, values} 或 null */
+  theme: ThemePointer | null;
   config: Record<string, unknown>;
 }
 
@@ -61,6 +71,65 @@ export interface StaticSiteStatus {
 export interface PageResult<T> {
   rows: T[];
   total: number;
+}
+
+/** 主题清单里的可配置项声明（主题页 values 表单按此渲染） */
+export interface ThemeConfigItem {
+  key: string;
+  label: string;
+  type: "text" | "textarea" | "image" | "color";
+  default?: string;
+}
+
+/** 主题版本清单（theme.json 的服务端回显形状） */
+export interface ThemeManifestView {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  config?: ThemeConfigItem[];
+  preview?: string;
+}
+
+export interface ThemeVersionView {
+  version: string;
+  manifest: ThemeManifestView;
+  fileCount: number;
+  totalBytes: number;
+  createdBy: string | null;
+  createdAt: string | null;
+}
+
+export interface ThemeBoundEntry {
+  entryId: string;
+  entryName: string;
+  hosts: string[];
+  version: string;
+}
+
+/** 主题（GET /admin/themes 的行形状：主题 + 版本 + 当前绑定入口） */
+export interface ThemeItem {
+  id: string;
+  name: string;
+  description: string | null;
+  versions: ThemeVersionView[];
+  boundEntries: ThemeBoundEntry[];
+}
+
+export interface ThemeUploadResult {
+  themeId: string;
+  version: string;
+  fileCount: number;
+  totalBytes: number;
+}
+
+/** 主题上传校验失败：problems 为服务端逐项原因（契约 §1 校验清单） */
+export class ThemeUploadError extends Error {
+  problems: string[];
+  constructor(message: string, problems: string[]) {
+    super(message);
+    this.problems = problems;
+  }
 }
 
 export function getToken(): string | null {
@@ -245,15 +314,51 @@ export const api = {
       const res = await apiFetch<{ entries: EntryView[] }>("/admin/entries");
       return res.entries;
     },
+    /** siteMode 与 theme 指针同居入口 config、互不覆盖：只传要改的那一项 */
     async update(
       id: string,
-      body: { siteMode: SiteMode },
+      body: { siteMode?: SiteMode; theme?: ThemePointer | null },
     ): Promise<EntryView> {
       const res = await apiFetch<{ entry: EntryView }>(
         `/admin/entries/${encodeURIComponent(id)}`,
         { method: "PUT", body: JSON.stringify(body) },
       );
       return res.entry;
+    },
+  },
+
+  themes: {
+    async list(): Promise<ThemeItem[]> {
+      const res = await apiFetch<{ themes: ThemeItem[] }>("/admin/themes");
+      return res.themes;
+    },
+    /** multipart 上传主题包 zip：校验失败抛 ThemeUploadError（带逐项 problems） */
+    async upload(file: File): Promise<ThemeUploadResult> {
+      const token = getToken();
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await fetch(`${API_BASE}/admin/themes`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: fd,
+      });
+      const body = (await res.json().catch(() => null)) as
+        | (Record<string, unknown> & {
+            message?: string;
+            error?: string;
+            problems?: unknown;
+          })
+        | null;
+      if (!res.ok) {
+        const problems = Array.isArray(body?.problems)
+          ? body.problems.filter((p): p is string => typeof p === "string")
+          : [];
+        throw new ThemeUploadError(
+          body?.message ?? body?.error ?? `上传失败 (${res.status})`,
+          problems,
+        );
+      }
+      return body as unknown as ThemeUploadResult;
     },
   },
 
