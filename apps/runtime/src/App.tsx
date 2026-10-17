@@ -28,29 +28,39 @@ import type { DataSchema, PageSchema } from "@naka1205/schema";
 import type {
   AppInfo,
   AssistantContext,
+  CenterSession,
   EntryResult,
   MemberAdapterHooks,
   MemberAuthResult,
   MemberPolicy,
   MemberSession,
+  MemberSsoInfo,
   PublicEntryResult,
   Snapshot,
+  SsoConsentItem,
   UserInfo,
 } from "./api.js";
 import AssistantPanel from "./AssistantPanel.js";
 import SupportWidget, { SupportAutoMount } from "./SupportWidget.js";
 import {
   EMPTY_MEMBER_POLICY,
+  SSO_APP_KEY,
+  SSO_RETURN_KEY,
+  SSO_STATE_KEY,
   api,
+  beginSsoAuthorize,
   confirmSandboxPayment,
   fetchSandboxPaymentStatus,
   getStoredUser,
+  loadCenterSession,
   loadMemberSession,
   makeAdapter,
   makeMemberAdapter,
   makePublicAdapter,
   memberApi,
   simulateMemberPayment,
+  ssoApi,
+  storeCenterSession,
   storeMemberSession,
   storeSession,
 } from "./api.js";
@@ -330,6 +340,15 @@ function AnonGate({
   const anonSupport = (
     <SupportAutoMount appIds={(pub?.apps ?? []).map((a) => a.id)} />
   );
+  // 会员 SSO 回调（外壳级内置路由）：与入口装配无关，优先于公开外壳/登录页判定
+  if (route.path === "/sso/callback") {
+    return <SsoCallbackPage params={route.params} />;
+  }
+  // 会员中心入口（account 子域，entry.kind = "member-center"）：渲染平台内置
+  // 中心页组（登录/注册/授权确认/我的授权），不走应用外壳与员工登录页
+  if (pub?.entry?.kind === "member-center") {
+    return <MemberCenterApp route={route} />;
+  }
   if (
     primary &&
     primary.pages.length > 0 &&
@@ -344,6 +363,7 @@ function AnonGate({
           params={route.params}
           device={device}
           onLogin={() => setShowLogin(true)}
+          memberSso={pub?.memberSso ?? null}
         />
         {anonSupport}
       </>
@@ -354,6 +374,840 @@ function AnonGate({
       <LoginView onLoggedIn={onLoggedIn} />
       {anonSupport}
     </>
+  );
+}
+
+/* ---------- 会员 SSO：回调页与会员中心页组（平台内置页，不走应用 PageSchema） ---------- */
+
+/** 授权完成后的回跳地址：redirectUri 已由服务端校验，这里只附加 code/state */
+function ssoRedirectBack(
+  redirectUri: string,
+  code: string,
+  state?: string,
+): string {
+  const u = new URL(redirectUri);
+  u.searchParams.set("code", code);
+  if (state) u.searchParams.set("state", state);
+  return u.toString();
+}
+
+/**
+ * SSO 回调页（应用源 /sso/callback，外壳级内置路由）：校验 state 与发起时
+ * 暂存值一致 → 码换令牌 → 写入与本地登录同一会话位（lcdp.member.<host>）
+ * → 整页跳回原页面，外壳按新会话重新装配。任何不符都停在报错卡，
+ * 不落半成品会话；授权码单次使用，本页只在挂载时执行一次。
+ */
+function SsoCallbackPage({ params }: { params: Record<string, string> }) {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const code = params.code ?? "";
+      const state = params.state ?? "";
+      const wantState = sessionStorage.getItem(SSO_STATE_KEY);
+      const appId = sessionStorage.getItem(SSO_APP_KEY);
+      const returnTo = sessionStorage.getItem(SSO_RETURN_KEY) || "/";
+      sessionStorage.removeItem(SSO_STATE_KEY);
+      sessionStorage.removeItem(SSO_APP_KEY);
+      sessionStorage.removeItem(SSO_RETURN_KEY);
+      if (!code || !appId) {
+        if (alive) setError("授权回调参数不完整，请返回原页面重新登录。");
+        return;
+      }
+      if (!state || !wantState || state !== wantState) {
+        if (alive) setError("授权状态校验失败（state 不一致），请重新登录。");
+        return;
+      }
+      try {
+        const res = await ssoApi.exchange({ code, appId });
+        const session: MemberSession = {
+          token: res.token,
+          member: res.member,
+          policy: res.policy,
+          appId,
+        };
+        storeMemberSession(window.location.host, session);
+        window.location.replace(returnTo);
+      } catch (err) {
+        if (alive) {
+          setError(
+            `登录未完成：${err instanceof Error ? err.message : String(err)}。授权码可能已过期，请重新登录。`,
+          );
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // 仅挂载执行一次（授权码单次使用，禁止重跑）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#f5f5f5",
+        padding: 16,
+      }}
+    >
+      <Card style={{ width: 380, maxWidth: "100%" }}>
+        {error ? (
+          <>
+            <Alert
+              type="error"
+              message="会员登录失败"
+              description={error}
+              style={{ marginBottom: 16 }}
+            />
+            <Button block onClick={() => window.location.replace("/")}>
+              回到首页
+            </Button>
+          </>
+        ) : (
+          <div style={{ textAlign: "center", padding: "24px 0" }}>
+            <Spin size="large" tip="正在完成登录…" />
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/** 会员中心页组外框（简洁内置页，呈现治理不在本期范围） */
+function CenterFrame({
+  subtitle,
+  children,
+}: {
+  subtitle: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#f5f5f5",
+        padding: 16,
+      }}
+    >
+      <Card style={{ width: 400, maxWidth: "100%" }}>
+        <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
+          会员中心
+        </Typography.Title>
+        <Typography.Paragraph
+          type="secondary"
+          style={{ fontSize: 13, marginBottom: 16 }}
+        >
+          {subtitle}
+        </Typography.Paragraph>
+        {children}
+      </Card>
+    </div>
+  );
+}
+
+/** 授权流参数（app/redirect_uri/state）在中心页间的透传路径 */
+function centerPath(
+  page: "login" | "register" | "authorize",
+  appId: string,
+  redirectUri: string,
+  state?: string,
+): string {
+  const qs = new URLSearchParams({ app: appId, redirect_uri: redirectUri });
+  if (state) qs.set("state", state);
+  return `/${page}?${qs.toString()}`;
+}
+
+/**
+ * 会员中心（account 子域内置页组）：/authorize 授权判定与确认、/login 中心
+ * 登录、/register 注册（复用 member 注册端点）、/consents 我的授权。
+ * 中心会话存 account 域 localStorage（lcdp.memberCenter），令牌
+ * aud='member-center'、与各应用会话互不通用。
+ */
+function MemberCenterApp({ route }: { route: Route }) {
+  const appId = route.params.app ?? "";
+  const redirectUri = route.params.redirect_uri ?? "";
+  const state = route.params.state;
+  if (route.path === "/login") {
+    return (
+      <CenterLoginPage appId={appId} redirectUri={redirectUri} state={state} />
+    );
+  }
+  if (route.path === "/register") {
+    return (
+      <CenterRegisterPage
+        appId={appId}
+        redirectUri={redirectUri}
+        state={state}
+      />
+    );
+  }
+  if (route.path === "/authorize") {
+    return (
+      <CenterAuthorizePage
+        appId={appId}
+        redirectUri={redirectUri}
+        state={state}
+      />
+    );
+  }
+  // /consents 与中心根路径：授权管理（无会话时呈登录引导）
+  return <CenterConsentsPage />;
+}
+
+function CenterLoginPage({
+  appId,
+  redirectUri,
+  state,
+}: {
+  appId: string;
+  redirectUri: string;
+  state?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** 连错后服务端要求图形验证码 → 展开验证码行（与本地登录同一策略） */
+  const [needCaptcha, setNeedCaptcha] = useState(false);
+  const [form] = Form.useForm<{
+    identifier: string;
+    password: string;
+    captchaCode?: string;
+  }>();
+  const captcha = useMemberCaptcha(appId, Boolean(appId) && needCaptcha);
+
+  // 已有中心会话且带着授权参数 → 直接续跑授权，不重复登录
+  useEffect(() => {
+    if (appId && redirectUri && loadCenterSession()) {
+      navigateTo(centerPath("authorize", appId, redirectUri, state));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!appId) {
+    return (
+      <CenterFrame subtitle="统一会员账号登录">
+        <Alert
+          type="info"
+          message="请从要访问的应用进入登录"
+          description="会员中心不单独提供登录入口：在任一应用点击「会员登录」即可来到这里，登录一次后访问其他应用不再重复输入密码。"
+        />
+      </CenterFrame>
+    );
+  }
+
+  const submit = async (v: {
+    identifier: string;
+    password: string;
+    captchaCode?: string;
+  }) => {
+    const captchaCode = (v.captchaCode ?? "").trim();
+    if (needCaptcha && (!captcha.captcha || !captchaCode)) {
+      setError("请输入图形验证码");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await ssoApi.centerLogin({
+        appId,
+        identifier: v.identifier.trim(),
+        password: v.password,
+        ...(needCaptcha && captcha.captcha
+          ? { captchaId: captcha.captcha.id, captchaCode }
+          : {}),
+      });
+      storeCenterSession({ token: res.token, member: res.member });
+      if (redirectUri) {
+        navigateTo(centerPath("authorize", appId, redirectUri, state));
+      } else {
+        navigateTo("/consents");
+      }
+    } catch (err) {
+      const code = memberErrorCode(err);
+      if (code === "captcha_required") {
+        setNeedCaptcha(true);
+        setError("登录失败次数较多，请输入图形验证码后重试");
+      } else if (code === "captcha_invalid") {
+        form.setFieldValue("captchaCode", "");
+        void captcha.refresh();
+        setError(memberErrorText(err));
+      } else {
+        setError(memberErrorText(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <CenterFrame subtitle="登录一次，通行已接入的全部应用">
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+      )}
+      <Form form={form} layout="vertical" onFinish={(v) => void submit(v)}>
+        <Form.Item
+          label="标识（手机号 / 邮箱 / 用户名）"
+          name="identifier"
+          rules={[{ required: true, message: "请输入账号标识" }]}
+        >
+          <Input autoComplete="username" />
+        </Form.Item>
+        <Form.Item
+          label="密码"
+          name="password"
+          rules={[{ required: true, message: "请输入密码" }]}
+        >
+          <Input.Password autoComplete="current-password" />
+        </Form.Item>
+        {needCaptcha && (
+          <CaptchaRow
+            captcha={captcha.captcha}
+            onRefresh={() => void captcha.refresh()}
+          />
+        )}
+        <Button type="primary" htmlType="submit" block loading={busy}>
+          登录
+        </Button>
+      </Form>
+      <div style={{ marginTop: 12, textAlign: "center" }}>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          还没有账号？
+        </Typography.Text>
+        <Button
+          type="link"
+          size="small"
+          onClick={() =>
+            navigateTo(centerPath("register", appId, redirectUri, state))
+          }
+        >
+          注册
+        </Button>
+      </div>
+    </CenterFrame>
+  );
+}
+
+function CenterRegisterPage({
+  appId,
+  redirectUri,
+  state,
+}: {
+  appId: string;
+  redirectUri: string;
+  state?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  /** 邮件未配置的降级提示（出现后邮箱验证码非必填，服务端同口径） */
+  const [mailHint, setMailHint] = useState<string | null>(null);
+  const [form] = Form.useForm<{
+    identifier: string;
+    password: string;
+    displayName?: string;
+    captchaCode?: string;
+    emailCode?: string;
+  }>();
+  const captcha = useMemberCaptcha(appId, Boolean(appId));
+  const countdown = useEmailCountdown();
+
+  if (!appId) {
+    return (
+      <CenterFrame subtitle="注册会员账号">
+        <Alert
+          type="info"
+          message="请从要访问的应用进入注册"
+          description="注册归属的会员域由来源应用决定：在任一应用点击「注册」即可来到这里。"
+        />
+      </CenterFrame>
+    );
+  }
+
+  const continueFlow = () => {
+    if (redirectUri) {
+      navigateTo(centerPath("authorize", appId, redirectUri, state));
+    } else {
+      navigateTo("/consents");
+    }
+  };
+
+  /** 发送邮箱验证码：先过图形验证码（与本地注册同一端点、同一口径） */
+  const sendEmailCode = async () => {
+    setError(null);
+    setNotice(null);
+    const identifier =
+      (form.getFieldValue("identifier") as string | undefined)?.trim() ?? "";
+    const captchaCode =
+      (form.getFieldValue("captchaCode") as string | undefined)?.trim() ?? "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)) {
+      setError("请先填写邮箱形态的账号标识");
+      return;
+    }
+    if (!captcha.captcha || !captchaCode) {
+      setError("请先填写图形验证码");
+      return;
+    }
+    try {
+      await memberApi.sendMemberEmailCode(appId, {
+        email: identifier,
+        captchaId: captcha.captcha.id,
+        captchaCode,
+      });
+      countdown.start();
+      setMailHint(null);
+      setNotice("邮箱验证码已发送，请查收");
+      // 图形码已被本次发送消费：刷新一张供注册提交使用
+      form.setFieldValue("captchaCode", "");
+      void captcha.refresh();
+    } catch (err) {
+      const code = memberErrorCode(err);
+      if (code === "mail_not_configured") {
+        setMailHint("邮件服务未配置：邮箱验证码暂不强制，可直接注册");
+      } else if (code === "captcha_invalid") {
+        form.setFieldValue("captchaCode", "");
+        void captcha.refresh();
+        setError(memberErrorText(err));
+      } else {
+        setError(memberErrorText(err));
+      }
+    }
+  };
+
+  const submit = async (v: {
+    identifier: string;
+    password: string;
+    displayName?: string;
+    captchaCode?: string;
+    emailCode?: string;
+  }) => {
+    const captchaCode = (v.captchaCode ?? "").trim();
+    if (!captcha.captcha || !captchaCode) {
+      setError("请输入图形验证码");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await memberApi.register(appId, {
+        identifier: v.identifier.trim(),
+        password: v.password,
+        ...(v.displayName?.trim()
+          ? { displayName: v.displayName.trim() }
+          : {}),
+        captchaId: captcha.captcha.id,
+        captchaCode,
+        ...(v.emailCode?.trim() ? { emailCode: v.emailCode.trim() } : {}),
+      });
+      // 注册成功即以同一凭据换中心令牌（注册端点回的是应用令牌，中心不落它）
+      const center = await ssoApi.centerLogin({
+        appId,
+        identifier: v.identifier.trim(),
+        password: v.password,
+      });
+      storeCenterSession({ token: center.token, member: center.member });
+      continueFlow();
+    } catch (err) {
+      const code = memberErrorCode(err);
+      if (code === "captcha_invalid") {
+        form.setFieldValue("captchaCode", "");
+        void captcha.refresh();
+      }
+      setError(memberErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <CenterFrame subtitle="注册后即可通行已接入的全部应用">
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+      )}
+      {notice && (
+        <Alert type="success" message={notice} style={{ marginBottom: 16 }} />
+      )}
+      <Form form={form} layout="vertical" onFinish={(v) => void submit(v)}>
+        <Form.Item
+          label="标识（手机号 / 邮箱 / 用户名）"
+          name="identifier"
+          rules={[
+            { required: true, message: "请输入账号标识" },
+            { min: 3, message: "标识至少 3 个字符" },
+          ]}
+        >
+          <Input autoComplete="username" />
+        </Form.Item>
+        <Form.Item label="昵称（选填）" name="displayName">
+          <Input placeholder="站内显示名，缺省用标识" />
+        </Form.Item>
+        <Form.Item
+          label="密码"
+          name="password"
+          rules={[
+            { required: true, message: "请输入密码" },
+            { min: 8, message: "密码至少 8 位" },
+          ]}
+        >
+          <Input.Password autoComplete="new-password" />
+        </Form.Item>
+        <CaptchaRow
+          captcha={captcha.captcha}
+          onRefresh={() => void captcha.refresh()}
+        />
+        <EmailCodeRow
+          onSend={() => void sendEmailCode()}
+          sendDisabled={busy || countdown.seconds > 0}
+          sendText={
+            countdown.seconds > 0
+              ? `${countdown.seconds} 秒后重发`
+              : "发送验证码"
+          }
+        />
+        <CodeHint text={mailHint} tone="secondary" />
+        <Button type="primary" htmlType="submit" block loading={busy}>
+          注册并登录
+        </Button>
+      </Form>
+      <div style={{ marginTop: 12, textAlign: "center" }}>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          已有账号？
+        </Typography.Text>
+        <Button
+          type="link"
+          size="small"
+          onClick={() =>
+            navigateTo(centerPath("login", appId, redirectUri, state))
+          }
+        >
+          登录
+        </Button>
+      </div>
+    </CenterFrame>
+  );
+}
+
+function CenterAuthorizePage({
+  appId,
+  redirectUri,
+  state,
+}: {
+  appId: string;
+  redirectUri: string;
+  state?: string;
+}) {
+  const [session] = useState<CenterSession | null>(() => loadCenterSession());
+  const [phase, setPhase] = useState<"checking" | "consent" | "error">(
+    "checking",
+  );
+  const [appName, setAppName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const getToken = useCallback(
+    () => loadCenterSession()?.token ?? null,
+    [],
+  );
+  const toLogin = useCallback(() => {
+    navigateTo(centerPath("login", appId, redirectUri, state));
+  }, [appId, redirectUri, state]);
+
+  useEffect(() => {
+    if (!appId || !redirectUri) {
+      setPhase("error");
+      setError("授权参数不完整，请从应用重新进入登录。");
+      return;
+    }
+    if (!loadCenterSession()) {
+      toLogin();
+      return;
+    }
+    let alive = true;
+    ssoApi
+      .authorize(getToken, { appId, redirectUri, state }, () =>
+        storeCenterSession(null),
+      )
+      .then((res) => {
+        if (!alive) return;
+        if (res.code) {
+          window.location.assign(ssoRedirectBack(redirectUri, res.code, state));
+          return;
+        }
+        if (res.consentRequired) {
+          setAppName(res.appName ?? appId);
+          setPhase("consent");
+          return;
+        }
+        setPhase("error");
+        setError("授权应答异常，请从应用重新进入登录。");
+      })
+      .catch((err) => {
+        if (!alive) return;
+        if ((err as { status?: number }).status === 401) {
+          toLogin();
+          return;
+        }
+        setPhase("error");
+        setError(memberErrorText(err));
+      });
+    return () => {
+      alive = false;
+    };
+    // 仅挂载时判定一次（发码后即整页跳走，禁止重跑）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const confirm = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await ssoApi.consent(
+        getToken,
+        { appId, redirectUri, state },
+        () => storeCenterSession(null),
+      );
+      window.location.assign(ssoRedirectBack(redirectUri, res.code, state));
+    } catch (err) {
+      if ((err as { status?: number }).status === 401) {
+        toLogin();
+        return;
+      }
+      setError(memberErrorText(err));
+      setBusy(false);
+    }
+  };
+
+  const cancel = () => {
+    // 取消授权：回应用站点首页（不带码，应用保持未登录态）
+    try {
+      window.location.assign(`${new URL(redirectUri).origin}/`);
+    } catch {
+      window.location.assign("/");
+    }
+  };
+
+  if (phase === "checking") {
+    return (
+      <CenterFrame subtitle="正在确认授权…">
+        <div style={{ textAlign: "center", padding: "16px 0" }}>
+          <Spin tip="正在确认授权…" />
+        </div>
+      </CenterFrame>
+    );
+  }
+  if (phase === "error") {
+    return (
+      <CenterFrame subtitle="授权未完成">
+        <Alert type="error" message={error ?? "授权失败，请重试"} />
+      </CenterFrame>
+    );
+  }
+  return (
+    <CenterFrame subtitle="应用授权确认">
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+      )}
+      <Typography.Paragraph>
+        应用「<Typography.Text strong>{appName}</Typography.Text>
+        」请求使用你的会员账号登录。授权后，该应用将获得你的基本身份信息：
+      </Typography.Paragraph>
+      <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
+        <Descriptions.Item label="共享信息">
+          昵称、账号标识、头像（如有）
+        </Descriptions.Item>
+        <Descriptions.Item label="当前账号">
+          {session?.member.displayName || session?.member.identifier || "—"}
+          {session?.member.displayName && (
+            <Typography.Text type="secondary">
+              {`（${session.member.identifier}）`}
+            </Typography.Text>
+          )}
+        </Descriptions.Item>
+      </Descriptions>
+      <Space direction="vertical" style={{ width: "100%" }} size={8}>
+        <Button type="primary" block loading={busy} onClick={() => void confirm()}>
+          授权并继续
+        </Button>
+        <Button block onClick={cancel}>
+          取消
+        </Button>
+      </Space>
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
+      >
+        授权后再次访问该应用将不再询问；可在会员中心「我的授权」中随时撤销。
+      </Typography.Paragraph>
+    </CenterFrame>
+  );
+}
+
+function CenterConsentsPage() {
+  const [session, setSession] = useState<CenterSession | null>(() =>
+    loadCenterSession(),
+  );
+  const [items, setItems] = useState<SsoConsentItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyApp, setBusyApp] = useState<string | null>(null);
+  const getToken = useCallback(() => loadCenterSession()?.token ?? null, []);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await ssoApi.consents(getToken, () =>
+        storeCenterSession(null),
+      );
+      setItems(res.consents);
+    } catch (err) {
+      if ((err as { status?: number }).status === 401) {
+        setSession(null);
+        return;
+      }
+      setError(memberErrorText(err));
+    }
+  }, [getToken]);
+
+  // 进页校验中心会话（简档刷新 + 失效即清），随后拉授权列表
+  useEffect(() => {
+    if (!session) return;
+    let alive = true;
+    ssoApi
+      .centerMe(getToken, () => storeCenterSession(null))
+      .then((res) => {
+        if (!alive) return;
+        const token = loadCenterSession()?.token;
+        if (token) {
+          const next = { token, member: res.member };
+          storeCenterSession(next);
+          setSession(next);
+        }
+        void load();
+      })
+      .catch(() => {
+        if (alive && !loadCenterSession()) setSession(null);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const revoke = async (appId: string) => {
+    setBusyApp(appId);
+    setError(null);
+    try {
+      await ssoApi.revokeConsent(getToken, appId, () =>
+        storeCenterSession(null),
+      );
+      notify("已撤销授权，下次访问该应用将重新确认");
+      await load();
+    } catch (err) {
+      if ((err as { status?: number }).status === 401) {
+        setSession(null);
+        return;
+      }
+      setError(memberErrorText(err));
+    } finally {
+      setBusyApp(null);
+    }
+  };
+
+  const logout = () => {
+    storeCenterSession(null);
+    setSession(null);
+    setItems(null);
+    notify("已退出会员中心");
+  };
+
+  if (!session) {
+    return (
+      <CenterFrame subtitle="我的授权">
+        <Alert
+          type="info"
+          message="尚未登录会员中心"
+          description="请从要访问的应用点击「会员登录」进入：登录后可在此查看与撤销各应用的授权。"
+        />
+      </CenterFrame>
+    );
+  }
+
+  return (
+    <CenterFrame subtitle="我的授权">
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 12,
+        }}
+      >
+        <Typography.Text>
+          {session.member.displayName || session.member.identifier}
+          {session.member.displayName && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {`（${session.member.identifier}）`}
+            </Typography.Text>
+          )}
+        </Typography.Text>
+        <Button size="small" onClick={logout}>
+          退出
+        </Button>
+      </div>
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+      )}
+      {items === null ? (
+        <div style={{ textAlign: "center", padding: "12px 0" }}>
+          <Spin />
+        </div>
+      ) : items.length === 0 ? (
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          暂无授权记录。访问应用并确认授权后，记录会出现在这里。
+        </Typography.Paragraph>
+      ) : (
+        <Space direction="vertical" style={{ width: "100%" }} size={8}>
+          {items.map((it) => (
+            <Card key={it.appId} size="small">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <div>
+                  <Typography.Text strong>{it.appName}</Typography.Text>
+                  <br />
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    授权于{" "}
+                    {it.grantedAt
+                      ? new Date(it.grantedAt).toLocaleString()
+                      : "—"}
+                  </Typography.Text>
+                </div>
+                <Button
+                  danger
+                  size="small"
+                  loading={busyApp === it.appId}
+                  onClick={() => void revoke(it.appId)}
+                >
+                  撤销
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </Space>
+      )}
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
+      >
+        撤销后，该应用下次登录将重新请求授权；已登录的会话按其有效期自然过期。
+      </Typography.Paragraph>
+    </CenterFrame>
   );
 }
 
@@ -1800,12 +2654,15 @@ function PublicShell({
   params,
   device,
   onLogin,
+  memberSso,
 }: {
   primary: NonNullable<PublicEntryResult["primary"]>;
   inPath: string;
   params: Record<string, string>;
   device: Device;
   onLogin: () => void;
+  /** 会员 SSO 开关（/public/entry 下发）：enabled 时会员登录入口改走会员中心授权流 */
+  memberSso?: MemberSsoInfo | null;
 }) {
   const goPage = useCallback((to: string) => {
     navigateTo(to);
@@ -1877,9 +2734,27 @@ function PublicShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [primary.appId]);
 
-  const openAuth = useCallback((tab: "login" | "register") => {
-    setAuthModal({ open: true, tab });
-  }, []);
+  /**
+   * 会员登录/注册的统一入口（页眉、导航守卫、会员页占位、收银台、组件钩子
+   * 全部经此）：SSO 启用时整页跳会员中心授权流（回跳路径 = 当前页），
+   * 未启用/未下发时打开本地弹窗——行为与原实现一字不变。
+   */
+  const openAuth = useCallback(
+    (tab: "login" | "register") => {
+      if (memberSso?.enabled && memberSso.centerBase) {
+        window.location.assign(
+          beginSsoAuthorize(
+            memberSso.centerBase,
+            primary.appId,
+            window.location.pathname + window.location.search,
+          ),
+        );
+        return;
+      }
+      setAuthModal({ open: true, tab });
+    },
+    [memberSso, primary.appId],
+  );
 
   /**
    * 商城线会员钩子：公开页上的组件（CartView）借此判定会员会话、拉起登录弹窗、

@@ -390,10 +390,94 @@ export function storeMemberSession(
   }
 }
 
+/* ---------- 会员 SSO（授权流）：中心会话与跳转流暂存 ---------- */
+
+/**
+ * 会员中心会话（account 域 localStorage `lcdp.memberCenter`）：令牌为
+ * aud='member-center' 的专用令牌，只在会员中心页组使用，与各应用的
+ * 会员会话（lcdp.member.<host>）互不通用、互不覆盖。
+ */
+export interface CenterSession {
+  token: string;
+  member: MemberInfo;
+}
+
+const CENTER_SESSION_KEY = "lcdp.memberCenter";
+
+export function loadCenterSession(): CenterSession | null {
+  try {
+    const raw = localStorage.getItem(CENTER_SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as CenterSession;
+    if (!s || typeof s.token !== "string" || !s.member) return null;
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+export function storeCenterSession(session: CenterSession | null): void {
+  if (session) {
+    localStorage.setItem(CENTER_SESSION_KEY, JSON.stringify(session));
+  } else {
+    localStorage.removeItem(CENTER_SESSION_KEY);
+  }
+}
+
+/** SSO 跳转流在应用源 sessionStorage 的暂存键（state/回跳路径/应用；回调校验后即清） */
+export const SSO_STATE_KEY = "lcdp.sso.state";
+export const SSO_RETURN_KEY = "lcdp.sso.return";
+export const SSO_APP_KEY = "lcdp.sso.app";
+
+function randomState(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * 发起 SSO 授权流：暂存 state（回调防伪校验）、回跳路径与应用 id，
+ * 返回会员中心授权页 URL，调用方整页跳转（window.location.assign）。
+ * 授权完成后中心把浏览器带回 `<本源>/sso/callback?code&state`。
+ */
+export function beginSsoAuthorize(
+  centerBase: string,
+  appId: string,
+  returnTo: string,
+): string {
+  const state = randomState();
+  try {
+    sessionStorage.setItem(SSO_STATE_KEY, state);
+    sessionStorage.setItem(SSO_RETURN_KEY, returnTo);
+    sessionStorage.setItem(SSO_APP_KEY, appId);
+  } catch {
+    // sessionStorage 不可用（隐私模式等）：回调将因缺 state 报错并引导重登
+  }
+  const qs = new URLSearchParams({
+    app: appId,
+    redirect_uri: `${window.location.origin}/sso/callback`,
+    state,
+  });
+  return `${centerBase.replace(/\/$/, "")}/authorize?${qs.toString()}`;
+}
+
+/** 会员 SSO 下发信息（/public/entry.memberSso）：enabled 时登录入口改走会员中心授权流 */
+export interface MemberSsoInfo {
+  enabled: boolean;
+  centerBase: string;
+}
+
 /** 公开（匿名）入口解析结果：primary 为入口首个应用的公开面（无公开页时为 null） */
 export interface PublicEntryResult {
-  entry: { id: string; name: string } | null;
+  entry: {
+    id: string;
+    name: string;
+    /** 平台内置入口标记（如 "member-center" 会员中心）；普通入口 null/缺省 */
+    kind?: string | null;
+  } | null;
   apps: AppInfo[];
+  /** 会员 SSO 开关（主应用会员域命中启用清单时 enabled；缺省视为未启用） */
+  memberSso?: MemberSsoInfo;
   primary: {
     appId: string;
     name: string;
@@ -542,6 +626,115 @@ function memberListSuffix(params?: {
   const s = qs.toString();
   return s ? `?${s}` : "";
 }
+
+/** 授权记录（会员中心「我的授权」）：应用与授权时间，撤销后不再出现 */
+export interface SsoConsentItem {
+  appId: string;
+  appName: string;
+  grantedAt: string | null;
+}
+
+/** authorize 应答：已授权回 { code }；未授权回 { consentRequired, appId, appName } */
+export interface SsoAuthorizeResult {
+  code?: string;
+  consentRequired?: boolean;
+  appId?: string;
+  appName?: string;
+}
+
+/**
+ * 会员 SSO 客户端（授权流）：中心端点组 /member/sso/*。
+ * centerLogin/exchange 无令牌（凭据/授权码即凭据）；其余带中心令牌
+ * （aud='member-center'），401 时回调让中心页清会话回登录。
+ */
+export const ssoApi = {
+  /** 中心登录：由 appId 推导会员域、复用 member 登录校验（含连错验证码策略），回中心令牌 + 简档 */
+  async centerLogin(body: {
+    appId: string;
+    identifier: string;
+    password: string;
+    captchaId?: string;
+    captchaCode?: string;
+  }): Promise<CenterSession> {
+    return memberFetch<CenterSession>("/member/sso/center-login", () => null, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  /** 中心会话简档（校验中心令牌有效性与会员状态） */
+  async centerMe(
+    getToken: () => string | null,
+    onUnauthorized?: () => void,
+  ): Promise<{ member: MemberInfo }> {
+    return memberFetch<{ member: MemberInfo }>(
+      "/member/sso/center-me",
+      getToken,
+      undefined,
+      onUnauthorized,
+    );
+  },
+  /** 授权判定：已授权直接发码；未授权回 consentRequired + 应用展示名（不发码） */
+  async authorize(
+    getToken: () => string | null,
+    body: { appId: string; redirectUri: string; state?: string },
+    onUnauthorized?: () => void,
+  ): Promise<SsoAuthorizeResult> {
+    return memberFetch<SsoAuthorizeResult>(
+      "/member/sso/authorize",
+      getToken,
+      { method: "POST", body: JSON.stringify(body) },
+      onUnauthorized,
+    );
+  },
+  /** 确认授权：落授权记录并发码 */
+  async consent(
+    getToken: () => string | null,
+    body: { appId: string; redirectUri: string; state?: string },
+    onUnauthorized?: () => void,
+  ): Promise<{ code: string }> {
+    return memberFetch<{ code: string }>(
+      "/member/sso/consent",
+      getToken,
+      { method: "POST", body: JSON.stringify(body) },
+      onUnauthorized,
+    );
+  },
+  /** 码换令牌：回该应用的会员令牌 + 简档 + 策略（与本地登录同形状） */
+  async exchange(body: {
+    code: string;
+    appId: string;
+  }): Promise<MemberAuthResult> {
+    return memberFetch<MemberAuthResult>("/member/sso/exchange", () => null, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  /** 我的授权（未撤销）列表 */
+  async consents(
+    getToken: () => string | null,
+    onUnauthorized?: () => void,
+  ): Promise<{ consents: SsoConsentItem[] }> {
+    return memberFetch<{ consents: SsoConsentItem[] }>(
+      "/member/sso/consents",
+      getToken,
+      undefined,
+      onUnauthorized,
+    );
+  },
+  /** 撤销对某应用的授权（阻断后续静默换发；已发令牌自然过期） */
+  async revokeConsent(
+    getToken: () => string | null,
+    appId: string,
+    onUnauthorized?: () => void,
+  ): Promise<{ ok: boolean }> {
+    return memberFetch<{ ok: boolean }>(
+      `/member/sso/consents/${encodeURIComponent(appId)}`,
+      getToken,
+      { method: "DELETE" },
+      onUnauthorized,
+    );
+  },
+};
 
 /**
  * 会员客户端（会员试点）：账号端点（register/login 无令牌、me 带令牌）与
