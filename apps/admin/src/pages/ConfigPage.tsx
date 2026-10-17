@@ -59,6 +59,17 @@ const KEY_LABELS: Record<string, string> = {
   "mail.smtpPass": "SMTP 授权码 smtpPass",
   "mail.fromName": "发件人名称 fromName",
   "mail.fromAddress": "发件地址 fromAddress（留空 = 同账号）",
+  "pay.sandboxSecret": "沙箱签名密钥 sandboxSecret",
+  "pay.alipayAppId": "支付宝应用 ID alipayAppId",
+  "pay.alipayPrivateKey": "支付宝应用私钥 alipayPrivateKey",
+  "pay.alipayPublicKey": "支付宝公钥 alipayPublicKey",
+  "pay.wechatMchId": "微信商户号 wechatMchId",
+  "pay.wechatSerialNo": "微信证书序列号 wechatSerialNo",
+  "pay.wechatApiV3Key": "微信 APIv3 密钥 wechatApiV3Key",
+  "pay.wechatPrivateKey": "微信商户私钥 wechatPrivateKey",
+  "pay.paypalClientId": "PayPal Client ID paypalClientId",
+  "pay.paypalClientSecret": "PayPal Client Secret paypalClientSecret",
+  "pay.paypalMode": "PayPal 模式 paypalMode（sandbox / live）",
 };
 
 const GROUPS: {
@@ -71,6 +82,7 @@ const GROUPS: {
   { title: "对象存储（storage）", prefix: "storage.", channel: "storage" },
   { title: "客服防刷（Turnstile）", prefix: "turnstile." },
   { title: "邮件服务（mail）", prefix: "mail.", channel: "mail" },
+  { title: "支付渠道（pay）", prefix: "pay." },
   { title: "LLM 全局（llm）", prefix: "llm." },
 ];
 
