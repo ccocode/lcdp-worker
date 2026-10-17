@@ -690,8 +690,18 @@ function SiteHeader({
   );
 }
 
-/** 站点型页脚：居中一行文案（配置文案或版权占位） */
-function SiteFooter({ text }: { text: string }) {
+/**
+ * 站点型页脚：居中一行文案（配置文案或版权占位）。
+ * 公开外壳可传入 onStaffLogin：员工入口不与页眉会员区并列（用户 2026-10-17 拍板），
+ * 只在页脚以低调文字链呈现；登录态外壳不传、行为不变。
+ */
+function SiteFooter({
+  text,
+  onStaffLogin,
+}: {
+  text: string;
+  onStaffLogin?: () => void;
+}) {
   return (
     <Layout.Footer
       style={{
@@ -702,7 +712,19 @@ function SiteFooter({ text }: { text: string }) {
         padding: "18px 24px",
       }}
     >
-      {text}
+      <div>{text}</div>
+      {onStaffLogin && (
+        <div style={{ marginTop: 4 }}>
+          <Button
+            type="link"
+            size="small"
+            onClick={onStaffLogin}
+            style={{ color: "#bfbfbf", fontSize: 12, padding: 0, height: "auto" }}
+          >
+            员工登录
+          </Button>
+        </div>
+      )}
     </Layout.Footer>
   );
 }
@@ -896,7 +918,7 @@ function MemberAuthModal({
   );
 }
 
-/** 页眉会员区：已登录显示昵称/标识 + 退出；未登录显示「会员登录」「注册」（与员工「登录」并列、文案可区分） */
+/** 页眉会员区：已登录显示昵称/标识 + 退出；未登录显示「会员登录」「注册」。站点页眉只留会员区，员工入口在页脚（SiteFooter 的低调文字链） */
 function MemberArea({
   session,
   small,
@@ -1136,7 +1158,7 @@ function PublicShell({
       publicContent
     );
 
-  /** 页眉右侧区：会员区（启用会员页时）+ 员工「登录」按钮并列 */
+  /** 页眉右侧区：仅会员区（启用会员页时）；员工「登录」已按入口分离口径移至页脚文字链 */
   const memberArea = (small?: boolean) =>
     hasMemberPages ? (
       <MemberArea
@@ -1173,14 +1195,7 @@ function PublicShell({
             selectedKey={current ? current.route : null}
             onNavigate={goPageGuarded}
             searchRoute={globalVarText(cfg, "siteSearchRoute")}
-            right={
-              <Space size={8}>
-                {memberArea()}
-                <Button type="primary" onClick={onLogin}>
-                  登录
-                </Button>
-              </Space>
-            }
+            right={memberArea()}
           />
           <Layout.Content
             style={{
@@ -1190,7 +1205,7 @@ function PublicShell({
           >
             {content}
           </Layout.Content>
-          <SiteFooter text={siteFooterText(cfg, brand)} />
+          <SiteFooter text={siteFooterText(cfg, brand)} onStaffLogin={onLogin} />
         </Layout>
         {memberModal}
       </ConfigProvider>
