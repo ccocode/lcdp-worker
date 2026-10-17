@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
   Alert,
   Badge,
@@ -731,9 +731,184 @@ function SiteFooter({
 
 /* ---------- 应用会员（会员试点）：公开外壳的第三类主体 ---------- */
 
+/** 服务端业务错误码 → 前端中文提示（未知码回落服务端 message，其本身已是中文） */
+const MEMBER_ERROR_TEXT: Record<string, string> = {
+  captcha_invalid: "图形验证码不正确或已过期，请重新输入",
+  captcha_required: "请输入图形验证码",
+  email_code_invalid: "邮箱验证码不正确或已过期，请重新获取",
+  email_code_required: "请先获取并填写邮箱验证码",
+  mail_not_configured: "邮件服务尚未配置",
+  rate_limited: "操作过于频繁，请稍后再试",
+};
+
+function memberErrorCode(err: unknown): string | undefined {
+  return err instanceof Error
+    ? (err as Error & { code?: string }).code
+    : undefined;
+}
+
+function memberErrorText(err: unknown): string {
+  if (err instanceof Error) {
+    const code = memberErrorCode(err);
+    if (code && MEMBER_ERROR_TEXT[code]) return MEMBER_ERROR_TEXT[code];
+    return err.message;
+  }
+  return String(err);
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /**
- * 会员登录/注册弹窗：Tabs 两页签（会员登录 / 注册），字段与 api 契约对齐
- * （identifier + password；注册多一个选填 displayName，密码至少 8 位）。
+ * 图形验证码状态（自托管 SVG）：active 时自动拉取；服务端一次性发放、校验即作废，
+ * 故每次校验失败都要 refresh 换新图，前端输入随之清空。
+ */
+function useMemberCaptcha(appId: string, active: boolean) {
+  const [captcha, setCaptcha] = useState<{ id: string; svg: string } | null>(
+    null,
+  );
+  const refresh = useCallback(async () => {
+    try {
+      const res = await memberApi.fetchMemberCaptcha(appId);
+      setCaptcha({ id: res.captchaId, svg: res.svg });
+    } catch {
+      setCaptcha(null);
+    }
+  }, [appId]);
+  useEffect(() => {
+    if (active) void refresh();
+  }, [active, refresh]);
+  return { captcha, refresh };
+}
+
+/** 发送邮箱验证码后的 60 秒倒计时（0 = 可发送） */
+function useEmailCountdown() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (seconds <= 0) return;
+    const t = setTimeout(() => setSeconds((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [seconds]);
+  return { seconds, start: () => setSeconds(60) };
+}
+
+/** 图形验证码图：内联渲染服务端 SVG，点击刷新 */
+function CaptchaPicture({
+  svg,
+  onRefresh,
+}: {
+  svg: string | null;
+  onRefresh: () => void;
+}) {
+  const style: CSSProperties = {
+    width: 120,
+    height: 44,
+    flexShrink: 0,
+    cursor: "pointer",
+    border: "1px solid #d9d9d9",
+    borderRadius: 6,
+    overflow: "hidden",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#fafafa",
+    color: "#8c8c8c",
+    fontSize: 12,
+    userSelect: "none",
+  };
+  if (!svg) {
+    return (
+      <span title="点击获取图形验证码" onClick={onRefresh} style={style}>
+        点击获取
+      </span>
+    );
+  }
+  return (
+    <span
+      title="点击刷新图形验证码"
+      onClick={onRefresh}
+      style={style}
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
+
+/** 图形验证码行：输入框（字段名 captchaCode，挂当前 Form）+ 图；必填校验走提交时人工检查（与弹窗 Alert 报错口径一致） */
+function CaptchaRow({
+  captcha,
+  onRefresh,
+}: {
+  captcha: { id: string; svg: string } | null;
+  onRefresh: () => void;
+}) {
+  return (
+    <Form.Item label="图形验证码">
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <Form.Item name="captchaCode" noStyle>
+            <Input placeholder="输入图中字符" autoComplete="off" />
+          </Form.Item>
+        </div>
+        <CaptchaPicture svg={captcha?.svg ?? null} onRefresh={onRefresh} />
+      </div>
+    </Form.Item>
+  );
+}
+
+/** 邮箱验证码行：输入框（字段名 emailCode）+ 发送按钮（倒计时/禁用由调用方控制） */
+function EmailCodeRow({
+  onSend,
+  sendDisabled,
+  sendText,
+}: {
+  onSend: () => void;
+  sendDisabled: boolean;
+  sendText: string;
+}) {
+  return (
+    <Form.Item label="邮箱验证码">
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <Form.Item name="emailCode" noStyle>
+            <Input
+              placeholder="邮箱收到的 6 位验证码"
+              autoComplete="off"
+              inputMode="numeric"
+            />
+          </Form.Item>
+        </div>
+        <Button onClick={onSend} disabled={sendDisabled}>
+          {sendText}
+        </Button>
+      </div>
+    </Form.Item>
+  );
+}
+
+/** 验证码区下方的浅灰/成功小字提示 */
+function CodeHint({
+  text,
+  tone,
+}: {
+  text: string | null;
+  tone: "secondary" | "success";
+}) {
+  if (!text) return null;
+  return (
+    <Typography.Text
+      type={tone}
+      style={{ display: "block", marginTop: -16, marginBottom: 16, fontSize: 12 }}
+    >
+      {text}
+    </Typography.Text>
+  );
+}
+
+/**
+ * 会员登录/注册弹窗（验证码与邮箱验证）：Tabs 两页签（会员登录 / 注册）+ 找回密码视图。
+ * - 注册：图形验证码强制（打开页签自动拉取、点图刷新、校验失败自动换新）；标识为邮箱时
+ *   可发邮箱验证码（发送须先过图形验证码）；邮件服务未配置时邮箱验证码降级为非必填（服务端同口径）。
+ * - 登录：默认无验证码行；服务端回 captcha_required（连续失败后）才展开图形验证码行、重试自动带上。
+ * - 找回：邮箱 + 图形验证码发重置码 + 新密码确认；邮件未配置时诚实提示并禁用发送。
  * 成功后服务端返回令牌 + 简档 + 策略，调用方落 localStorage 会话并切换会员态。
  */
 function MemberAuthModal({
@@ -750,20 +925,60 @@ function MemberAuthModal({
   onAuthed: (session: MemberSession) => void;
 }) {
   const [tab, setTab] = useState<"login" | "register">(initialTab);
+  const [view, setView] = useState<"auth" | "reset">("auth");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loginForm] = Form.useForm<{ identifier: string; password: string }>();
+  const [notice, setNotice] = useState<string | null>(null);
+  /** 登录连错后服务端要求图形验证码 → 展开登录表单的验证码行 */
+  const [loginNeedCaptcha, setLoginNeedCaptcha] = useState(false);
+  /** 注册：邮件未配置的浅灰降级提示（出现后邮箱验证码非必填，服务端同口径） */
+  const [registerMailHint, setRegisterMailHint] = useState<string | null>(null);
+  const [registerSentHint, setRegisterSentHint] = useState<string | null>(null);
+  /** 找回：邮件未配置 → 诚实提示并禁用发送（找回无降级路径） */
+  const [resetMailOff, setResetMailOff] = useState(false);
+  const [resetSentHint, setResetSentHint] = useState<string | null>(null);
+  const [loginForm] = Form.useForm<{
+    identifier: string;
+    password: string;
+    captchaCode?: string;
+  }>();
   const [registerForm] = Form.useForm<{
     identifier: string;
     password: string;
     displayName?: string;
+    captchaCode?: string;
+    emailCode?: string;
   }>();
+  const [resetForm] = Form.useForm<{
+    email: string;
+    captchaCode?: string;
+    emailCode?: string;
+    newPassword: string;
+  }>();
+  const registerCaptcha = useMemberCaptcha(
+    appId,
+    open && view === "auth" && tab === "register",
+  );
+  const loginCaptcha = useMemberCaptcha(
+    appId,
+    open && view === "auth" && tab === "login" && loginNeedCaptcha,
+  );
+  const resetCaptcha = useMemberCaptcha(appId, open && view === "reset");
+  const registerCountdown = useEmailCountdown();
+  const resetCountdown = useEmailCountdown();
 
   useEffect(() => {
     if (open) {
       setTab(initialTab);
+      setView("auth");
       setError(null);
+      setNotice(null);
       setBusy(false);
+      setLoginNeedCaptcha(false);
+      setRegisterMailHint(null);
+      setRegisterSentHint(null);
+      setResetMailOff(false);
+      setResetSentHint(null);
     }
   }, [open, initialTab]);
 
@@ -778,7 +993,16 @@ function MemberAuthModal({
     onAuthed(session);
   };
 
-  const submitLogin = async (v: { identifier: string; password: string }) => {
+  const submitLogin = async (v: {
+    identifier: string;
+    password: string;
+    captchaCode?: string;
+  }) => {
+    const captchaCode = (v.captchaCode ?? "").trim();
+    if (loginNeedCaptcha && (!loginCaptcha.captcha || !captchaCode)) {
+      setError("请输入图形验证码");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -786,10 +1010,72 @@ function MemberAuthModal({
         await memberApi.login(appId, {
           identifier: v.identifier.trim(),
           password: v.password,
+          ...(loginNeedCaptcha && loginCaptcha.captcha
+            ? { captchaId: loginCaptcha.captcha.id, captchaCode }
+            : {}),
         }),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const code = memberErrorCode(err);
+      if (code === "captcha_required") {
+        // 服务端要求验证码：展开验证码行（hook 随状态自动拉图），下一次提交自动带上
+        setLoginNeedCaptcha(true);
+        setError("登录失败次数较多，请输入图形验证码后重试");
+      } else if (code === "captcha_invalid") {
+        loginForm.setFieldValue("captchaCode", "");
+        void loginCaptcha.refresh();
+        setError(memberErrorText(err));
+      } else {
+        setError(memberErrorText(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 注册页「发送验证码」：先校验标识为邮箱形态且图形码已填，再带当前图形码发信 */
+  const sendRegisterEmailCode = async () => {
+    setError(null);
+    const identifier =
+      (registerForm.getFieldValue("identifier") as string | undefined)?.trim() ??
+      "";
+    const captchaCode =
+      (registerForm.getFieldValue("captchaCode") as string | undefined)?.trim() ??
+      "";
+    if (!EMAIL_RE.test(identifier)) {
+      setError("请先填写邮箱作为标识，再获取邮箱验证码");
+      return;
+    }
+    if (!registerCaptcha.captcha || !captchaCode) {
+      setError("请先填写图形验证码，再获取邮箱验证码");
+      return;
+    }
+    setBusy(true);
+    try {
+      await memberApi.sendMemberEmailCode(appId, {
+        email: identifier,
+        captchaId: registerCaptcha.captcha.id,
+        captchaCode,
+      });
+      registerCountdown.start();
+      setRegisterMailHint(null);
+      setRegisterSentHint(
+        "邮箱验证码已发送，请查收邮箱（10 分钟内有效）；图形验证码已刷新，提交注册时请填写新的图形验证码",
+      );
+      // 发码已消费本次图形验证码：换新图并清空输入，提交时用新码
+      registerForm.setFieldValue("captchaCode", "");
+      void registerCaptcha.refresh();
+    } catch (err) {
+      const code = memberErrorCode(err);
+      if (code === "mail_not_configured") {
+        setRegisterMailHint("邮件服务尚未配置，可直接注册");
+      } else if (code === "captcha_invalid") {
+        registerForm.setFieldValue("captchaCode", "");
+        void registerCaptcha.refresh();
+        setError(memberErrorText(err));
+      } else {
+        setError(memberErrorText(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -799,7 +1085,14 @@ function MemberAuthModal({
     identifier: string;
     password: string;
     displayName?: string;
+    captchaCode?: string;
+    emailCode?: string;
   }) => {
+    const captchaCode = (v.captchaCode ?? "").trim();
+    if (!registerCaptcha.captcha || !captchaCode) {
+      setError("请输入图形验证码");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -808,10 +1101,91 @@ function MemberAuthModal({
           identifier: v.identifier.trim(),
           password: v.password,
           displayName: v.displayName?.trim() || undefined,
+          captchaId: registerCaptcha.captcha.id,
+          captchaCode,
+          emailCode: v.emailCode?.trim() || undefined,
         }),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (memberErrorCode(err) === "captcha_invalid") {
+        registerForm.setFieldValue("captchaCode", "");
+        void registerCaptcha.refresh();
+      }
+      setError(memberErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 找回页「发送验证码」：发码与找回请求同一端点（带图形验证码校验） */
+  const sendResetEmailCode = async () => {
+    setError(null);
+    const email =
+      (resetForm.getFieldValue("email") as string | undefined)?.trim() ?? "";
+    const captchaCode =
+      (resetForm.getFieldValue("captchaCode") as string | undefined)?.trim() ??
+      "";
+    if (!EMAIL_RE.test(email)) {
+      setError("请先填写注册邮箱，再获取验证码");
+      return;
+    }
+    if (!resetCaptcha.captcha || !captchaCode) {
+      setError("请先填写图形验证码，再获取验证码");
+      return;
+    }
+    setBusy(true);
+    try {
+      await memberApi.requestMemberPasswordReset(appId, {
+        email,
+        captchaId: resetCaptcha.captcha.id,
+        captchaCode,
+      });
+      resetCountdown.start();
+      setResetSentHint("重置验证码已发送，请查收邮箱（10 分钟内有效）");
+      resetForm.setFieldValue("captchaCode", "");
+      void resetCaptcha.refresh();
+    } catch (err) {
+      const code = memberErrorCode(err);
+      if (code === "mail_not_configured") {
+        setResetMailOff(true);
+      } else if (code === "captcha_invalid") {
+        resetForm.setFieldValue("captchaCode", "");
+        void resetCaptcha.refresh();
+        setError(memberErrorText(err));
+      } else {
+        setError(memberErrorText(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitReset = async (v: {
+    email: string;
+    emailCode?: string;
+    newPassword: string;
+  }) => {
+    const emailCode = (v.emailCode ?? "").trim();
+    if (!emailCode) {
+      setError("请输入邮箱验证码");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await memberApi.confirmMemberPasswordReset(appId, {
+        email: v.email.trim(),
+        emailCode,
+        newPassword: v.newPassword,
+      });
+      // 成功回登录页签：预填标识 + 成功提示，用新密码登录
+      setView("auth");
+      setTab("login");
+      setResetSentHint(null);
+      loginForm.setFieldValue("identifier", v.email.trim());
+      setNotice("密码已重置，请使用新密码登录");
+    } catch (err) {
+      setError(memberErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -827,14 +1201,84 @@ function MemberAuthModal({
     </Form.Item>
   );
 
+  const errorAlert = error ? (
+    <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+  ) : null;
+
+  const backToLogin = () => {
+    setView("auth");
+    setTab("login");
+    setError(null);
+  };
+
   return (
     <Modal
       open={open}
       onCancel={onClose}
       footer={null}
-      title="会员中心"
+      title={view === "reset" ? "找回密码" : "会员中心"}
       destroyOnClose
     >
+      {view === "reset" ? (
+        <>
+          {errorAlert}
+          <Form
+            form={resetForm}
+            layout="vertical"
+            onFinish={(v) => void submitReset(v)}
+          >
+            <Form.Item
+              label="注册邮箱"
+              name="email"
+              rules={[{ required: true, message: "请输入注册邮箱" }]}
+            >
+              <Input autoComplete="email" placeholder="注册时使用的邮箱" />
+            </Form.Item>
+            <CaptchaRow
+              captcha={resetCaptcha.captcha}
+              onRefresh={() => void resetCaptcha.refresh()}
+            />
+            <EmailCodeRow
+              onSend={() => void sendResetEmailCode()}
+              sendDisabled={busy || resetMailOff || resetCountdown.seconds > 0}
+              sendText={
+                resetCountdown.seconds > 0
+                  ? `${resetCountdown.seconds} 秒后重发`
+                  : "发送验证码"
+              }
+            />
+            <CodeHint
+              text={resetMailOff ? "邮件服务尚未配置，暂无法找回密码" : null}
+              tone="secondary"
+            />
+            <CodeHint
+              text={resetMailOff ? null : resetSentHint}
+              tone="success"
+            />
+            <Form.Item
+              label="新密码"
+              name="newPassword"
+              rules={[
+                { required: true, message: "请输入新密码" },
+                { min: 8, message: "密码至少 8 位" },
+              ]}
+            >
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" block loading={busy}>
+              确认重置
+            </Button>
+            <Button
+              type="link"
+              block
+              style={{ marginTop: 8 }}
+              onClick={backToLogin}
+            >
+              返回登录
+            </Button>
+          </Form>
+        </>
+      ) : (
       <Tabs
         activeKey={tab}
         onChange={(k) => {
@@ -847,13 +1291,14 @@ function MemberAuthModal({
             label: "会员登录",
             children: (
               <>
-                {error && (
+                {notice && (
                   <Alert
-                    type="error"
-                    message={error}
+                    type="success"
+                    message={notice}
                     style={{ marginBottom: 16 }}
                   />
                 )}
+                {errorAlert}
                 <Form
                   form={loginForm}
                   layout="vertical"
@@ -867,8 +1312,25 @@ function MemberAuthModal({
                   >
                     <Input.Password autoComplete="current-password" />
                   </Form.Item>
+                  {loginNeedCaptcha && (
+                    <CaptchaRow
+                      captcha={loginCaptcha.captcha}
+                      onRefresh={() => void loginCaptcha.refresh()}
+                    />
+                  )}
                   <Button type="primary" htmlType="submit" block loading={busy}>
                     登录
+                  </Button>
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, marginTop: 8 }}
+                    onClick={() => {
+                      setView("reset");
+                      setError(null);
+                    }}
+                  >
+                    忘记密码？
                   </Button>
                 </Form>
               </>
@@ -879,13 +1341,7 @@ function MemberAuthModal({
             label: "注册",
             children: (
               <>
-                {error && (
-                  <Alert
-                    type="error"
-                    message={error}
-                    style={{ marginBottom: 16 }}
-                  />
-                )}
+                {errorAlert}
                 <Form
                   form={registerForm}
                   layout="vertical"
@@ -905,6 +1361,24 @@ function MemberAuthModal({
                   >
                     <Input.Password autoComplete="new-password" />
                   </Form.Item>
+                  <CaptchaRow
+                    captcha={registerCaptcha.captcha}
+                    onRefresh={() => void registerCaptcha.refresh()}
+                  />
+                  <EmailCodeRow
+                    onSend={() => void sendRegisterEmailCode()}
+                    sendDisabled={busy || registerCountdown.seconds > 0}
+                    sendText={
+                      registerCountdown.seconds > 0
+                        ? `${registerCountdown.seconds} 秒后重发`
+                        : "发送验证码"
+                    }
+                  />
+                  <CodeHint text={registerMailHint} tone="secondary" />
+                  <CodeHint
+                    text={registerMailHint ? null : registerSentHint}
+                    tone="success"
+                  />
                   <Button type="primary" htmlType="submit" block loading={busy}>
                     注册并登录
                   </Button>
@@ -914,6 +1388,7 @@ function MemberAuthModal({
           },
         ]}
       />
+      )}
     </Modal>
   );
 }
