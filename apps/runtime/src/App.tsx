@@ -89,9 +89,17 @@ type Device = "desktop" | "mobile";
 function isShellEnv(): boolean {
   const w = window as unknown as {
     Capacitor?: unknown;
-    lcdpBridge?: unknown;
+    lcdpBridge?: { isNative?: () => boolean };
   };
-  return Boolean(w.Capacitor ?? w.lcdpBridge);
+  if (w.Capacitor) return true;
+  // 注意：runtime 自身在入口无条件安装 window.lcdpBridge（线 C），其「存在」
+  // 不能作为壳信号——只有桥报告原生环境才算壳，否则纯 Web 会被误判为壳、
+  // 桌面整体翻成移动呈现。壳预注入的桥同理以 isNative 为准。
+  try {
+    return w.lcdpBridge?.isNative?.() === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
