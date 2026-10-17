@@ -70,6 +70,7 @@ const KEY_LABELS: Record<string, string> = {
   "pay.paypalClientId": "PayPal Client ID paypalClientId",
   "pay.paypalClientSecret": "PayPal Client Secret paypalClientSecret",
   "pay.paypalMode": "PayPal 模式 paypalMode（sandbox / live）",
+  "sso.enabledScopes": "启用 SSO 的会员域 enabledScopes（逗号分隔 scope_key，留空 = 全关）",
 };
 
 const GROUPS: {
@@ -83,6 +84,7 @@ const GROUPS: {
   { title: "客服防刷（Turnstile）", prefix: "turnstile." },
   { title: "邮件服务（mail）", prefix: "mail.", channel: "mail" },
   { title: "支付渠道（pay）", prefix: "pay." },
+  { title: "会员 SSO（sso）", prefix: "sso." },
   { title: "LLM 全局（llm）", prefix: "llm." },
 ];
 

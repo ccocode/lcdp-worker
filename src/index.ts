@@ -49,6 +49,7 @@ const CORS_ORIGINS = new Set([
   "https://www.coode.cc.cd",
   "https://shop.coode.cc.cd",
   "https://bbs.coode.cc.cd",
+  "https://account.coode.cc.cd",
   "https://dev.coode.cc.cd",
   "https://admin.coode.cc.cd",
   "https://lcdp-runtime.pages.dev",
