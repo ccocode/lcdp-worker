@@ -87,6 +87,13 @@ export interface MemberPolicyShape {
   readable: string[];
   /** 会员可写（新建/改己行）实体 key 列表 */
   writable: string[];
+  /**
+   * 会员可写字段白名单（商城线）：实体 key → 允许会员写的字段键数组；
+   * 某实体未声明 = 沿用实体级口径（全字段可写）；声明后白名单外字段出现在
+   * 写请求里服务端整单拒绝（400 field_not_writable）。
+   * TODO(mall-schema-0.10.0): schema 0.10.0 的 memberPolicySchema 落地后与之对齐
+   */
+  writableFields: Record<string, string[]>;
   /** 归属映射：实体 key → 归属字段 key（行读写强制归属当前会员） */
   owners: Record<string, string>;
 }
@@ -95,6 +102,7 @@ export const EMPTY_MEMBER_POLICY: MemberPolicyShape = {
   pages: [],
   readable: [],
   writable: [],
+  writableFields: {},
   owners: {},
 };
 
@@ -122,6 +130,7 @@ export function defaultPermissions(appId: string): PermissionSchema {
     pages: [],
     readable: [],
     writable: [],
+    writableFields: {},
     owners: {},
   };
   return {
@@ -280,6 +289,7 @@ export default function Permissions({
       pages: raw?.pages ?? [],
       readable: raw?.readable ?? [],
       writable: raw?.writable ?? [],
+      writableFields: raw?.writableFields ?? {},
       owners: raw?.owners ?? {},
     };
   }, [permissions]);
@@ -953,10 +963,60 @@ export default function Permissions({
                   v.includes(e),
                 ),
               );
-              setMemberPolicy({ ...memberPolicy, writable: v, owners });
+              const writableFields = Object.fromEntries(
+                Object.entries(memberPolicy.writableFields).filter(([e]) =>
+                  v.includes(e),
+                ),
+              );
+              setMemberPolicy({ ...memberPolicy, writable: v, owners, writableFields });
             }}
           />
         </Space>
+        {memberPolicy.writable.map((entityKey) => {
+          const ent = data.entities.find((e) => e.key === entityKey);
+          if (!ent) return null;
+          return (
+            <Space
+              key={entityKey}
+              size={10}
+              wrap
+              align="start"
+              style={{ paddingLeft: 120 }}
+            >
+              <Typography.Text
+                type="secondary"
+                style={{ width: 130, paddingTop: 4 }}
+              >
+                {ent.label} 可写字段白名单
+              </Typography.Text>
+              <Select
+                mode="multiple"
+                size="small"
+                style={{ width: 430 }}
+                placeholder="未声明 = 全部字段可写（实体级口径）"
+                value={memberPolicy.writableFields[entityKey] ?? []}
+                options={ent.fields.map((f) => ({
+                  value: f.key,
+                  label: `${f.label}（${f.key}）`,
+                }))}
+                onChange={(v: string[]) => {
+                  const next = { ...memberPolicy.writableFields };
+                  if (v.length > 0) next[entityKey] = v;
+                  else delete next[entityKey];
+                  setMemberPolicy({ ...memberPolicy, writableFields: next });
+                }}
+              />
+            </Space>
+          );
+        })}
+        {memberPolicy.writable.length > 0 && (
+          <Typography.Paragraph
+            type="secondary"
+            style={{ fontSize: 12, paddingLeft: 120, margin: 0 }}
+          >
+            字段白名单（商城线）：为实体声明后，会员写请求里出现白名单外字段将被服务端整单拒绝（400）；系统盖章字段（如归属 member_id）不受白名单影响。订单类实体通常应排除状态字段，防止会员自行改单状态。
+          </Typography.Paragraph>
+        )}
         <Space size={10} wrap align="start">
           <Typography.Text style={{ width: 110, paddingTop: 4 }}>归属字段</Typography.Text>
           <Space direction="vertical" size={6}>
