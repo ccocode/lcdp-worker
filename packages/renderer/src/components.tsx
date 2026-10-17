@@ -24,7 +24,9 @@ import {
   Card,
   Descriptions,
   Dropdown,
+  Form,
   Input,
+  InputNumber,
   Pagination,
   Space,
   Statistic,
@@ -54,6 +56,8 @@ import type {
   ViewFilter,
 } from "./adapter.js";
 import { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
+import { cartStore } from "./cartStore.js";
+import type { CartItem } from "./cartStore.js";
 import { FieldInput } from "./fields.js";
 import { RichTextView, htmlToText } from "./richtext.js";
 import { styles } from "./styles.js";
@@ -1917,7 +1921,13 @@ export function Detail({ node }: NodeProps) {
   );
 }
 
-/** 动作按钮：点击后按 props.route 跳转页面 */
+/**
+ * 动作按钮：缺省点击后按 props.route 跳转页面。
+ * 商城动作（props.action）：
+ * - `cart-add`：把当前详情页商品（页面参数 $param.id）加入本地购物车 + 轻提示；
+ * - `cart-add-checkout`：加入后按 props.route 直达购物车/结算页（立即购买）。
+ * 两动作与既有 route 跳转并存：无 action 时行为与此前完全一致。
+ */
 export function ActionButton({ node }: NodeProps) {
   const ctx = useRendererCtx();
   const label =
@@ -1931,11 +1941,31 @@ export function ActionButton({ node }: NodeProps) {
       ? node.props.type
       : undefined;
   const route = typeof node.props?.route === "string" ? node.props.route : null;
+  const action =
+    typeof node.props?.action === "string" ? node.props.action : null;
+
+  const addToCart = (goCheckout: boolean) => {
+    // 商品 id 取当前详情页的页面参数 id（$param.id 的运行态落点）
+    const productId = ctx.params.id;
+    if (!productId) {
+      ctx.adapter.notify("未找到当前商品，无法加入购物车", "error");
+      return;
+    }
+    cartStore.add(productId, 1);
+    ctx.adapter.notify("已加入购物车");
+    if (goCheckout && route) ctx.adapter.navigate(route);
+  };
+
+  const onClick =
+    action === "cart-add"
+      ? () => addToCart(false)
+      : action === "cart-add-checkout"
+        ? () => addToCart(true)
+        : route
+          ? () => ctx.adapter.navigate(route)
+          : undefined;
   return (
-    <Button
-      type={type}
-      onClick={route ? () => ctx.adapter.navigate(route) : undefined}
-    >
+    <Button type={type} onClick={onClick}>
       {label}
     </Button>
   );
@@ -2253,7 +2283,442 @@ export function SupportTranscript({ node }: NodeProps) {
   );
 }
 
-/** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 14 类组件，含 M9 的 Chart 与 M10 的 ContentList） */
+/** checkout 端点业务错误码 → 中文提示（未知码回落服务端 message，其本身已是中文） */
+const CHECKOUT_ERROR_TEXT: Record<string, string> = {
+  product_unavailable: "购物车中有商品已下架或不存在，请调整后再提交",
+  insufficient_stock: "购物车中有商品库存不足，请减少数量后重试",
+  checkout_not_configured: "本应用尚未开启在线下单",
+  field_not_writable: "订单包含不可写字段，请联系管理员检查会员策略",
+};
+
+/** 取透传在错误对象上的业务码（会员面 fetch 注入 err.code；其余宿主无此字段） */
+function memberErrCode(err: unknown): string | undefined {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && code ? code : undefined;
+}
+
+interface CartLine {
+  item: CartItem;
+  /** 商品行是否已回（未回时不下失效结论，避免闪烁误标） */
+  loaded: boolean;
+  row: Row | null;
+  /** 有效 = 已回 + 行存在 + 未下架 + 价格可解析；失效行不计入合计、不许结算 */
+  valid: boolean;
+  invalidReason: string | null;
+  name: string;
+  price: number;
+  coverId?: string;
+}
+
+/**
+ * 购物车 / 结算（商城线，catalog 第 16 类）：数据绑定 = 商品实体。
+ * 条目来自本地购物车 cartStore（只存 id + 数量），商品名称/现价/状态/封面在渲染时
+ * 经当前 adapter 现拉——价格以服务端为准的展示口径：variant=checkout 提交时
+ * 只报 id + 数量，金额由服务端 checkout 按现价重算并落价快照。
+ * 字段按实体约定解析：name（缺省首字段）/ price（缺省首个 decimal）/
+ * status（enum，值「下架」判失效，与 checkout 声明 onSaleValue 的对侧口径一致）/
+ * cover（file/image）。未登录（适配器无会员会话）时两 variant 都呈登录引导，
+ * 入口经 adapter.openMemberLogin 打开宿主的会员登录弹窗（与导航守卫同一弹窗）。
+ */
+export function CartView({ node }: NodeProps) {
+  const ctx = useRendererCtx();
+  const variant = node.props?.variant === "checkout" ? "checkout" : "cart";
+  const strProp = (k: string): string | undefined =>
+    typeof node.props?.[k] === "string" && node.props[k]
+      ? (node.props[k] as string)
+      : undefined;
+  const detailRoute = strProp("detailRoute");
+  const checkoutRoute = strProp("checkoutRoute");
+  const ordersRoute = strProp("ordersRoute");
+  const entity = resolveEntity(ctx, node.binding?.source);
+
+  const [items, setItems] = useState<CartItem[]>(() => cartStore.list());
+  useEffect(
+    () => cartStore.subscribe(() => setItems(cartStore.list())),
+    [],
+  );
+  const [rowsById, setRowsById] = useState<Record<string, Row | null>>({});
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const idsSig = items.map((it) => it.productId).join(",");
+  const adapterRef = ctx.adapter;
+  const entityKey = entity?.key;
+
+  useEffect(() => {
+    if (!entityKey || ctx.design) return;
+    let alive = true;
+    (async () => {
+      const ids = idsSig ? idsSig.split(",") : [];
+      const entries = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await adapterRef.get(entityKey, id)] as const;
+          } catch {
+            return [id, null] as const;
+          }
+        }),
+      );
+      if (alive) setRowsById(Object.fromEntries(entries));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [adapterRef, entityKey, idsSig, reloadNonce, ctx.design]);
+
+  const [form] = Form.useForm<{
+    contact_name: string;
+    contact_phone: string;
+    address: string;
+    remark?: string;
+  }>();
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  if (ctx.design) {
+    return (
+      <Card title={variant === "checkout" ? "结算" : "购物车"}>
+        <Typography.Paragraph type="secondary">
+          购物车组件（绑定商品实体）：发布后按本机购物车条目现拉商品现价与状态，
+          下架/不存在的商品标示失效且不计入合计；结算时填写收货信息，经会员
+          checkout 端点由服务端按现价重算金额、扣库存并生成待支付订单。
+        </Typography.Paragraph>
+        <div
+          style={{
+            background: "#f5f5f5",
+            borderRadius: 8,
+            padding: "8px 12px",
+            color: "#8c8c8c",
+            fontSize: 13,
+          }}
+        >
+          （示例）智能手表 X1　¥4,999 × 1　小计 ¥4,999
+        </div>
+      </Card>
+    );
+  }
+  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+
+  const fields = entity.fields;
+  const nameField = fields.find((f) => f.key === "name") ?? fields[0];
+  const priceField =
+    fields.find((f) => f.key === "price") ??
+    fields.find((f) => f.type === "decimal");
+  const statusField = fields.find(
+    (f) => f.key === "status" && f.type === "enum",
+  );
+  const coverField =
+    fields.find(
+      (f) => f.key === "cover" && (f.type === "file" || f.type === "image"),
+    ) ?? fields.find((f) => f.type === "file" || f.type === "image");
+
+  const lines: CartLine[] = items.map((item) => {
+    const loaded = item.productId in rowsById;
+    const row = loaded ? (rowsById[item.productId] ?? null) : null;
+    const price =
+      row && priceField ? Number(row[priceField.key]) : Number.NaN;
+    let invalidReason: string | null = null;
+    if (loaded && !row) invalidReason = "商品不存在";
+    else if (row && statusField && String(row[statusField.key]) === "下架")
+      invalidReason = "已下架";
+    else if (loaded && row && !Number.isFinite(price))
+      invalidReason = "价格异常";
+    return {
+      item,
+      loaded,
+      row,
+      valid: loaded && !!row && invalidReason === null,
+      invalidReason,
+      name:
+        row && nameField
+          ? formatCellValue(nameField, row[nameField.key])
+          : item.productId,
+      price: Number.isFinite(price) ? price : 0,
+      coverId: row && coverField ? parseAssetIds(row[coverField.key])[0] : undefined,
+    };
+  });
+  const validLines = lines.filter((l) => l.valid);
+  const total = validLines.reduce(
+    (sum, l) => sum + l.price * l.item.quantity,
+    0,
+  );
+  const invalidCount = lines.length - validLines.length;
+  const money = (n: number) => `¥${n.toFixed(2)}`;
+
+  const session = ctx.adapter.memberSession?.() ?? null;
+  if (!session) {
+    return (
+      <div style={{ maxWidth: 520, margin: "32px auto", textAlign: "center" }}>
+        <Alert
+          type="info"
+          showIcon
+          message="请先登录会员账号"
+          description="登录会员后即可查看购物车并结算；购物车内容保存在本机，登录后不会丢失。"
+          style={{ marginBottom: 16, textAlign: "left" }}
+        />
+        {typeof ctx.adapter.openMemberLogin === "function" && (
+          <Button
+            type="primary"
+            onClick={() => ctx.adapter.openMemberLogin!()}
+          >
+            会员登录
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  const lineRow = (line: CartLine, editable: boolean) => (
+    <Card
+      key={line.item.productId}
+      size="small"
+      style={line.valid ? undefined : { opacity: 0.6 }}
+    >
+      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+        {line.coverId && (
+          <img
+            src={ctx.adapter.assetContentUrl(line.coverId)}
+            alt=""
+            style={{
+              width: 64,
+              height: 64,
+              objectFit: "cover",
+              borderRadius: 4,
+              flexShrink: 0,
+            }}
+          />
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Typography.Text
+            strong
+            ellipsis
+            style={detailRoute ? { cursor: "pointer" } : undefined}
+            onClick={
+              detailRoute
+                ? () =>
+                    ctx.adapter.navigate(
+                      `${detailRoute}?id=${encodeURIComponent(line.item.productId)}`,
+                    )
+                : undefined
+            }
+          >
+            {line.name}
+          </Typography.Text>
+          {line.invalidReason && (
+            <Tag style={{ marginLeft: 8 }}>已失效 · {line.invalidReason}</Tag>
+          )}
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              单价 {money(line.price)}
+            </Typography.Text>
+          </div>
+        </div>
+        {editable ? (
+          <InputNumber
+            min={1}
+            value={line.item.quantity}
+            disabled={!line.valid}
+            onChange={(v) => {
+              if (typeof v === "number" && v >= 1)
+                cartStore.setQty(line.item.productId, v);
+            }}
+          />
+        ) : (
+          <Typography.Text>× {line.item.quantity}</Typography.Text>
+        )}
+        <div style={{ width: 110, textAlign: "right", fontWeight: 600 }}>
+          {money(line.price * line.item.quantity)}
+        </div>
+        {editable && (
+          <Button
+            type="link"
+            danger
+            onClick={() => cartStore.remove(line.item.productId)}
+          >
+            移除
+          </Button>
+        )}
+      </div>
+    </Card>
+  );
+
+  const invalidAlert =
+    invalidCount > 0 ? (
+      <Alert
+        type="warning"
+        showIcon
+        message={`${invalidCount} 件商品已失效（下架或不存在），未计入合计，也不能结算`}
+        style={{ marginBottom: 12 }}
+      />
+    ) : null;
+
+  if (variant === "checkout") {
+    const submitOrder = async (values: {
+      contact_name: string;
+      contact_phone: string;
+      address: string;
+      remark?: string;
+    }) => {
+      if (typeof ctx.adapter.memberCheckout !== "function") {
+        setSubmitError("当前宿主未提供会员结算能力");
+        return;
+      }
+      if (!validLines.length) {
+        setSubmitError("购物车中没有可结算的商品");
+        return;
+      }
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const res = await ctx.adapter.memberCheckout({
+          items: validLines.map((l) => ({
+            productId: l.item.productId,
+            quantity: l.item.quantity,
+          })),
+          contact_name: values.contact_name.trim(),
+          contact_phone: values.contact_phone.trim(),
+          address: values.address.trim(),
+          remark: values.remark?.trim() || undefined,
+        });
+        cartStore.clear();
+        ctx.adapter.notify("下单成功");
+        const orderId = String(res.order.id ?? "");
+        if (ordersRoute && orderId) {
+          ctx.adapter.navigate(
+            `${ordersRoute}?id=${encodeURIComponent(orderId)}`,
+          );
+        }
+      } catch (err) {
+        setSubmitError(
+          CHECKOUT_ERROR_TEXT[memberErrCode(err) ?? ""] ?? errText(err),
+        );
+        // 商品状态/价格可能已变化：重拉商品行让失效标示与展示价刷新
+        setReloadNonce((n) => n + 1);
+      } finally {
+        setSubmitting(false);
+      }
+    };
+    return (
+      <div>
+        {invalidAlert}
+        {lines.length === 0 ? (
+          <div style={styles.empty}>购物车是空的</div>
+        ) : (
+          <>
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: 12 }}
+            >
+              {lines.map((l) => lineRow(l, false))}
+            </div>
+            <div style={{ marginTop: 16, marginBottom: 8, textAlign: "right" }}>
+              <Typography.Text>
+                合计{" "}
+                <Typography.Text
+                  strong
+                  style={{ fontSize: 18, color: "#cf1322" }}
+                >
+                  {money(total)}
+                </Typography.Text>
+              </Typography.Text>
+              <Typography.Text
+                type="secondary"
+                style={{ display: "block", fontSize: 12 }}
+              >
+                展示价按商品现价计算，最终金额以服务端提交时重算为准
+              </Typography.Text>
+            </div>
+            <Form
+              form={form}
+              layout="vertical"
+              style={{ maxWidth: 560 }}
+              onFinish={(v) => void submitOrder(v)}
+            >
+              <Form.Item
+                label="联系人"
+                name="contact_name"
+                rules={[{ required: true, message: "请填写联系人" }]}
+              >
+                <Input placeholder="收货人姓名" />
+              </Form.Item>
+              <Form.Item
+                label="联系电话"
+                name="contact_phone"
+                rules={[{ required: true, message: "请填写联系电话" }]}
+              >
+                <Input placeholder="手机号码" />
+              </Form.Item>
+              <Form.Item
+                label="收货地址"
+                name="address"
+                rules={[{ required: true, message: "请填写收货地址" }]}
+              >
+                <Input.TextArea rows={2} placeholder="省 / 市 / 区 + 详细地址" />
+              </Form.Item>
+              <Form.Item label="备注" name="remark">
+                <Input.TextArea rows={2} placeholder="选填" />
+              </Form.Item>
+              {submitError && (
+                <Alert
+                  type="error"
+                  message={submitError}
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={submitting}
+                disabled={validLines.length === 0}
+              >
+                提交订单
+              </Button>
+            </Form>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {invalidAlert}
+      {lines.length === 0 ? (
+        <div style={styles.empty}>购物车是空的</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {lines.map((l) => lineRow(l, true))}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              alignItems: "center",
+              gap: 16,
+              marginTop: 16,
+            }}
+          >
+            <Typography.Text>
+              合计{" "}
+              <Typography.Text strong style={{ fontSize: 18, color: "#cf1322" }}>
+                {money(total)}
+              </Typography.Text>
+            </Typography.Text>
+            {checkoutRoute && (
+              <Button
+                type="primary"
+                disabled={validLines.length === 0}
+                onClick={() => ctx.adapter.navigate(checkoutRoute)}
+              >
+                去结算
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** 内置组件注册表（注册中心 v1：布局/数据/内容/动作/智能共 15 类组件，含 M9 的 Chart、M10 的 ContentList 与商城线 CartView） */
 export function createDefaultRegistry(): ComponentRegistry {
   const registry = createRegistry();
   registerComponent(registry, "Page", Page);
@@ -2271,6 +2736,7 @@ export function createDefaultRegistry(): ComponentRegistry {
   registerComponent(registry, "Button", ActionButton);
   registerComponent(registry, "AgentChat", AgentChat);
   registerComponent(registry, "SupportTranscript", SupportTranscript);
+  registerComponent(registry, "CartView", CartView);
   return registry;
 }
 

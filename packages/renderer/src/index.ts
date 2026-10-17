@@ -12,6 +12,9 @@ export type {
   AssetMeta,
   EntityAccess,
   ListResult,
+  MemberCheckoutInput,
+  MemberCheckoutResult,
+  MemberSessionInfo,
   RendererContextValue,
   Row,
   RuntimeAdapter,
@@ -21,11 +24,14 @@ export type {
   ViewFilter,
 } from "./adapter.js";
 export { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
+export { CART_CHANGED_EVENT, cartStore } from "./cartStore.js";
+export type { CartItem } from "./cartStore.js";
 export type { ComponentRegistry, NodeProps, SchemaRendererProps } from "./components.js";
 export {
   ActionButton,
   AgentChat,
   AssetValue,
+  CartView,
   Chart,
   ChartPlaceholder,
   Container,

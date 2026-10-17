@@ -156,4 +156,17 @@ export const componentCatalog: Array<{
       props: { title: "会话记录", conversationField: "conversation_id" },
     }),
   },
+  {
+    type: "CartView",
+    label: "购物车",
+    category: "数据",
+    description:
+      "本地购物车与结算（绑定商品实体）：按现价渲染、失效商品不计入，结算调会员 checkout 端点由服务端重算",
+    make: (id) => ({
+      id,
+      type: "CartView",
+      binding: { source: "" },
+      props: { variant: "cart" },
+    }),
+  },
 ];

@@ -112,6 +112,34 @@ export interface SupportTranscriptData {
 }
 
 /**
+ * 会员会话简档快照（商城线）：宿主有会员会话时供组件判定登录态与称呼，
+ * 形状与 runtime 的 MemberInfo 对齐（渲染器不反向依赖宿主类型）。
+ */
+export interface MemberSessionInfo {
+  id: string;
+  identifier: string;
+  displayName: string | null;
+}
+
+/**
+ * 会员结算请求体（商城线）：只报商品与数量 + 收货信息，**不带金额**——
+ * 服务端按 appConfig.checkout 声明以现价重算总额并落价快照，前端改价无效。
+ */
+export interface MemberCheckoutInput {
+  items: { productId: string; quantity: number }[];
+  contact_name: string;
+  contact_phone: string;
+  address: string;
+  remark?: string;
+}
+
+/** 会员结算结果：order 为服务端新建订单行，total 为服务端重算总额 */
+export interface MemberCheckoutResult {
+  order: Row;
+  total: number;
+}
+
+/**
  * 运行态适配器：渲染器与宿主（runtime 应用）之间的唯一契约。
  * 渲染器只管按 Schema 画界面与编排交互，数据存取、路由、提示都经适配器，
  * 保证同一渲染器可用于运行态、设计器预览与将来的移动端壳。
@@ -163,6 +191,23 @@ export interface RuntimeAdapter {
     question: string;
     answer: string;
   }): Promise<{ docId: string }>;
+  /**
+   * 当前会员会话快照（商城线，可选）：宿主存在会员会话时返回简档、无会话返回 null。
+   * 未实现的宿主（员工面/设计器预览）上 CartView 按未登录口径呈现登录引导。
+   */
+  memberSession?(): MemberSessionInfo | null;
+  /**
+   * 打开会员登录弹窗（商城线，可选）：公开外壳实现（与导航守卫同一弹窗）；
+   * 未实现的宿主上 CartView 只呈现提示文案、不渲染登录入口。
+   */
+  openMemberLogin?(): void;
+  /**
+   * 会员结算（商城线，可选）：调会员面 checkout 端点（服务端重算 + 价快照 + 扣库存）。
+   * 仅会员语境的宿主（会员适配器/带会员钩子的公开适配器）实现；
+   * 失败时抛带 code 的错误（product_unavailable / insufficient_stock /
+   * checkout_not_configured 等），组件按码给中文提示。
+   */
+  memberCheckout?(body: MemberCheckoutInput): Promise<MemberCheckoutResult>;
   /** 跳转到某页面路由（可带 ?id= 等查询参数） */
   navigate(to: string): void;
   notify(message: string, kind?: "ok" | "error"): void;
