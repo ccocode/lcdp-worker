@@ -30,6 +30,7 @@ const NUMERIC_KEYS = new Set([
   "chat.maxRetries",
   "embedding.dimensions",
   "llm.tenantTokenBudget",
+  "mail.smtpPort",
 ]);
 
 const KEY_LABELS: Record<string, string> = {
@@ -51,17 +52,25 @@ const KEY_LABELS: Record<string, string> = {
   "storage.secretAccessKey": "SecretKey secretAccessKey",
   "turnstile.siteKey": "站点密钥 siteKey",
   "turnstile.secretKey": "服务端密钥 secretKey",
+  "mail.smtpHost": "SMTP 主机 smtpHost",
+  "mail.smtpPort": "SMTP 端口 smtpPort",
+  "mail.smtpSecure": "SSL/TLS smtpSecure（true / false）",
+  "mail.smtpUser": "SMTP 账号 smtpUser",
+  "mail.smtpPass": "SMTP 授权码 smtpPass",
+  "mail.fromName": "发件人名称 fromName",
+  "mail.fromAddress": "发件地址 fromAddress（留空 = 同账号）",
 };
 
 const GROUPS: {
   title: string;
   prefix: string;
-  channel?: "chat" | "embedding" | "storage";
+  channel?: "chat" | "embedding" | "storage" | "mail";
 }[] = [
   { title: "对话网关（chat）", prefix: "chat.", channel: "chat" },
   { title: "向量网关（embedding）", prefix: "embedding.", channel: "embedding" },
   { title: "对象存储（storage）", prefix: "storage.", channel: "storage" },
   { title: "客服防刷（Turnstile）", prefix: "turnstile." },
+  { title: "邮件服务（mail）", prefix: "mail.", channel: "mail" },
   { title: "LLM 全局（llm）", prefix: "llm." },
 ];
 
@@ -141,7 +150,7 @@ export default function ConfigPage() {
     }
   };
 
-  const runTest = async (channel: "chat" | "embedding" | "storage") => {
+  const runTest = async (channel: "chat" | "embedding" | "storage" | "mail") => {
     setTesting(channel);
     try {
       const res = await api.config.test(channel);
@@ -154,7 +163,12 @@ export default function ConfigPage() {
         .join("，");
       // 成功响应无 message 字段，不能直接拼接（曾显示「连通：undefined」）；
       // storage 不是网关，默认文案单独区分（契约 M9：headBucket → {ok, latencyMs}）
-      const okText = channel === "storage" ? "存储可用" : "网关响应正常";
+      const okText =
+        channel === "storage"
+          ? "存储可用"
+          : channel === "mail"
+            ? "测试邮件已发送"
+            : "网关响应正常";
       const detail = res.message ?? (res.ok ? okText : "未知错误");
       const text = `${res.ok ? "连通" : "不通"}：${detail}${extra ? `（${extra}）` : ""}`;
       setTestResult((s) => ({ ...s, [channel]: text }));

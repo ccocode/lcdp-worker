@@ -409,7 +409,7 @@ export const api = {
       });
     },
     async test(
-      channel: "chat" | "embedding" | "storage",
+      channel: "chat" | "embedding" | "storage" | "mail",
     ): Promise<{
       ok: boolean;
       // 成功响应不带 message（只有 ok/model/dimensions/latencyMs），失败才有 message
