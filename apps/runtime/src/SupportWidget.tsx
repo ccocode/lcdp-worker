@@ -557,7 +557,7 @@ export default function SupportWidget({
       </Button>
       <Drawer
         title={`💬 ${title}`}
-        width={440}
+        width={"min(440px, 100vw)"}
         open={open}
         onClose={() => setOpen(false)}
         extra={

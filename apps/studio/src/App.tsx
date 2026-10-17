@@ -1085,6 +1085,7 @@ function Designer({
                   data={working.schema}
                   pages={working.pages}
                   fragments={working.fragments}
+                  theme={working.appConfig?.theme}
                   onPagesChange={(pages) => updateBundle((b) => (b.pages = pages))}
                   onFragmentsChange={(fragments) =>
                     updateBundle((b) => (b.fragments = fragments))

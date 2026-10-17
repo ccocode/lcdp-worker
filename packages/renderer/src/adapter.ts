@@ -184,6 +184,12 @@ export interface RendererContextValue {
   params: Record<string, string>;
   /** 当前渲染设备：组件树按此读取布局变体（node.layout[device]） */
   device: "desktop" | "mobile";
+  /**
+   * 应用主题（快照 appConfig.theme，宿主装配处透传；M13）：
+   * 移动端由 SchemaRenderer 经 resolveMobileTheme 解析其 mobile 令牌组并映射为 CSS 变量，
+   * 供 card/single 呈现与按钮热区消费；桌面端不消费。
+   */
+  theme?: Record<string, unknown>;
   /** 权限门控（可选）：实体 key → 有效访问；缺省时不做任何门控（设计器预览等场景行为不变） */
   access?: Record<string, EntityAccess>;
   /** 设计模式（设计器画布专用）：节点可点选，选中态由宿主管理 */

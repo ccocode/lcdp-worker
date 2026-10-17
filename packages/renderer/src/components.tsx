@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type {
   ComponentNode,
   DataView,
@@ -17,11 +17,13 @@ import type {
   NodeLayout,
   PageSchema,
 } from "@naka1205/schema";
+import { PRESENTATION_VARIANTS, resolveMobileTheme } from "@naka1205/schema";
 import {
   Alert,
   Button,
   Card,
   Descriptions,
+  Dropdown,
   Input,
   Pagination,
   Space,
@@ -273,6 +275,26 @@ function layoutFor(
   return node.layout?.[device];
 }
 
+/**
+ * 呈现变体解析（M13）：节点 presentation[device] 优先，缺省取 PRESENTATION_VARIANTS
+ * 注册表为该组件声明的双端默认；无注册表条目的组件返回 null（双端同呈现、走唯一实现）。
+ * 桌面端注册表每组件仅一种呈现，故解析结果恒为桌面实现，桌面代码路径不受分发影响。
+ */
+function presentationFor(
+  node: ComponentNode,
+  type: string,
+  device: "desktop" | "mobile",
+): string | null {
+  const declared = node.presentation?.[device];
+  if (declared) return declared;
+  const reg = PRESENTATION_VARIANTS[type];
+  if (!reg) return null;
+  return device === "desktop" ? reg.defaultDesktop : reg.defaultMobile;
+}
+
+/** 移动令牌 CSS 变量引用（SchemaRenderer 在 mobile 时于根节点注入，桌面无此变量、取回退值即桌面口径） */
+const TOUCH_MIN = "var(--lcdp-touch-min, 44px)";
+
 /** 子节点按当前设备变体过滤隐藏并按 order 排序（NodeView 与 Tabs 共用，保证顺序一致） */
 function visibleSortedChildren(
   node: ComponentNode,
@@ -330,6 +352,9 @@ export function DataTable({ node }: NodeProps) {
   );
   // 每个被引实体的标签映射是否已就绪（成功或失败都算就绪，失败时回退显示原始值）
   const [labelsDone, setLabelsDone] = useState<Record<string, boolean>>({});
+  // 卡片呈现（移动端）「加载更多」：置位后本轮取数把新页行追加到已有行集而非替换；
+  // 桌面 table 呈现永不置位，取数与分页行为与原实现完全一致
+  const appendRef = useRef(false);
 
   // 数据视图签名（内容变化才重拉）：过滤（vf 全量 op + eq 兼容）与第一排序项经适配器下发服务端
   const viewSig = JSON.stringify(view ?? null);
@@ -350,9 +375,13 @@ export function DataTable({ node }: NodeProps) {
           ? { field: firstSort.field, dir: firstSort.dir }
           : undefined,
       });
-      setRows(res.rows);
+      setRows((prev) =>
+        appendRef.current ? [...prev, ...res.rows] : res.rows,
+      );
+      appendRef.current = false;
       setTotal(res.total);
     } catch (err) {
+      appendRef.current = false;
       setError(errText(err));
     } finally {
       setLoading(false);
@@ -448,23 +477,174 @@ export function DataTable({ node }: NodeProps) {
     !ctx.access ||
     (ctx.access[entity.key]?.actions.includes("create") ?? false);
 
+  /* ---------- 移动端卡片呈现（M13）：与 table 同取数/同回调，只换行的渲染形态 ---------- */
+  const cardMode =
+    ctx.device === "mobile" &&
+    presentationFor(node, "DataTable", ctx.device) === "card";
+  // 可见列沿用 access 裁剪：hidden 字段不进卡（与 EntityForm 字段门控同口径）
+  const cardFields = fields.filter(
+    (f) => ctx.access?.[entity.key]?.fields?.[f.key] !== "hidden",
+  );
+  const titleFieldKey =
+    typeof node.props?.cardTitleField === "string"
+      ? node.props.cardTitleField
+      : undefined;
+  const cardTitleField =
+    cardFields.find((f) => f.key === titleFieldKey) ?? cardFields[0];
+  // 状态类字段（status 枚举）右置为卡头徽章，不再进卡身
+  const cardStatusField = cardFields.find(
+    (f) => f.key === "status" && f.type === "enum" && f.key !== cardTitleField?.key,
+  );
+  const cardBodyFields = cardFields.filter(
+    (f) => f.key !== cardTitleField?.key && f.key !== cardStatusField?.key,
+  );
+  const renderCardCell = (row: Row, f: Field) =>
+    f.type === "file" || f.type === "image" ? (
+      <AssetValue
+        ids={parseAssetIds(row[f.key])}
+        image={f.type === "image"}
+        adapter={ctx.adapter}
+      />
+    ) : (
+      cellText(row, f)
+    );
+  const openRow = (row: Row) => {
+    if (formRoute) {
+      ctx.adapter.navigate(
+        `${formRoute}?id=${encodeURIComponent(String(row.id))}`,
+      );
+    }
+  };
+
   return (
     <div>
       <Space style={{ marginBottom: 12 }}>
         {formRoute && canCreate && (
           <Button
             type="primary"
+            style={cardMode ? { minHeight: TOUCH_MIN } : undefined}
             onClick={() => ctx.adapter.navigate(formRoute)}
           >
             新建{entity.label}
           </Button>
         )}
-        <Button onClick={() => void load()}>刷新</Button>
+        <Button
+          style={cardMode ? { minHeight: TOUCH_MIN } : undefined}
+          onClick={() => void load()}
+        >
+          刷新
+        </Button>
       </Space>
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
       )}
-      <Table<Row>
+      {cardMode ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {labelsPending || (loading && rows.length === 0) ? (
+            <div style={styles.empty}>加载中…</div>
+          ) : rows.length === 0 ? (
+            <div style={styles.empty}>暂无数据</div>
+          ) : (
+            rows.map((row) => (
+              <div
+                key={String(row.id)}
+                onClick={() => openRow(row)}
+                style={{
+                  background: "#fff",
+                  border: "1px solid #f0f0f0",
+                  borderRadius: 12,
+                  padding: "var(--lcdp-card-pad, 12px)",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                  minHeight: "var(--lcdp-row-min-h, 56px)",
+                  boxSizing: "border-box",
+                  cursor: formRoute ? "pointer" : undefined,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontWeight: 600,
+                      fontSize: "calc(15px * var(--lcdp-font-scale, 1))",
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {cardTitleField
+                      ? renderCardCell(row, cardTitleField)
+                      : String(row.id)}
+                  </span>
+                  {cardStatusField && (
+                    <Tag style={{ marginInlineEnd: 0, flexShrink: 0 }}>
+                      {cellText(row, cardStatusField)}
+                    </Tag>
+                  )}
+                </div>
+                {cardBodyFields.map((f) => (
+                  <div
+                    key={f.key}
+                    style={{
+                      display: "flex",
+                      lineHeight: 1.6,
+                      padding: "2px 0",
+                      fontSize: "calc(13px * var(--lcdp-font-scale, 1))",
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: "#8c8c8c",
+                        width: 84,
+                        flexShrink: 0,
+                        fontSize: "calc(12px * var(--lcdp-font-scale, 1))",
+                        paddingTop: 1,
+                      }}
+                    >
+                      {f.label}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      {renderCardCell(row, f)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginTop: 4,
+            }}
+          >
+            <span style={{ color: "#8c8c8c", fontSize: 13 }}>
+              共 {total} 条
+            </span>
+            {rows.length < total && (
+              <Button
+                loading={loading}
+                style={{ minHeight: TOUCH_MIN }}
+                onClick={() => {
+                  appendRef.current = true;
+                  setPageIdx((p) => p + 1);
+                }}
+              >
+                加载更多
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <Table<Row>
         rowKey={(r) => String(r.id)}
         columns={tableColumns}
         dataSource={labelsPending ? [] : rows}
@@ -488,7 +668,8 @@ export function DataTable({ node }: NodeProps) {
           },
           style: formRoute ? { cursor: "pointer" } : undefined,
         })}
-      />
+        />
+      )}
     </div>
   );
 }
@@ -527,11 +708,14 @@ function ChildEditor({
   rows,
   onChange,
   readOnly = false,
+  cardMode = false,
 }: {
   child: Entity;
   rows: Row[];
   onChange: (rows: Row[]) => void;
   readOnly?: boolean;
+  /** 移动端卡片行呈现（M13，EntityForm single 时启用）：字段竖排成卡，其余口径与表格呈现完全一致 */
+  cardMode?: boolean;
 }) {
   const ctx = useRendererCtx();
   // 权限门控：与主表字段同口径——hidden 子字段不渲染列，readonly/masked 子字段
@@ -561,6 +745,92 @@ function ChildEditor({
     onChange(next);
   };
 
+  // 字段只读口径（表格/卡片两呈现共用同一表达式，保证门控零漂移）：
+  // 整表只读、字段级 readonly/masked、amount 小计字段恒只读
+  const fieldReadOnlyOf = (f: Field) =>
+    readOnly ||
+    fieldAccessOf(f.key) === "readonly" ||
+    fieldAccessOf(f.key) === "masked" ||
+    (f.key === "amount" && hasAmount);
+
+  const renderFieldInput = (row: Row, idx: number, f: Field) => (
+    <FieldInput
+      field={f}
+      value={row[f.key]}
+      onChange={(v) => updateRow(idx, f.key, v)}
+      adapter={ctx.adapter}
+      inChild={!cardMode}
+      linkage={{
+        entity: child.key,
+        recordId: typeof row.id === "string" ? row.id : undefined,
+      }}
+      readOnly={fieldReadOnlyOf(f)}
+    />
+  );
+
+  /* ---------- 移动端卡片行呈现（M13）：每行一卡、字段竖排，增删与门控口径同表格呈现 ---------- */
+  if (cardMode) {
+    return (
+      <div>
+        <div style={styles.sectionTitle}>{child.label}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {rows.length === 0 && (
+            <div style={styles.empty}>暂无{child.label}</div>
+          )}
+          {rows.map((row, idx) => (
+            <div
+              key={idx}
+              style={{
+                background: "#fff",
+                border: "1px solid #f0f0f0",
+                borderRadius: 12,
+                padding: "var(--lcdp-card-pad, 12px)",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+              }}
+            >
+              {fields.map((f) => (
+                <div key={f.key} style={{ marginBottom: 10 }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: "#374151",
+                      fontWeight: 500,
+                      marginBottom: 6,
+                    }}
+                  >
+                    {f.label}
+                    {f.required && <span style={styles.required}> *</span>}
+                  </div>
+                  {renderFieldInput(row, idx, f)}
+                </div>
+              ))}
+              {!readOnly && (
+                <div style={{ textAlign: "right" }}>
+                  <Button
+                    danger
+                    style={{ minHeight: TOUCH_MIN }}
+                    onClick={() => onChange(rows.filter((_, i) => i !== idx))}
+                  >
+                    删除
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {!readOnly && (
+          <Button
+            block
+            style={{ marginTop: 8, minHeight: TOUCH_MIN }}
+            onClick={() => onChange([...rows, {}])}
+          >
+            添加{child.label}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div style={styles.sectionTitle}>{child.label}</div>
@@ -581,24 +851,7 @@ function ChildEditor({
             <tr key={idx}>
               {fields.map((f) => (
                 <td key={f.key} style={styles.childTd}>
-                  <FieldInput
-                    field={f}
-                    value={row[f.key]}
-                    onChange={(v) => updateRow(idx, f.key, v)}
-                    adapter={ctx.adapter}
-                    inChild
-                    linkage={{
-                      entity: child.key,
-                      recordId:
-                        typeof row.id === "string" ? row.id : undefined,
-                    }}
-                    readOnly={
-                      readOnly ||
-                      fieldAccessOf(f.key) === "readonly" ||
-                      fieldAccessOf(f.key) === "masked" ||
-                      (f.key === "amount" && hasAmount)
-                    }
-                  />
+                  {renderFieldInput(row, idx, f)}
                 </td>
               ))}
               {!readOnly && (
@@ -643,6 +896,10 @@ export function EntityForm({ node }: NodeProps) {
   const canUpdate = !ctx.access || (accessActions?.includes("update") ?? false);
   const canDelete = !ctx.access || (accessActions?.includes("delete") ?? false);
   const children = entity ? childEntities(ctx.dataSchema, entity.key) : [];
+  /* 移动端单列呈现（M13）：仅 mobile 且呈现解析为 single 时启用；桌面解析恒为 standard、走原路径 */
+  const singleMode =
+    ctx.device === "mobile" &&
+    presentationFor(node, "EntityForm", ctx.device) === "single";
   const [values, setValues] = useState<Row>({});
   const [childRows, setChildRows] = useState<Record<string, Row[]>>({});
   const [childOriginal, setChildOriginal] = useState<Record<string, Row[]>>({});
@@ -859,15 +1116,51 @@ export function EntityForm({ node }: NodeProps) {
     }
   };
 
+  /* single 呈现样式（标签上置单列 + 工具栏吸底于安全区之上；规范 §5） */
+  const singleRowStyle: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    marginBottom: 14,
+  };
+  const singleLabelStyle: CSSProperties = {
+    fontSize: 13,
+    color: "#374151",
+    fontWeight: 500,
+  };
+  const singleControlStyle: CSSProperties = {
+    width: "100%",
+    minHeight: TOUCH_MIN,
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+  };
+  const singleToolbarStyle: CSSProperties = {
+    position: "sticky",
+    bottom: "calc(env(safe-area-inset-bottom, 0px) + 8px)",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    background: "#fff",
+    border: "1px solid #f0f0f0",
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 20,
+    boxShadow: "0 -2px 10px rgba(0,0,0,0.06)",
+    zIndex: 5,
+  };
+
   return (
-    <div style={styles.form}>
+    <div style={singleMode ? { maxWidth: "100%" } : styles.form}>
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
       )}
       {isEdit && (
-        <div style={styles.formRow}>
-          <div style={styles.label}>ID</div>
-          <div style={{ paddingTop: 5, fontSize: 14 }}>{id}</div>
+        <div style={singleMode ? singleRowStyle : styles.formRow}>
+          <div style={singleMode ? singleLabelStyle : styles.label}>ID</div>
+          <div style={{ paddingTop: singleMode ? 0 : 5, fontSize: 14 }}>
+            {id}
+          </div>
         </div>
       )}
       {entity.fields.map((f) => {
@@ -876,12 +1169,19 @@ export function EntityForm({ node }: NodeProps) {
         if (fieldAccess === "hidden") return null;
         const locked = fieldAccess === "readonly" || fieldAccess === "masked";
         return (
-          <div key={f.key} style={styles.formRow}>
-            <div style={styles.label}>
+          <div
+            key={f.key}
+            style={singleMode ? singleRowStyle : styles.formRow}
+          >
+            <div style={singleMode ? singleLabelStyle : styles.label}>
               {f.label}
               {f.required && <span style={styles.required}> *</span>}
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={
+                singleMode ? singleControlStyle : { flex: 1, minWidth: 0 }
+              }
+            >
               <FieldInput
                 field={f}
                 value={values[f.key]}
@@ -905,23 +1205,49 @@ export function EntityForm({ node }: NodeProps) {
             setChildRows((prev) => ({ ...prev, [child.key]: rows }))
           }
           readOnly={!(isEdit ? canUpdate : canCreate)}
+          cardMode={singleMode}
         />
       ))}
-      <div style={{ ...styles.toolbar, marginTop: 20 }}>
+      <div
+        style={
+          singleMode
+            ? singleToolbarStyle
+            : { ...styles.toolbar, marginTop: 20 }
+        }
+      >
         {(isEdit ? canUpdate : canCreate) && (
-          <Button type="primary" loading={saving} onClick={() => void save()}>
+          <Button
+            type="primary"
+            loading={saving}
+            style={singleMode ? { minHeight: TOUCH_MIN, flex: 1 } : undefined}
+            onClick={() => void save()}
+          >
             保存
           </Button>
         )}
-        <Button onClick={() => ctx.adapter.navigate(listRoute)}>
+        <Button
+          style={singleMode ? { minHeight: TOUCH_MIN } : undefined}
+          onClick={() => ctx.adapter.navigate(listRoute)}
+        >
           返回列表
         </Button>
         <div style={styles.spacer} />
-        {isEdit && canDelete && (
-          <Button danger onClick={() => void remove()}>
-            删除
-          </Button>
-        )}
+        {isEdit &&
+          canDelete &&
+          (singleMode ? (
+            <Dropdown
+              menu={{
+                items: [{ key: "delete", label: "删除", danger: true }],
+                onClick: () => void remove(),
+              }}
+            >
+              <Button style={{ minHeight: TOUCH_MIN }}>更多</Button>
+            </Dropdown>
+          ) : (
+            <Button danger onClick={() => void remove()}>
+              删除
+            </Button>
+          ))}
       </div>
     </div>
   );
@@ -2034,6 +2360,8 @@ export interface SchemaRendererProps {
   access?: RendererContextValue["access"];
   /** 设计模式（设计器画布）：节点可点选并回显选中态 */
   design?: RendererContextValue["design"];
+  /** 应用主题（快照 appConfig.theme）：移动端解析其 mobile 令牌组（M13） */
+  theme?: Record<string, unknown>;
   /** 自定义注册表（默认注册中心 v1；设计器可注入更多组件） */
   registry?: ComponentRegistry;
 }
@@ -2047,14 +2375,37 @@ export function SchemaRenderer({
   device = "desktop",
   access,
   design,
+  theme,
   registry,
 }: SchemaRendererProps) {
   const reg = registry ?? createDefaultRegistry();
+  const tree = <NodeView node={page.root} registry={reg} isRoot />;
+  // 移动端令牌注入（M13）：resolveMobileTheme 解析 appConfig.theme.mobile，
+  // 映射为 CSS 变量供 card/single 呈现与按钮热区消费；桌面端不注入、DOM 与原实现一致
+  if (device === "mobile") {
+    const mt = resolveMobileTheme(theme ?? {});
+    const compact = mt.density === "compact";
+    const vars = {
+      "--lcdp-touch-min": `${mt.touchMinPx}px`,
+      "--lcdp-font-scale": String(mt.fontScale),
+      "--lcdp-control-h": compact ? "36px" : "40px",
+      "--lcdp-card-pad": compact ? "10px" : "12px",
+      "--lcdp-row-min-h": compact ? "48px" : "56px",
+      fontSize: 14 * mt.fontScale,
+    } as CSSProperties;
+    return (
+      <RendererContext.Provider
+        value={{ adapter, dataSchema, page, params, device, access, design, theme }}
+      >
+        <div style={vars}>{tree}</div>
+      </RendererContext.Provider>
+    );
+  }
   return (
     <RendererContext.Provider
-      value={{ adapter, dataSchema, page, params, device, access, design }}
+      value={{ adapter, dataSchema, page, params, device, access, design, theme }}
     >
-      <NodeView node={page.root} registry={reg} isRoot />
+      {tree}
     </RendererContext.Provider>
   );
 }

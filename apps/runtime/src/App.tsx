@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Drawer,
   Form,
   Input,
   Layout,
@@ -81,19 +82,35 @@ function useHashRoute(): Route {
 
 type Device = "desktop" | "mobile";
 
-/** 设备上下文：窄屏（≤820px）走移动布局变体，宽屏走桌面变体 */
+/**
+ * 壳环境信号（M13）：Capacitor 运行时或 Web 侧设备桥（window.lcdpBridge）任一存在
+ * 即视为壳内——壳内恒移动形态，不受 WebView 宽度影响。
+ */
+function isShellEnv(): boolean {
+  const w = window as unknown as {
+    Capacitor?: unknown;
+    lcdpBridge?: unknown;
+  };
+  return Boolean(w.Capacitor ?? w.lcdpBridge);
+}
+
+/**
+ * 设备判定（M13 双信号）：宽度 ≤820px 或壳环境任一成立即 mobile。
+ * 壳环境在挂载时判定（桥在文档启动期注入，先于应用渲染）；非壳环境下随视口宽度变化切换。
+ */
 function useDevice(): Device {
-  const [device, setDevice] = useState<Device>(() =>
-    window.matchMedia("(max-width: 820px)").matches ? "mobile" : "desktop",
+  const shell = isShellEnv();
+  const [wide, setWide] = useState<boolean>(
+    () => !window.matchMedia("(max-width: 820px)").matches,
   );
   useEffect(() => {
+    if (shell) return;
     const mq = window.matchMedia("(max-width: 820px)");
-    const onChange = (e: MediaQueryListEvent) =>
-      setDevice(e.matches ? "mobile" : "desktop");
+    const onChange = (e: MediaQueryListEvent) => setWide(!e.matches);
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return device;
+  }, [shell]);
+  return shell || !wide ? "mobile" : "desktop";
 }
 
 /** 全局消息提示（适配器的 notify 契约实现，模块级稳定引用） */
@@ -339,6 +356,222 @@ function siteFooterText(cfg: AppConfigView | null, brand: string): string {
   );
 }
 
+/* ---------- 移动外壳（M13）：顶栏精简 + 底部导航，系统型外壳的移动形态 ---------- */
+
+/** 底部导航的一项：路由 key + 文案 + 可选角标（待办数） */
+interface MobileNavEntry {
+  key: string;
+  label: string;
+  badge?: number;
+}
+
+/** 把 antd 菜单项拍平为底部导航条目：分组展开为其子项（组标题不进底栏），JSX 标签项跳过 */
+function flattenMenuEntries(
+  items: MenuProps["items"],
+): { key: string; label: string }[] {
+  const out: { key: string; label: string }[] = [];
+  for (const item of items ?? []) {
+    if (!item) continue;
+    const it = item as {
+      key?: unknown;
+      label?: unknown;
+      children?: MenuProps["items"];
+    };
+    if (Array.isArray(it.children)) {
+      out.push(...flattenMenuEntries(it.children));
+      continue;
+    }
+    if (typeof it.key === "string" && typeof it.label === "string") {
+      out.push({ key: it.key, label: it.label });
+    }
+  }
+  return out;
+}
+
+/**
+ * 移动外壳（M13，《移动体验规范》§2）：顶部精简栏（应用名 + 右侧入口区）+ 底部导航
+ * （条目 ≤5 全量直达；更多时前 4 项直达、第 5 格「更多」聚合其余至底部抽屉，
+ * 抽屉尾部放外壳级动作如退出）+ 内容区（含底部安全区让位）。
+ * 返回行为跟随既有 hash 历史：导航只改 hash（与桌面 goPage 同路径），不自建路由栈。
+ * 助手/咨询的浮动入口由各自组件自带（fixed 浮钮 + 全屏抽屉），在本外壳下保持挂载即保持可达。
+ */
+function MobileShell({
+  title,
+  entries,
+  selectedKey,
+  onNavigate,
+  topRight,
+  moreFooter,
+  children,
+}: {
+  title: string;
+  entries: MobileNavEntry[];
+  selectedKey: string | null;
+  onNavigate: (route: string) => void;
+  topRight?: ReactNode;
+  /** 「更多」抽屉尾部的外壳级动作（退出登录等）；无更多条目时不渲染抽屉，此槽位随之失效 */
+  moreFooter?: ReactNode;
+  children: ReactNode;
+}) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const tabs = entries.length <= 5 ? entries : entries.slice(0, 4);
+  const rest = entries.length <= 5 ? [] : entries.slice(4);
+  const go = (key: string) => {
+    setMoreOpen(false);
+    onNavigate(key);
+  };
+  const tabButton = (e: MobileNavEntry) => {
+    const active = e.key === selectedKey;
+    return (
+      <button
+        key={e.key}
+        type="button"
+        onClick={() => go(e.key)}
+        style={{
+          flex: 1,
+          minHeight: 44,
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 2,
+          fontSize: 11,
+          color: active ? "#1677ff" : "#646a73",
+          fontWeight: active ? 600 : 400,
+          padding: "4px 2px",
+        }}
+      >
+        <span style={{ position: "relative", fontSize: 13, lineHeight: 1.3 }}>
+          {e.label}
+          {!!e.badge && (
+            <Badge
+              count={e.badge}
+              size="small"
+              style={{ position: "absolute", top: -6, right: -18 }}
+            />
+          )}
+        </span>
+      </button>
+    );
+  };
+  return (
+    <Layout style={{ minHeight: "100vh" }}>
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 20,
+          background: "#fff",
+          borderBottom: "1px solid #f0f0f0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          minHeight: 48,
+          padding: "env(safe-area-inset-top, 0px) 14px 0",
+          boxSizing: "border-box",
+        }}
+      >
+        <span
+          style={{
+            fontWeight: 700,
+            fontSize: 16,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {title}
+        </span>
+        {topRight}
+      </div>
+      <Layout.Content
+        style={{
+          padding:
+            "12px 12px calc(68px + env(safe-area-inset-bottom, 0px))",
+          background: "#f7f8fa",
+        }}
+      >
+        {children}
+      </Layout.Content>
+      <nav
+        style={{
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 20,
+          background: "#fff",
+          borderTop: "1px solid #f0f0f0",
+          display: "flex",
+          alignItems: "stretch",
+          minHeight: 56,
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+          boxSizing: "border-box",
+        }}
+      >
+        {tabs.map(tabButton)}
+        {rest.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setMoreOpen(true)}
+            style={{
+              flex: 1,
+              minHeight: 44,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              fontSize: 13,
+              color: "#646a73",
+              padding: "4px 2px",
+            }}
+          >
+            ⋯ 更多
+          </button>
+        )}
+      </nav>
+      {rest.length > 0 && (
+        <Drawer
+          title="更多"
+          placement="bottom"
+          height="auto"
+          open={moreOpen}
+          onClose={() => setMoreOpen(false)}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              paddingBottom: "env(safe-area-inset-bottom, 0px)",
+            }}
+          >
+            {rest.map((e) => (
+              <Button
+                key={e.key}
+                block
+                size="large"
+                type={e.key === selectedKey ? "primary" : "default"}
+                style={{ minHeight: 48, textAlign: "left" }}
+                onClick={() => go(e.key)}
+              >
+                {e.label}
+                {!!e.badge && (
+                  <Badge count={e.badge} size="small" offset={[6, -2]} />
+                )}
+              </Button>
+            ))}
+            {moreFooter}
+          </div>
+        </Drawer>
+      )}
+    </Layout>
+  );
+}
+
 /** 站点横排导航：把菜单项拍平（分组展开为其子项，组标题不进横排） */
 function flatNavItems(items: MenuProps["items"]): MenuProps["items"] {
   const out: NonNullable<MenuProps["items"]> = [];
@@ -502,6 +735,7 @@ function PublicShell({
       params={params}
       device={device}
       access={access}
+      theme={primary.appConfig?.theme}
     />
   ) : (
     <Typography.Text type="secondary">页面不存在：{inPath}</Typography.Text>
@@ -525,11 +759,38 @@ function PublicShell({
               </Button>
             }
           />
-          <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
+          <Layout.Content
+            style={{
+              padding: device === "mobile" ? "16px 12px" : "24px 28px",
+              background: "#fff",
+            }}
+          >
             {content}
           </Layout.Content>
           <SiteFooter text={siteFooterText(cfg, brand)} />
         </Layout>
+      </ConfigProvider>
+    );
+  }
+
+  /* 公开面移动形态（M13）：与登录外壳同一移动外壳，顶栏保留登录入口；
+     站点型公开面不套用底部导航（上方 site 分支仅调整窄屏内边距） */
+  if (device === "mobile") {
+    return (
+      <ConfigProvider locale={zhCN} theme={{ token }}>
+        <MobileShell
+          title={primary.name}
+          entries={flattenMenuEntries(menu.items)}
+          selectedKey={current ? current.route : null}
+          onNavigate={goPage}
+          topRight={
+            <Button type="primary" size="small" onClick={onLogin}>
+              登录
+            </Button>
+          }
+        >
+          {content}
+        </MobileShell>
       </ConfigProvider>
     );
   }
@@ -1087,10 +1348,17 @@ function AppView({
       params={params}
       device={device}
       access={currentLoaded.snapshot.myAccess?.entities}
+      theme={currentLoaded.snapshot.appConfig?.theme}
     />
   ) : (
     <Typography.Text type="secondary">页面不存在：{inPath}</Typography.Text>
   );
+
+  /** 底部导航条目（M13 移动外壳）：待办中心（角标 = 多应用待办汇总，与侧栏同口径）+ 菜单模型拍平 */
+  const navEntries: MobileNavEntry[] = [
+    { key: "/flow", label: "待办中心", badge: todoCount },
+    ...flattenMenuEntries(menu.items),
+  ];
 
   const cfg = configOf(primary.snapshot.appConfig);
   /** 站点型外壳（M10）：仅入口模式且主应用声明 shell = site 时启用，预览恒走系统外壳 */
@@ -1107,11 +1375,65 @@ function AppView({
             searchRoute={globalVarText(cfg, "siteSearchRoute")}
             right={<Button onClick={onLogout}>退出（{user.username}）</Button>}
           />
-          <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
+          <Layout.Content
+            style={{
+              padding: device === "mobile" ? "16px 12px" : "24px 28px",
+              background: "#fff",
+            }}
+          >
             {content}
           </Layout.Content>
           <SiteFooter text={siteFooterText(cfg, brand)} />
         </Layout>
+        <AssistantPanel
+          appId={activeLoaded.app.id}
+          context={assistantContext}
+          navigate={goPage}
+        />
+        {supportWidget}
+      </ConfigProvider>
+    );
+  }
+
+  /* 移动外壳（M13）：系统型外壳在 mobile 时切换为顶栏 + 底部导航形态，桌面外壳零改动；
+     站点型外壳不套用（只做视口回归，见上方 site 分支的窄屏内边距） */
+  if (device === "mobile") {
+    return (
+      <ConfigProvider locale={zhCN} theme={{ token }}>
+        <MobileShell
+          title={brandTextOf(cfg, primary.snapshot.app.name)}
+          entries={navEntries}
+          selectedKey={isFlow ? "/flow" : current ? current.route : null}
+          onNavigate={goPage}
+          topRight={
+            preview ? (
+              <Button
+                size="small"
+                onClick={() => {
+                  window.location.hash = "#/";
+                }}
+              >
+                入口首页
+              </Button>
+            ) : (
+              <Button type="text" size="small" onClick={onLogout}>
+                退出
+              </Button>
+            )
+          }
+          moreFooter={
+            <Button
+              block
+              size="large"
+              style={{ minHeight: 48 }}
+              onClick={onLogout}
+            >
+              退出（{user.username}）
+            </Button>
+          }
+        >
+          {content}
+        </MobileShell>
         <AssistantPanel
           appId={activeLoaded.app.id}
           context={assistantContext}

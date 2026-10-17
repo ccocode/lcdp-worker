@@ -20,6 +20,7 @@ import {
 } from "antd";
 import type { TreeDataNode, TreeProps } from "antd";
 import { SchemaRenderer, componentCatalog } from "@lcdp/renderer";
+import { PRESENTATION_VARIANTS } from "@naka1205/schema";
 import type {
   ComponentNode,
   DataSchema,
@@ -44,6 +45,14 @@ type CatalogItem = (typeof componentCatalog)[number];
 type Device = "desktop" | "mobile";
 
 const DATA_TYPES = ["DataTable", "EntityForm", "Detail", "StatCard", "Chart", "ChartPlaceholder", "ContentList"];
+
+/** 呈现枚举的中文名（M13，与 PRESENTATION_VARIANTS 注册表的枚举值对应） */
+const PRESENTATION_LABELS: Record<string, string> = {
+  table: "表格",
+  card: "卡片",
+  standard: "标准",
+  single: "单列",
+};
 
 /** 视图过滤算子（与服务端 vf 编译全集对齐）：字面量比较 + 字段间比较（*Field，value 为被比字段 key） */
 const FILTER_OP_OPTIONS = [
@@ -233,6 +242,8 @@ export interface PageDesignerProps {
   fragments: FragmentDef[] | null;
   onPagesChange: (pages: PageSchema[] | null) => void;
   onFragmentsChange: (fragments: FragmentDef[] | null) => void;
+  /** 应用主题（appConfig.theme）：画布预览与运行态同口径消费其 mobile 令牌组（M13） */
+  theme?: Record<string, unknown>;
 }
 
 export default function PageDesigner({
@@ -242,6 +253,7 @@ export default function PageDesigner({
   fragments,
   onPagesChange,
   onFragmentsChange,
+  theme,
 }: PageDesignerProps) {
   const pagesArr = useMemo(() => pages ?? [], [pages]);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
@@ -783,6 +795,22 @@ export default function PageDesigner({
       else n.layout = layout;
     });
 
+  /** 呈现槽位写入（M13）：按设备写 node.presentation[device]，清空后无键则整段删除（草稿保持干净） */
+  const patchPresentation = (
+    nodeId: string,
+    deviceKey: "desktop" | "mobile",
+    value: string | undefined,
+  ) =>
+    mutateNode(nodeId, (n) => {
+      const pres: { desktop?: string; mobile?: string } = {
+        ...(n.presentation ?? {}),
+      };
+      if (value === undefined) delete pres[deviceKey];
+      else pres[deviceKey] = value;
+      if (Object.keys(pres).length === 0) delete n.presentation;
+      else n.presentation = pres;
+    });
+
   const patchView = (nodeId: string, patch: Partial<DataView>) =>
     mutateNode(nodeId, (n) => {
       if (!n.binding?.source) return;
@@ -1224,6 +1252,56 @@ export default function PageDesigner({
           )}
         </Space>
 
+        {/* 通用：呈现变体（M13）——仅注册表有条目的组件显示；未选即注册表默认 */}
+        {PRESENTATION_VARIANTS[node.type] && (
+          <>
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+              呈现变体（双端）
+            </Typography.Text>
+            <Space direction="vertical" size={6} style={{ display: "flex", marginBottom: 12 }}>
+              <Space size={8}>
+                <Typography.Text type="secondary">桌面</Typography.Text>
+                <Select
+                  size="small"
+                  style={{ width: 150 }}
+                  allowClear
+                  placeholder={`默认（${PRESENTATION_VARIANTS[node.type]!.defaultDesktop}）`}
+                  value={node.presentation?.desktop}
+                  onChange={(v) => patchPresentation(node.id, "desktop", v)}
+                  options={PRESENTATION_VARIANTS[node.type]!.desktop.map(
+                    (v) => ({
+                      value: v,
+                      label: PRESENTATION_LABELS[v] ?? v,
+                    }),
+                  )}
+                />
+              </Space>
+              <Space size={8}>
+                <Typography.Text type="secondary">移动</Typography.Text>
+                <Select
+                  size="small"
+                  style={{ width: 150 }}
+                  allowClear
+                  placeholder={`默认（${PRESENTATION_VARIANTS[node.type]!.defaultMobile}）`}
+                  value={node.presentation?.mobile}
+                  onChange={(v) => patchPresentation(node.id, "mobile", v)}
+                  options={PRESENTATION_VARIANTS[node.type]!.mobile.map(
+                    (v) => ({
+                      value: v,
+                      label: PRESENTATION_LABELS[v] ?? v,
+                    }),
+                  )}
+                />
+              </Space>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                未选时取注册表默认：桌面{" "}
+                {PRESENTATION_VARIANTS[node.type]!.defaultDesktop} · 移动{" "}
+                {PRESENTATION_VARIANTS[node.type]!.defaultMobile}
+              </Typography.Text>
+            </Space>
+          </>
+        )}
+
         {/* 通用：同级操作 */}
         <Space size={6} wrap style={{ marginBottom: 14 }}>
           {!isRoot && (
@@ -1282,6 +1360,17 @@ export default function PageDesigner({
                 onChange={(v) => patchProps(node.id, { pageSize: v ?? undefined })}
               />
             </Space>
+            <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
+              卡片标题列（移动端卡片呈现）
+            </Typography.Text>
+            <Select
+              style={{ width: "100%", marginBottom: 12 }}
+              allowClear
+              placeholder="默认首个可见列"
+              value={props.cardTitleField as string | undefined}
+              onChange={(v) => patchProps(node.id, { cardTitleField: v })}
+              options={fieldOptions(entity)}
+            />
             <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
               表单路由（新建/编辑跳往）
             </Typography.Text>
@@ -2060,6 +2149,7 @@ export default function PageDesigner({
                   dataSchema={data}
                   adapter={adapter}
                   device={device}
+                  theme={theme}
                   design={{
                     selectedId: selectedNodeId ?? undefined,
                     onSelect: (id: string) => {

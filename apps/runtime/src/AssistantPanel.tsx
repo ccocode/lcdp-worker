@@ -306,7 +306,7 @@ export default function AssistantPanel({
       </Button>
       <Drawer
         title="✦ 智能助手"
-        width={480}
+        width={"min(480px, 100vw)"}
         open={open}
         onClose={() => setOpen(false)}
         extra={
