@@ -805,6 +805,18 @@ function Designer({
       else delete next[key];
       b.appConfig = { ...(b.appConfig ?? { theme: {} }), globalVars: next };
     });
+  /** 生效会员域（会员试点）：写入 appConfig.memberScope，空 = 本应用自成一域 */
+  const memberScope =
+    typeof working.appConfig?.memberScope === "string"
+      ? working.appConfig.memberScope
+      : "";
+  const setMemberScope = (v: string) =>
+    updateBundle((b) => {
+      const next: AppConfig = { ...(b.appConfig ?? { theme: {} }) };
+      if (v) next.memberScope = v;
+      else delete next.memberScope;
+      b.appConfig = next;
+    });
   const colorPrimary =
     typeof theme.colorPrimary === "string" ? theme.colorPrimary : "#1677ff";
 
@@ -858,6 +870,25 @@ function Designer({
           </Space>
         </>
       )}
+      <Typography.Title level={5} style={{ marginTop: 28 }}>
+        会员
+      </Typography.Title>
+      <Space size={10}>
+        <Typography.Text style={{ width: 90 }}>会员域</Typography.Text>
+        <Input
+          style={{ width: 320 }}
+          defaultValue={memberScope}
+          key={`member-scope-${design.app.id}`}
+          placeholder="留空 = 本应用（一期单应用单域）"
+          onBlur={(e) => setMemberScope(e.target.value.trim())}
+        />
+      </Space>
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 12, marginTop: 8, maxWidth: 560 }}
+      >
+        会员按「会员域」隔离：缺省时本应用自成一域；多个应用填同一个会员域值（如品牌名）即共用一套会员账号（一处注册、处处登录，数据权限仍各应用独立）。会员可见页面与可读写实体在「权限」页签的会员策略区配置。
+      </Typography.Paragraph>
       <Typography.Title level={5} style={{ marginTop: 28 }}>
         主题
       </Typography.Title>

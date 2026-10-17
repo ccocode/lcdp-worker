@@ -271,6 +271,87 @@ export interface SupportSessionDetail {
   messages: SupportMessage[];
 }
 
+/** 会员策略（平台 permissions.member，形状与公开策略不同构：readable/writable 为实体 key 列表） */
+export interface MemberPolicy {
+  /** 会员可见页面 route 列表（外壳据此装配会员页与菜单） */
+  pages: string[];
+  /** 会员可读实体 key 列表 */
+  readable: string[];
+  /** 会员可写（新建/改己行）实体 key 列表 */
+  writable: string[];
+  /** 归属映射：实体 key → 归属字段 key（行读写强制归属当前会员） */
+  owners: Record<string, string>;
+}
+
+export const EMPTY_MEMBER_POLICY: MemberPolicy = {
+  pages: [],
+  readable: [],
+  writable: [],
+  owners: {},
+};
+
+/** 应用会员简档（注册表 platform_app_members 的前端视图，不含凭据） */
+export interface MemberInfo {
+  id: string;
+  identifier: string;
+  displayName: string | null;
+  scope: string;
+  tenantId?: string;
+}
+
+/** 会员会话（localStorage `lcdp.member.<host>` 的存储体；与员工/访客键隔离） */
+export interface MemberSession {
+  token: string;
+  member: MemberInfo;
+  policy: MemberPolicy;
+  appId: string;
+}
+
+/** 注册/登录成功响应（令牌 + 简档 + 当前已发布会员策略） */
+export interface MemberAuthResult {
+  token: string;
+  member: MemberInfo;
+  policy: MemberPolicy;
+}
+
+function memberSessionKey(host: string): string {
+  return `lcdp.member.${host}`;
+}
+
+/** 读本机存的会员会话；appId 不符（同 host 换过主应用）视为无会话 */
+export function loadMemberSession(
+  host: string,
+  appId: string,
+): MemberSession | null {
+  try {
+    const raw = localStorage.getItem(memberSessionKey(host));
+    if (!raw) return null;
+    const s = JSON.parse(raw) as MemberSession;
+    if (!s || typeof s.token !== "string" || !s.member || s.appId !== appId) {
+      return null;
+    }
+    return {
+      token: s.token,
+      member: s.member,
+      policy: { ...EMPTY_MEMBER_POLICY, ...(s.policy ?? {}) },
+      appId: s.appId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function storeMemberSession(
+  host: string,
+  session: MemberSession | null,
+): void {
+  if (session) {
+    localStorage.setItem(memberSessionKey(host), JSON.stringify(session));
+  } else {
+    localStorage.removeItem(memberSessionKey(host));
+  }
+}
+
 /** 公开（匿名）入口解析结果：primary 为入口首个应用的公开面（无公开页时为 null） */
 export interface PublicEntryResult {
   entry: { id: string; name: string } | null;
@@ -291,6 +372,8 @@ export interface PublicEntryResult {
     } | null;
     /** 公开策略（决定哪些实体可读、哪些可提交表单） */
     public: PublicPolicy;
+    /** 会员策略（会员试点）：非空 pages 时外壳呈现会员区，会员页数据由 /member 面执法 */
+    member: MemberPolicy;
   } | null;
 }
 
@@ -368,6 +451,171 @@ async function supportFetch<T>(
   }
   return body as T;
 }
+
+/**
+ * 会员组请求（会员试点）：凭会员令牌（Bearer）调用 /member 面，与员工令牌互斥。
+ * token 由调用方经 getter 注入（外壳的会话状态是唯一事实源）；401 时回调
+ * onUnauthorized 让外壳清会话回落未登录态。错误处理与 apiFetch 同构。
+ */
+async function memberFetch<T>(
+  path: string,
+  getToken: () => string | null,
+  init?: RequestInit,
+  onUnauthorized?: () => void,
+): Promise<T> {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
+  });
+  const body = (await res.json().catch(() => null)) as
+    | (Record<string, unknown> & { message?: string; error?: string })
+    | null;
+  if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.();
+    const err = new Error(
+      body?.message ?? body?.error ?? `请求失败 (${res.status})`,
+    ) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return body as T;
+}
+
+function memberListSuffix(params?: {
+  limit?: number;
+  offset?: number;
+  filters?: Record<string, string>;
+  vf?: ViewFilter[];
+  sort?: { field: string; dir: "asc" | "desc" };
+}): string {
+  const qs = new URLSearchParams();
+  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.offset) qs.set("offset", String(params.offset));
+  if (params?.sort) qs.set("sort", `${params.sort.field}:${params.sort.dir}`);
+  for (const [k, v] of Object.entries(params?.filters ?? {})) qs.set(k, v);
+  if (params?.vf?.length) qs.set("vf", JSON.stringify(params.vf));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+/**
+ * 会员客户端（会员试点）：账号端点（register/login 无令牌、me 带令牌）与
+ * 会员数据面 CRUD。数据面执法在服务端（策略 + 归属），前端只透传令牌。
+ */
+export const memberApi = {
+  /** 注册：201 返回令牌 + 简档 + 策略（注册即登录态） */
+  async register(
+    appId: string,
+    body: { identifier: string; password: string; displayName?: string },
+  ): Promise<MemberAuthResult> {
+    return memberFetch<MemberAuthResult>(
+      `/member/apps/${encodeURIComponent(appId)}/register`,
+      () => null,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
+  /** 登录：200 返回令牌 + 简档 + 策略 */
+  async login(
+    appId: string,
+    body: { identifier: string; password: string },
+  ): Promise<MemberAuthResult> {
+    return memberFetch<MemberAuthResult>(
+      `/member/apps/${encodeURIComponent(appId)}/login`,
+      () => null,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
+  /** 当前会员简档与最新策略（外壳恢复会话时刷新 policy 用；401 → 清会话） */
+  async me(
+    appId: string,
+    getToken: () => string | null,
+    onUnauthorized?: () => void,
+  ): Promise<{ member: MemberInfo; policy: MemberPolicy }> {
+    return memberFetch<{ member: MemberInfo; policy: MemberPolicy }>(
+      `/member/apps/${encodeURIComponent(appId)}/me`,
+      getToken,
+      undefined,
+      onUnauthorized,
+    );
+  },
+  data: {
+    async list(
+      appId: string,
+      getToken: () => string | null,
+      entity: string,
+      params?: {
+        limit?: number;
+        offset?: number;
+        filters?: Record<string, string>;
+        vf?: ViewFilter[];
+        sort?: { field: string; dir: "asc" | "desc" };
+      },
+      onUnauthorized?: () => void,
+    ): Promise<ListResult> {
+      return memberFetch<ListResult>(
+        `/member/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}${memberListSuffix(params)}`,
+        getToken,
+        undefined,
+        onUnauthorized,
+      );
+    },
+    async get(
+      appId: string,
+      getToken: () => string | null,
+      entity: string,
+      id: string,
+      onUnauthorized?: () => void,
+    ): Promise<Row | null> {
+      try {
+        const res = await memberFetch<{ row: Row }>(
+          `/member/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+          getToken,
+          undefined,
+          onUnauthorized,
+        );
+        return res.row;
+      } catch {
+        return null;
+      }
+    },
+    async create(
+      appId: string,
+      getToken: () => string | null,
+      entity: string,
+      data: Row,
+      onUnauthorized?: () => void,
+    ): Promise<Row> {
+      const res = await memberFetch<{ row: Row }>(
+        `/member/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}`,
+        getToken,
+        { method: "POST", body: JSON.stringify(data) },
+        onUnauthorized,
+      );
+      return res.row;
+    },
+    async update(
+      appId: string,
+      getToken: () => string | null,
+      entity: string,
+      id: string,
+      data: Row,
+      onUnauthorized?: () => void,
+    ): Promise<Row> {
+      const res = await memberFetch<{ row: Row }>(
+        `/member/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+        getToken,
+        { method: "PUT", body: JSON.stringify(data) },
+        onUnauthorized,
+      );
+      return res.row;
+    },
+  },
+};
 
 type RawRecord = Record<string, unknown>;
 
@@ -1040,6 +1288,68 @@ export function makePublicAdapter(
     },
     remove: () => {
       throw new Error("公开访问不可修改");
+    },
+    options: async (entity): Promise<SelectOption[]> => {
+      const res = await list(entity, { limit: 200 });
+      return res.rows.map((r) => ({ value: String(r.id), label: pickLabel(r) }));
+    },
+    navigate,
+    notify,
+  };
+}
+
+/**
+ * 会员适配器（会员试点）：与公开适配器同构，数据走 /member 面——列表/详情/
+ * 新建/改己行由服务端按会员策略 + 归属执法；令牌经 getter 注入（外壳会话状态
+ * 为唯一事实源），401 时 onUnauthorized 回调清会话。聚合与删除不在会员面口径内；
+ * 文件上传会员面暂不支持（试点会员表单无文件字段），资产读取沿用公开口径。
+ */
+export function makeMemberAdapter(
+  appId: string,
+  navigate: (to: string) => void,
+  notify: (message: string, kind?: "ok" | "error") => void,
+  getToken: () => string | null,
+  onUnauthorized?: () => void,
+): RuntimeAdapter {
+  const list = (
+    entity: string,
+    params?: {
+      limit?: number;
+      offset?: number;
+      filters?: Record<string, string>;
+      vf?: ViewFilter[];
+      sort?: { field: string; dir: "asc" | "desc" };
+    },
+  ): Promise<ListResult> =>
+    memberApi.data.list(appId, getToken, entity, params, onUnauthorized);
+  return {
+    list,
+    aggregate: () => {
+      throw new Error("会员面不支持聚合查询");
+    },
+    aggregateGrouped: () => {
+      throw new Error("会员面不支持聚合查询");
+    },
+    uploadAsset: () => {
+      throw new Error("会员面暂不支持文件上传");
+    },
+    // 资产元数据/内容沿用公开口径（与 makePublicAdapter 同处理）
+    assetsMeta: async (ids: string[]): Promise<AssetMeta[]> => {
+      try {
+        return await api.assets.meta(ids);
+      } catch {
+        return [];
+      }
+    },
+    assetContentUrl: (id: string) => api.assets.contentUrl(id),
+    get: (entity, id) =>
+      memberApi.data.get(appId, getToken, entity, id, onUnauthorized),
+    create: (entity, data) =>
+      memberApi.data.create(appId, getToken, entity, data, onUnauthorized),
+    update: (entity, id, data) =>
+      memberApi.data.update(appId, getToken, entity, id, data, onUnauthorized),
+    remove: () => {
+      throw new Error("会员不可删除数据");
     },
     options: async (entity): Promise<SelectOption[]> => {
       const res = await list(entity, { limit: 200 });

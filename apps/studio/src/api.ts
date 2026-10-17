@@ -58,6 +58,8 @@ export interface AppConfig {
   /** 外壳形态：system（默认）| site（站点型外壳，顶栏导航 + 页脚），M10 起由应用设置维护 */
   shell?: string;
   globalVars?: Record<string, unknown>;
+  /** 生效会员域（会员试点）：缺省 = 本应用 id；多应用填同一值即共用一套会员 */
+  memberScope?: string;
 }
 
 /** 页面片段定义（与平台 FragmentDef 对齐） */

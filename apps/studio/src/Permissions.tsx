@@ -75,6 +75,29 @@ const ROW_KIND_OPTIONS: { value: RowRule["kind"]; label: string }[] = [
   { value: "own", label: "仅本人" },
 ];
 
+/**
+ * 会员策略（会员试点，本地结构形状）：与平台 memberPolicySchema 同构
+ * （pages / readable / writable / owners），studio 不强依赖 schema 新版类型，
+ * 读写一律经此形状对 bundle.permissions.member 做结构化访问。
+ */
+export interface MemberPolicyShape {
+  /** 会员可见页面 route 列表 */
+  pages: string[];
+  /** 会员可读实体 key 列表 */
+  readable: string[];
+  /** 会员可写（新建/改己行）实体 key 列表 */
+  writable: string[];
+  /** 归属映射：实体 key → 归属字段 key（行读写强制归属当前会员） */
+  owners: Record<string, string>;
+}
+
+export const EMPTY_MEMBER_POLICY: MemberPolicyShape = {
+  pages: [],
+  readable: [],
+  writable: [],
+  owners: {},
+};
+
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 function errText(err: unknown): string {
@@ -94,6 +117,13 @@ export function defaultPermissions(appId: string): PermissionSchema {
     { key: "employee", label: "员工" },
     { key: "warehouse", label: "仓库管理员" },
   ];
+  // 会员策略缺省空（会员无任何数据面）；经本地形状并入字面量，兼容 schema 类型新旧版本
+  const member: MemberPolicyShape = {
+    pages: [],
+    readable: [],
+    writable: [],
+    owners: {},
+  };
   return {
     id: `${appId}:permissions`,
     kind: "permission",
@@ -105,7 +135,8 @@ export function defaultPermissions(appId: string): PermissionSchema {
     roles,
     permissions: roles.map((r) => emptyRolePermission(r.key)),
     public: { pages: [], readable: [], forms: [] },
-  };
+    member,
+  } as PermissionSchema;
 }
 
 export interface PermissionsProps {
@@ -239,6 +270,27 @@ export default function Permissions({
     mutate((p) => {
       entryOf(p, role).menus = menus;
     });
+
+  // ---------------------------------------------------------- 会员策略（本地形状读写）
+  const memberPolicy: MemberPolicyShape = useMemo(() => {
+    const raw = (
+      permissions as { member?: Partial<MemberPolicyShape> } | null
+    )?.member;
+    return {
+      pages: raw?.pages ?? [],
+      readable: raw?.readable ?? [],
+      writable: raw?.writable ?? [],
+      owners: raw?.owners ?? {},
+    };
+  }, [permissions]);
+
+  const setMemberPolicy = (next: MemberPolicyShape) =>
+    mutate((p) => {
+      (p as unknown as { member: MemberPolicyShape }).member = next;
+    });
+
+  const setMemberOwners = (owners: Record<string, string>) =>
+    setMemberPolicy({ ...memberPolicy, owners });
 
   // ---------------------------------------------------------- 角色增删
   const [roleModalOpen, setRoleModalOpen] = useState(false);
@@ -849,7 +901,147 @@ export default function Permissions({
         </Space>
       </Space>
 
-      {/* ------------------------------------------------ 区块五：待审区 */}
+      {/* ------------------------------------------------ 区块五：会员策略 */}
+      <Typography.Title level={5} style={{ marginTop: 28 }}>
+        会员策略（应用会员）
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        应用会员是前台自助注册的第三类主体（区别于员工角色与匿名访客）：会员页面仅登录会员可见，会员数据经会员面按此策略与归属执法，未声明的实体会员一律不可见、不可读写。归属字段声明后（如订单的
+        member_id），该实体的行读写强制收口到当前会员本人。多应用共用一套会员在「应用设置」的会员域里配置。
+      </Typography.Paragraph>
+      <Space direction="vertical" size={12} style={{ display: "flex" }}>
+        <Space size={10} wrap align="start">
+          <Typography.Text style={{ width: 110, paddingTop: 4 }}>会员页面</Typography.Text>
+          <Select
+            mode="multiple"
+            size="small"
+            style={{ width: 560 }}
+            placeholder="选择仅会员可见的页面"
+            value={memberPolicy.pages}
+            options={routeOptions}
+            onChange={(v: string[]) =>
+              setMemberPolicy({ ...memberPolicy, pages: v })
+            }
+          />
+        </Space>
+        <Space size={10} wrap align="start">
+          <Typography.Text style={{ width: 110, paddingTop: 4 }}>会员可读实体</Typography.Text>
+          <Select
+            mode="multiple"
+            size="small"
+            style={{ width: 560 }}
+            placeholder="选择会员可读的实体"
+            value={memberPolicy.readable}
+            options={entityOptions}
+            onChange={(v: string[]) =>
+              setMemberPolicy({ ...memberPolicy, readable: v })
+            }
+          />
+        </Space>
+        <Space size={10} wrap align="start">
+          <Typography.Text style={{ width: 110, paddingTop: 4 }}>会员可写实体</Typography.Text>
+          <Select
+            mode="multiple"
+            size="small"
+            style={{ width: 560 }}
+            placeholder="选择会员可新建/改己行的实体"
+            value={memberPolicy.writable}
+            options={entityOptions}
+            onChange={(v: string[]) => {
+              const owners = Object.fromEntries(
+                Object.entries(memberPolicy.owners).filter(([e]) =>
+                  v.includes(e),
+                ),
+              );
+              setMemberPolicy({ ...memberPolicy, writable: v, owners });
+            }}
+          />
+        </Space>
+        <Space size={10} wrap align="start">
+          <Typography.Text style={{ width: 110, paddingTop: 4 }}>归属字段</Typography.Text>
+          <Space direction="vertical" size={6}>
+            {Object.entries(memberPolicy.owners).map(([entity, field]) => {
+              const ent = data.entities.find((e) => e.key === entity);
+              return (
+                <Space key={entity} size={8} wrap>
+                  <Select
+                    size="small"
+                    style={{ width: 200 }}
+                    value={entity}
+                    options={entityOptions.filter((o) =>
+                      memberPolicy.writable.includes(o.value),
+                    )}
+                    onChange={(v: string) => {
+                      const next = { ...memberPolicy.owners };
+                      delete next[entity];
+                      const firstField = data.entities.find(
+                        (e) => e.key === v,
+                      )?.fields[0]?.key;
+                      if (firstField) next[v] = firstField;
+                      setMemberOwners(next);
+                    }}
+                  />
+                  <Select
+                    size="small"
+                    style={{ width: 220 }}
+                    placeholder="选择归属字段"
+                    value={field}
+                    options={(ent?.fields ?? []).map((f) => ({
+                      value: f.key,
+                      label: `${f.label}（${f.key}）`,
+                    }))}
+                    onChange={(v: string) =>
+                      setMemberOwners({ ...memberPolicy.owners, [entity]: v })
+                    }
+                  />
+                  <Button
+                    size="small"
+                    danger
+                    onClick={() => {
+                      const next = { ...memberPolicy.owners };
+                      delete next[entity];
+                      setMemberOwners(next);
+                    }}
+                  >
+                    删除
+                  </Button>
+                </Space>
+              );
+            })}
+            <Space size={8} align="center">
+              <Button
+                size="small"
+                disabled={
+                  memberPolicy.writable.length === 0 ||
+                  memberPolicy.writable.every((e) => e in memberPolicy.owners)
+                }
+                onClick={() => {
+                  const entity = memberPolicy.writable.find(
+                    (e) => !(e in memberPolicy.owners),
+                  );
+                  const firstField = data.entities.find(
+                    (e) => e.key === entity,
+                  )?.fields[0]?.key;
+                  if (entity && firstField)
+                    setMemberOwners({
+                      ...memberPolicy.owners,
+                      [entity]: firstField,
+                    });
+                }}
+              >
+                添加归属
+              </Button>
+              {memberPolicy.writable.length === 0 && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  先选「会员可写实体」，再为需按会员隔离的实体指定归属字段（如订单的 member_id）。
+                </Typography.Text>
+              )}
+            </Space>
+          </Space>
+        </Space>
+      </Space>
+
+      {/* ------------------------------------------------ 区块六：待审区 */}
       <SubmissionsSection
         submissions={submissions}
         subsError={subsError}

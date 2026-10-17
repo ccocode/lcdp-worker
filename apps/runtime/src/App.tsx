@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Alert,
@@ -11,7 +11,10 @@ import {
   Input,
   Layout,
   Menu,
+  Modal,
+  Space,
   Spin,
+  Tabs,
   Typography,
   message as antdMessage,
 } from "antd";
@@ -24,6 +27,9 @@ import type {
   AppInfo,
   AssistantContext,
   EntryResult,
+  MemberAuthResult,
+  MemberPolicy,
+  MemberSession,
   PublicEntryResult,
   Snapshot,
   UserInfo,
@@ -31,10 +37,15 @@ import type {
 import AssistantPanel from "./AssistantPanel.js";
 import SupportWidget, { SupportAutoMount } from "./SupportWidget.js";
 import {
+  EMPTY_MEMBER_POLICY,
   api,
   getStoredUser,
+  loadMemberSession,
   makeAdapter,
+  makeMemberAdapter,
   makePublicAdapter,
+  memberApi,
+  storeMemberSession,
   storeSession,
 } from "./api.js";
 import FlowCenter from "./FlowCenter.js";
@@ -696,6 +707,238 @@ function SiteFooter({ text }: { text: string }) {
   );
 }
 
+/* ---------- 应用会员（会员试点）：公开外壳的第三类主体 ---------- */
+
+/**
+ * 会员登录/注册弹窗：Tabs 两页签（会员登录 / 注册），字段与 api 契约对齐
+ * （identifier + password；注册多一个选填 displayName，密码至少 8 位）。
+ * 成功后服务端返回令牌 + 简档 + 策略，调用方落 localStorage 会话并切换会员态。
+ */
+function MemberAuthModal({
+  appId,
+  open,
+  initialTab,
+  onClose,
+  onAuthed,
+}: {
+  appId: string;
+  open: boolean;
+  initialTab: "login" | "register";
+  onClose: () => void;
+  onAuthed: (session: MemberSession) => void;
+}) {
+  const [tab, setTab] = useState<"login" | "register">(initialTab);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loginForm] = Form.useForm<{ identifier: string; password: string }>();
+  const [registerForm] = Form.useForm<{
+    identifier: string;
+    password: string;
+    displayName?: string;
+  }>();
+
+  useEffect(() => {
+    if (open) {
+      setTab(initialTab);
+      setError(null);
+      setBusy(false);
+    }
+  }, [open, initialTab]);
+
+  const finish = (res: MemberAuthResult) => {
+    const session: MemberSession = {
+      token: res.token,
+      member: res.member,
+      policy: res.policy,
+      appId,
+    };
+    storeMemberSession(window.location.host, session);
+    onAuthed(session);
+  };
+
+  const submitLogin = async (v: { identifier: string; password: string }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      finish(
+        await memberApi.login(appId, {
+          identifier: v.identifier.trim(),
+          password: v.password,
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitRegister = async (v: {
+    identifier: string;
+    password: string;
+    displayName?: string;
+  }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      finish(
+        await memberApi.register(appId, {
+          identifier: v.identifier.trim(),
+          password: v.password,
+          displayName: v.displayName?.trim() || undefined,
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const identifierField = (
+    <Form.Item
+      label="标识（手机号 / 邮箱 / 用户名）"
+      name="identifier"
+      rules={[{ required: true, message: "请输入标识" }]}
+    >
+      <Input autoComplete="username" placeholder="注册时使用的标识" />
+    </Form.Item>
+  );
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      title="会员中心"
+      destroyOnClose
+    >
+      <Tabs
+        activeKey={tab}
+        onChange={(k) => {
+          setTab(k as "login" | "register");
+          setError(null);
+        }}
+        items={[
+          {
+            key: "login",
+            label: "会员登录",
+            children: (
+              <>
+                {error && (
+                  <Alert
+                    type="error"
+                    message={error}
+                    style={{ marginBottom: 16 }}
+                  />
+                )}
+                <Form
+                  form={loginForm}
+                  layout="vertical"
+                  onFinish={(v) => void submitLogin(v)}
+                >
+                  {identifierField}
+                  <Form.Item
+                    label="密码"
+                    name="password"
+                    rules={[{ required: true, message: "请输入密码" }]}
+                  >
+                    <Input.Password autoComplete="current-password" />
+                  </Form.Item>
+                  <Button type="primary" htmlType="submit" block loading={busy}>
+                    登录
+                  </Button>
+                </Form>
+              </>
+            ),
+          },
+          {
+            key: "register",
+            label: "注册",
+            children: (
+              <>
+                {error && (
+                  <Alert
+                    type="error"
+                    message={error}
+                    style={{ marginBottom: 16 }}
+                  />
+                )}
+                <Form
+                  form={registerForm}
+                  layout="vertical"
+                  onFinish={(v) => void submitRegister(v)}
+                >
+                  {identifierField}
+                  <Form.Item label="昵称（选填）" name="displayName">
+                    <Input placeholder="站内显示名，缺省用标识" />
+                  </Form.Item>
+                  <Form.Item
+                    label="密码"
+                    name="password"
+                    rules={[
+                      { required: true, message: "请输入密码" },
+                      { min: 8, message: "密码至少 8 位" },
+                    ]}
+                  >
+                    <Input.Password autoComplete="new-password" />
+                  </Form.Item>
+                  <Button type="primary" htmlType="submit" block loading={busy}>
+                    注册并登录
+                  </Button>
+                </Form>
+              </>
+            ),
+          },
+        ]}
+      />
+    </Modal>
+  );
+}
+
+/** 页眉会员区：已登录显示昵称/标识 + 退出；未登录显示「会员登录」「注册」（与员工「登录」并列、文案可区分） */
+function MemberArea({
+  session,
+  small,
+  onLogin,
+  onRegister,
+  onLogout,
+}: {
+  session: MemberSession | null;
+  small?: boolean;
+  onLogin: () => void;
+  onRegister: () => void;
+  onLogout: () => void;
+}) {
+  const size = small ? ("small" as const) : undefined;
+  if (session) {
+    return (
+      <Space size={small ? 6 : 8}>
+        <Typography.Text
+          style={{ maxWidth: 140 }}
+          ellipsis
+          title={session.member.identifier}
+        >
+          {session.member.displayName || session.member.identifier}
+        </Typography.Text>
+        <Button size={size} onClick={onLogout}>
+          退出
+        </Button>
+      </Space>
+    );
+  }
+  return (
+    <Space size={small ? 6 : 8}>
+      <Button size={size} onClick={onLogin}>
+        会员登录
+      </Button>
+      <Button size={size} onClick={onRegister}>
+        注册
+      </Button>
+    </Space>
+  );
+}
+
 /**
  * 公开外壳（匿名访客）：顶栏应用名 + 登录按钮；菜单走与登录外壳同一套页面 menu 装配；
  * 内容由公开适配器渲染（服务端按公开策略整形数据）、应用主题同样生效。
@@ -730,6 +973,87 @@ function PublicShell({
     [primary.appId, goPage, publicNotify],
   );
 
+  /* 会员态（会员试点）：primary.member.pages 非空才启用。会话存 localStorage
+     并在此恢复；会员页以会员适配器渲染、公开页照旧公开适配器（按当前页切换）。 */
+  const memberPolicy: MemberPolicy = primary.member ?? EMPTY_MEMBER_POLICY;
+  const memberPages = memberPolicy.pages;
+  const hasMemberPages = memberPages.length > 0;
+  const host = window.location.host;
+  const [memberSession, setMemberSession] = useState<MemberSession | null>(
+    () => (hasMemberPages ? loadMemberSession(host, primary.appId) : null),
+  );
+  const [authModal, setAuthModal] = useState<{
+    open: boolean;
+    tab: "login" | "register";
+  }>({ open: false, tab: "login" });
+  const memberTokenRef = useRef<string | null>(memberSession?.token ?? null);
+  memberTokenRef.current = memberSession?.token ?? null;
+
+  const clearMemberSession = useCallback(() => {
+    storeMemberSession(host, null);
+    setMemberSession(null);
+  }, [host]);
+
+  // 恢复会话时经 /me 刷新简档与策略（策略随新版本发布变化）；401 自动清会话回落
+  const restoredToken = memberSession?.token ?? null;
+  useEffect(() => {
+    if (!restoredToken) return;
+    let alive = true;
+    memberApi
+      .me(primary.appId, () => restoredToken, () => {
+        if (alive) clearMemberSession();
+      })
+      .then((res) => {
+        if (!alive) return;
+        setMemberSession((prev) => {
+          if (!prev || prev.token !== restoredToken) return prev;
+          const next: MemberSession = {
+            ...prev,
+            member: res.member,
+            policy: res.policy,
+          };
+          storeMemberSession(host, next);
+          return next;
+        });
+      })
+      .catch(() => {
+        // 网络失败等：保留本地会话，下次数据请求 401 时再清
+      });
+    return () => {
+      alive = false;
+    };
+    // 仅在挂载（或主应用切换）时刷新一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primary.appId]);
+
+  const openAuth = useCallback((tab: "login" | "register") => {
+    setAuthModal({ open: true, tab });
+  }, []);
+
+  const memberAdapter = useMemo(
+    () =>
+      memberSession
+        ? makeMemberAdapter(
+            primary.appId,
+            goPage,
+            notify,
+            () => memberTokenRef.current,
+            clearMemberSession,
+          )
+        : null,
+    [primary.appId, goPage, memberSession, clearMemberSession],
+  );
+
+  /** 导航守卫：未登录点会员页先弹登录弹窗（页面照常切过去，内容区呈占位引导） */
+  const goPageGuarded = useCallback(
+    (to: string) => {
+      const path = to.split("?")[0]!;
+      if (memberPages.includes(path) && !memberSession) openAuth("login");
+      goPage(to);
+    },
+    [goPage, memberPages, memberSession, openAuth],
+  );
+
   const menu = assembleMenu(primary.pages, primary.data.entities);
   const current = resolveCurrentPage(primary.pages, menu, inPath);
   const token = themeTokenOf(primary.appConfig);
@@ -748,7 +1072,22 @@ function PublicShell({
     return entities;
   }, [primary]);
 
-  const content = current ? (
+  // 会员页呈现门控与会员策略对齐：可写实体可新建/改己行、可读实体只读（服务端仍强制归属）
+  const memberAccess = useMemo(() => {
+    const entities: Record<string, EntityAccess> = {};
+    for (const e of primary.data.entities) {
+      if (memberPolicy.writable.includes(e.key)) {
+        entities[e.key] = { actions: ["read", "create", "update"], fields: {} };
+      } else if (memberPolicy.readable.includes(e.key)) {
+        entities[e.key] = { actions: ["read"], fields: {} };
+      } else {
+        entities[e.key] = { actions: [], fields: {} };
+      }
+    }
+    return entities;
+  }, [primary, memberPolicy]);
+
+  const publicContent = current ? (
     <SchemaRenderer
       page={current}
       dataSchema={primary.data}
@@ -762,6 +1101,66 @@ function PublicShell({
     <Typography.Text type="secondary">页面不存在：{inPath}</Typography.Text>
   );
 
+  /** 当前页是否会员页：会员页登录后以会员适配器渲染，未登录呈占位引导（不跳员工登录页） */
+  const isMemberPage = !!current && memberPages.includes(current.route);
+  const content =
+    isMemberPage && current ? (
+      memberSession && memberAdapter ? (
+        <SchemaRenderer
+          page={current}
+          dataSchema={primary.data}
+          adapter={memberAdapter}
+          params={params}
+          device={device}
+          access={memberAccess}
+          theme={primary.appConfig?.theme}
+        />
+      ) : (
+        <div style={{ maxWidth: 520, margin: "48px auto", textAlign: "center" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="请先登录会员账号"
+            description="本页面仅对已登录会员开放。登录后即可继续访问；还没有账号可先注册。"
+            style={{ marginBottom: 16, textAlign: "left" }}
+          />
+          <Space size={8}>
+            <Button type="primary" onClick={() => openAuth("login")}>
+              会员登录
+            </Button>
+            <Button onClick={() => openAuth("register")}>注册</Button>
+          </Space>
+        </div>
+      )
+    ) : (
+      publicContent
+    );
+
+  /** 页眉右侧区：会员区（启用会员页时）+ 员工「登录」按钮并列 */
+  const memberArea = (small?: boolean) =>
+    hasMemberPages ? (
+      <MemberArea
+        session={memberSession}
+        small={small}
+        onLogin={() => openAuth("login")}
+        onRegister={() => openAuth("register")}
+        onLogout={clearMemberSession}
+      />
+    ) : null;
+
+  const memberModal = hasMemberPages ? (
+    <MemberAuthModal
+      appId={primary.appId}
+      open={authModal.open}
+      initialTab={authModal.tab}
+      onClose={() => setAuthModal((s) => ({ ...s, open: false }))}
+      onAuthed={(session) => {
+        setMemberSession(session);
+        setAuthModal((s) => ({ ...s, open: false }));
+      }}
+    />
+  ) : null;
+
   const cfg = configOf(primary.appConfig);
   if (isSiteShell(cfg)) {
     const brand = brandTextOf(cfg, primary.name);
@@ -772,12 +1171,15 @@ function PublicShell({
             brand={brand}
             navItems={flatNavItems(menu.items)}
             selectedKey={current ? current.route : null}
-            onNavigate={goPage}
+            onNavigate={goPageGuarded}
             searchRoute={globalVarText(cfg, "siteSearchRoute")}
             right={
-              <Button type="primary" onClick={onLogin}>
-                登录
-              </Button>
+              <Space size={8}>
+                {memberArea()}
+                <Button type="primary" onClick={onLogin}>
+                  登录
+                </Button>
+              </Space>
             }
           />
           <Layout.Content
@@ -790,6 +1192,7 @@ function PublicShell({
           </Layout.Content>
           <SiteFooter text={siteFooterText(cfg, brand)} />
         </Layout>
+        {memberModal}
       </ConfigProvider>
     );
   }
@@ -803,15 +1206,19 @@ function PublicShell({
           title={primary.name}
           entries={flattenMenuEntries(menu.items)}
           selectedKey={current ? current.route : null}
-          onNavigate={goPage}
+          onNavigate={goPageGuarded}
           topRight={
-            <Button type="primary" size="small" onClick={onLogin}>
-              登录
-            </Button>
+            <Space size={6}>
+              {memberArea(true)}
+              <Button type="primary" size="small" onClick={onLogin}>
+                登录
+              </Button>
+            </Space>
           }
         >
           {content}
         </MobileShell>
+        {memberModal}
       </ConfigProvider>
     );
   }
@@ -830,9 +1237,12 @@ function PublicShell({
           }}
         >
           <span style={{ fontWeight: 700, fontSize: 15 }}>{primary.name}</span>
-          <Button type="primary" onClick={onLogin}>
-            登录
-          </Button>
+          <Space size={8}>
+            {memberArea()}
+            <Button type="primary" onClick={onLogin}>
+              登录
+            </Button>
+          </Space>
         </Layout.Header>
         <Layout>
           <Layout.Sider
@@ -849,13 +1259,14 @@ function PublicShell({
                 marginTop: 12,
               }}
               items={menu.items}
-              onClick={({ key }) => goPage(key)}
+              onClick={({ key }) => goPageGuarded(key)}
             />
           </Layout.Sider>
           <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
             {content}
           </Layout.Content>
         </Layout>
+        {memberModal}
       </Layout>
     </ConfigProvider>
   );

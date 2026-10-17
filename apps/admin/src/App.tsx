@@ -17,6 +17,7 @@ import {
   BookOutlined,
   DashboardOutlined,
   DollarOutlined,
+  IdcardOutlined,
   LogoutOutlined,
   PictureOutlined,
   PlayCircleOutlined,
@@ -31,6 +32,7 @@ import Overview from "./pages/Overview";
 import Tenants from "./pages/Tenants";
 import Users from "./pages/Users";
 import Apps from "./pages/Apps";
+import Members from "./pages/Members";
 import Audit from "./pages/Audit";
 import Replay from "./pages/Replay";
 import Kb from "./pages/Kb";
@@ -46,6 +48,7 @@ type PageKey =
   | "tenants"
   | "users"
   | "apps"
+  | "members"
   | "audit"
   | "replay"
   | "kb"
@@ -59,6 +62,7 @@ const MENU: { key: PageKey; label: string; icon: React.ReactNode }[] = [
   { key: "tenants", label: "租户", icon: <ApartmentOutlined /> },
   { key: "users", label: "用户与角色", icon: <TeamOutlined /> },
   { key: "apps", label: "应用管理", icon: <AppstoreOutlined /> },
+  { key: "members", label: "应用会员", icon: <IdcardOutlined /> },
   { key: "audit", label: "审计中心", icon: <AuditOutlined /> },
   { key: "replay", label: "审计回放", icon: <PlayCircleOutlined /> },
   { key: "kb", label: "知识库", icon: <BookOutlined /> },
@@ -209,6 +213,7 @@ export default function App() {
           {page === "tenants" && <Tenants />}
           {page === "users" && <Users currentUser={user} />}
           {page === "apps" && <Apps />}
+          {page === "members" && <Members />}
           {page === "audit" && <Audit />}
           {page === "replay" && <Replay />}
           {page === "kb" && <Kb />}

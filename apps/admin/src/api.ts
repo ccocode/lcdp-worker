@@ -65,6 +65,18 @@ export interface AssetItem {
   contentUrl: string;
 }
 
+/** 应用会员（会员试点）：注册表 platform_app_members 的管理台视图（不含凭据） */
+export interface MemberItem {
+  id: string;
+  identifier: string;
+  displayName: string | null;
+  /** active | disabled */
+  status: string;
+  /** 生效会员域 */
+  scope: string;
+  createdAt: string | null;
+}
+
 export function getStoredUser(): UserInfo | null {
   try {
     const raw = localStorage.getItem(USER_KEY);
@@ -206,6 +218,42 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ status }),
       });
+    },
+  },
+
+  /** 应用会员（会员试点）：按应用生效会员域列会员（标识搜索 + 分页）与启停 */
+  members: {
+    async list(
+      appId: string,
+      params?: { q?: string; limit?: number; offset?: number },
+    ): Promise<{ members: MemberItem[]; total: number; scope: string }> {
+      const res = await apiFetch<{
+        members: MemberItem[];
+        total: number;
+        scope: string;
+      }>(
+        `/admin/apps/${encodeURIComponent(appId)}/members${qs({
+          q: params?.q,
+          limit: params?.limit,
+          offset: params?.offset,
+        })}`,
+      );
+      return {
+        members: Array.isArray(res.members) ? res.members : [],
+        total: typeof res.total === "number" ? res.total : 0,
+        scope: typeof res.scope === "string" ? res.scope : "",
+      };
+    },
+    async setStatus(
+      appId: string,
+      memberId: string,
+      status: "active" | "disabled",
+    ): Promise<MemberItem> {
+      const res = await apiFetch<{ ok: boolean; member: MemberItem }>(
+        `/admin/apps/${encodeURIComponent(appId)}/members/${encodeURIComponent(memberId)}/status`,
+        { method: "POST", body: JSON.stringify({ status }) },
+      );
+      return res.member;
     },
   },
 
