@@ -72,10 +72,18 @@ const MENU: { key: PageKey; label: string; icon: React.ReactNode }[] = [
   { key: "switches", label: "熔断与配额", icon: <StopOutlined /> },
 ];
 
-function pageFromHash(): PageKey {
-  const h = window.location.hash.replace(/^#\/?/, "");
+function pageFromPath(): PageKey {
+  const h = window.location.pathname.replace(/^\//, "");
   const found = MENU.find((m) => m.key === h);
   return found ? found.key : "overview";
+}
+
+/** 旧 # 链接迁移（M14 线一）：首载时把 #/<key> 以 replaceState 落到等价新路径 /<key> */
+function migrateLegacyHash(): void {
+  const h = window.location.hash;
+  if (h.startsWith("#/")) {
+    window.history.replaceState(null, "", h.slice(1));
+  }
 }
 
 function Login({ onLogin }: { onLogin: (u: UserInfo) => void }) {
@@ -152,16 +160,19 @@ export default function App() {
     const u = getStoredUser();
     return u && u.role === "admin" ? u : null;
   });
-  const [page, setPage] = useState<PageKey>(() => pageFromHash());
+  const [page, setPage] = useState<PageKey>(() => {
+    migrateLegacyHash();
+    return pageFromPath();
+  });
 
   useEffect(() => {
-    const onHash = () => setPage(pageFromHash());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    const onPop = () => setPage(pageFromPath());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const go = useCallback((key: PageKey) => {
-    window.location.hash = `/${key}`;
+    window.history.pushState(null, "", `/${key}`);
     setPage(key);
   }, []);
 
