@@ -1805,6 +1805,10 @@ function PublicShell({
   const memberPolicy: MemberPolicy = primary.member ?? EMPTY_MEMBER_POLICY;
   const memberPages = memberPolicy.pages;
   const hasMemberPages = memberPages.length > 0;
+  /* 会员专属页 = 会员页 − 公开页：同列两边的页面按公开渲染——member.pages 是
+     「会员可达页」口径，与公开页天然可重叠（如商城商品页），公开优先不设门。 */
+  const publicPageRoutes: string[] = primary.public?.pages ?? [];
+  const memberOnlyPages = memberPages.filter((p) => !publicPageRoutes.includes(p));
   const host = window.location.host;
   const [memberSession, setMemberSession] = useState<MemberSession | null>(
     () => (hasMemberPages ? loadMemberSession(host, primary.appId) : null),
@@ -1896,10 +1900,10 @@ function PublicShell({
   const goPageGuarded = useCallback(
     (to: string) => {
       const path = to.split("?")[0]!;
-      if (memberPages.includes(path) && !memberSession) openAuth("login");
+      if (memberOnlyPages.includes(path) && !memberSession) openAuth("login");
       goPage(to);
     },
-    [goPage, memberPages, memberSession, openAuth],
+    [goPage, memberOnlyPages, memberSession, openAuth],
   );
 
   const menu = assembleMenu(primary.pages, primary.data.entities);
@@ -1950,7 +1954,7 @@ function PublicShell({
   );
 
   /** 当前页是否会员页：会员页登录后以会员适配器渲染，未登录呈占位引导（不跳员工登录页） */
-  const isMemberPage = !!current && memberPages.includes(current.route);
+  const isMemberPage = !!current && memberOnlyPages.includes(current.route);
   const content =
     isMemberPage && current ? (
       memberSession && memberAdapter ? (
