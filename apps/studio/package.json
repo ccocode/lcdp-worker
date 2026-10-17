@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@lcdp/renderer": "workspace:*",
-    "@naka1205/schema": "^0.10.0",
+    "@naka1205/schema": "^0.11.0",
     "@xyflow/react": "^12.12.0",
     "antd": "^5.27.0",
     "react": "^18.3.1",
