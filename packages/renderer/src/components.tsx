@@ -1137,7 +1137,9 @@ export function EntityForm({ node }: NodeProps) {
   };
   const singleToolbarStyle: CSSProperties = {
     position: "sticky",
-    bottom: "calc(env(safe-area-inset-bottom, 0px) + 8px)",
+    /* 移动外壳在场时根节点有 --lcdp-nav-offset（导航高 + 安全区），工具栏须
+       抬到导航之上；无外壳（设计器预览/桌面）回退为仅安全区，与原行为一致 */
+    bottom: "calc(8px + var(--lcdp-nav-offset, env(safe-area-inset-bottom, 0px)))",
     display: "flex",
     alignItems: "center",
     gap: 8,
