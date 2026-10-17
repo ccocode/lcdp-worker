@@ -414,6 +414,19 @@ function MobileShell({
   children: ReactNode;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  // 移动外壳在场时把底部导航高度登记为全局 CSS 变量：助手/咨询悬浮钮的
+  // bottom 经 var(--lcdp-nav-offset) 抬升避让导航栏（桌面无此外壳、变量
+  // 不存在，两钮回退原 bottom，渲染不变）。卸载时清除。
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty(
+      "--lcdp-nav-offset",
+      "calc(56px + env(safe-area-inset-bottom, 0px))",
+    );
+    return () => {
+      root.style.removeProperty("--lcdp-nav-offset");
+    };
+  }, []);
   const tabs = entries.length <= 5 ? entries : entries.slice(0, 4);
   const rest = entries.length <= 5 ? [] : entries.slice(4);
   const go = (key: string) => {

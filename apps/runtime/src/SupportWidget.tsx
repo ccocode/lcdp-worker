@@ -546,7 +546,7 @@ export default function SupportWidget({
         style={{
           position: "fixed",
           right: 24,
-          bottom: 84,
+          bottom: "calc(84px + var(--lcdp-nav-offset, 0px))",
           zIndex: 999,
           boxShadow: "0 6px 16px rgba(0,0,0,0.24)",
           background: "#52c41a",

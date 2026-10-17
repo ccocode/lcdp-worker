@@ -297,7 +297,7 @@ export default function AssistantPanel({
         style={{
           position: "fixed",
           right: 24,
-          bottom: 24,
+          bottom: "calc(24px + var(--lcdp-nav-offset, 0px))",
           zIndex: 999,
           boxShadow: "0 6px 16px rgba(0,0,0,0.24)",
         }}
