@@ -26,6 +26,38 @@ export interface UserInfo {
 /** 通用行：服务端字段随模块演进，前端一律防御式取值 */
 export type Row = Record<string, unknown>;
 
+/** 运行入口（静态化线）：站点级装配与运行模式 */
+export type SiteMode = "dynamic" | "pseudo" | "static";
+export interface EntryView {
+  id: string;
+  name: string;
+  hosts: string[];
+  appIds: string[];
+  isDefault: boolean;
+  siteMode: SiteMode;
+  config: Record<string, unknown>;
+}
+
+/** 静态生成状态（按应用查：sites 为以该应用为主应用的入口清单） */
+export interface StaticSiteStatus {
+  entryId: string;
+  entryName: string;
+  siteMode: SiteMode;
+  hosts: {
+    host: string;
+    lastRun: {
+      ok: boolean;
+      kind: string;
+      pages: number;
+      details: number;
+      skipped: Record<string, number>;
+      error?: string;
+      at: string;
+    } | null;
+    manifest: { generatedAt: string; snapshotCount: number } | null;
+  }[];
+}
+
 export interface PageResult<T> {
   rows: T[];
   total: number;
@@ -204,6 +236,40 @@ export const api = {
       await apiFetch(`/admin/tenants/${encodeURIComponent(id)}`, {
         method: "PATCH",
         body: JSON.stringify(body),
+      });
+    },
+  },
+
+  entries: {
+    async list(): Promise<EntryView[]> {
+      const res = await apiFetch<{ entries: EntryView[] }>("/admin/entries");
+      return res.entries;
+    },
+    async update(
+      id: string,
+      body: { siteMode: SiteMode },
+    ): Promise<EntryView> {
+      const res = await apiFetch<{ entry: EntryView }>(
+        `/admin/entries/${encodeURIComponent(id)}`,
+        { method: "PUT", body: JSON.stringify(body) },
+      );
+      return res.entry;
+    },
+  },
+
+  staticGen: {
+    async status(appId: string): Promise<StaticSiteStatus[]> {
+      const res = await apiFetch<{ appId: string; sites: StaticSiteStatus[] }>(
+        `/admin/apps/${encodeURIComponent(appId)}/static/status`,
+      );
+      return res.sites;
+    },
+    async rebuild(
+      appId: string,
+    ): Promise<{ ok: boolean; queued: number; notes: string[] }> {
+      return apiFetch(`/admin/apps/${encodeURIComponent(appId)}/static/rebuild`, {
+        method: "POST",
+        body: JSON.stringify({}),
       });
     },
   },
