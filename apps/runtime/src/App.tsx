@@ -1175,7 +1175,7 @@ function MemberAuthModal({
     try {
       await memberApi.confirmMemberPasswordReset(appId, {
         email: v.email.trim(),
-        emailCode,
+        code: emailCode,
         newPassword: v.newPassword,
       });
       // 成功回登录页签：预填标识 + 成功提示，用新密码登录

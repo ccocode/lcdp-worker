@@ -551,6 +551,7 @@ export const memberApi = {
     return memberFetch<{ captchaId: string; svg: string }>(
       `/member/apps/${encodeURIComponent(appId)}/captcha`,
       () => null,
+      { method: "POST", body: JSON.stringify({}) },
     );
   },
   /** 发送注册邮箱验证码：须带图形验证码先过人机校验；邮件未配置时服务端回 mail_not_configured（前端降级为不强制验码） */
@@ -563,7 +564,7 @@ export const memberApi = {
       () => null,
       {
         method: "POST",
-        body: JSON.stringify({ ...body, purpose: "register" }),
+        body: JSON.stringify(body),
       },
     );
   },
@@ -581,7 +582,7 @@ export const memberApi = {
   /** 确认找回密码：邮箱验证码 + 新密码，成功后回登录页签用新密码登录 */
   async confirmMemberPasswordReset(
     appId: string,
-    body: { email: string; emailCode: string; newPassword: string },
+    body: { email: string; code: string; newPassword: string },
   ): Promise<{ ok: boolean }> {
     return memberFetch<{ ok: boolean }>(
       `/member/apps/${encodeURIComponent(appId)}/password-reset/confirm`,
