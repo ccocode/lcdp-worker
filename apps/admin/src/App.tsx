@@ -402,7 +402,11 @@ export default function App() {
 
   const isAdmin = user.role === "admin";
   const health = appMeta ? domainHealth(appMeta) : null;
-  const showContentMenu = !!appId && !!health?.hasDomain && health.healthy;
+  const showContentMenu =
+    !!appId &&
+    appMeta?.app.domain === "content" &&
+    !!health?.hasDomain &&
+    health.healthy;
 
   // 平台区可见集：第 40 步口径（admin 全量；operator 仅知识库且须客服应用授权）
   const platformVisible: MenuDef[] = isAdmin
