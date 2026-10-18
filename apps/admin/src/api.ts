@@ -192,6 +192,38 @@ export function storeSession(token: string | null, user: UserInfo | null): void 
   else localStorage.removeItem(TOKEN_KEY);
   if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
   else localStorage.removeItem(USER_KEY);
+  if (!token) localStorage.removeItem(GRANTS_KEY);
+}
+
+/** 应用运营授权（M15 授权层）：非 admin 登录管理台的依据 */
+export interface GrantApp {
+  id: string;
+  name: string;
+  role: string;
+}
+export interface GrantsMe {
+  isAdmin: boolean;
+  apps: GrantApp[];
+}
+export interface UserGrant {
+  appId: string;
+  role: string;
+}
+
+const GRANTS_KEY = "lcdp.admin.grants";
+
+export function storeGrants(g: GrantsMe | null): void {
+  if (g) localStorage.setItem(GRANTS_KEY, JSON.stringify(g));
+  else localStorage.removeItem(GRANTS_KEY);
+}
+
+export function getStoredGrants(): GrantsMe | null {
+  try {
+    const raw = localStorage.getItem(GRANTS_KEY);
+    return raw ? (JSON.parse(raw) as GrantsMe) : null;
+  } catch {
+    return null;
+  }
 }
 
 const EXPIRED_KEY = "lcdp.admin.expired";
@@ -321,6 +353,31 @@ export const api = {
       await apiFetch(`/admin/users/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
+    },
+  },
+
+  /** 应用运营授权（M15）：me 查自己；其余为 admin 的发放/回收 */
+  grants: {
+    async me(): Promise<GrantsMe> {
+      return apiFetch<GrantsMe>("/admin/grants/me");
+    },
+    async listForUser(userId: string): Promise<UserGrant[]> {
+      const res = await apiFetch<{ grants: UserGrant[] }>(
+        `/admin/users/${encodeURIComponent(userId)}/grants`,
+      );
+      return res.grants;
+    },
+    async grant(userId: string, appId: string): Promise<void> {
+      await apiFetch(`/admin/users/${encodeURIComponent(userId)}/grants`, {
+        method: "POST",
+        body: JSON.stringify({ appId }),
+      });
+    },
+    async revoke(userId: string, appId: string): Promise<void> {
+      await apiFetch(
+        `/admin/users/${encodeURIComponent(userId)}/grants/${encodeURIComponent(appId)}`,
+        { method: "DELETE" },
+      );
     },
   },
 
