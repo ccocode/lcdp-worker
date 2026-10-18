@@ -166,6 +166,49 @@ export interface AssetItem {
   contentUrl: string;
 }
 
+/** 管理侧数据端点族的字段元数据（来自已发布 schema，M15 第③步） */
+export interface AdminFieldMeta {
+  key: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  sensitive?: boolean;
+  options?: { label: string; value: string }[] | string[];
+  refEntity?: string;
+}
+
+export interface AdminEntityMeta {
+  key: string;
+  label: string;
+  fields: AdminFieldMeta[];
+}
+
+/** 领域模块清单（platform_apps.domain_modules 的形状：骨架 + 角色映射 + 固有清单） */
+export interface DomainModulesView {
+  skeleton: string;
+  roles: Record<string, string>;
+  inherent: { entities: string[]; fields: Record<string, unknown[]> };
+}
+
+export interface AdminDataMeta {
+  app: { id: string; name: string | null; domain: string | null };
+  domainModules: DomainModulesView | null;
+  published: boolean;
+  entities: AdminEntityMeta[];
+}
+
+/** 公开提交（留言等公开表单的待审记录） */
+export interface SubmissionItem {
+  id: string;
+  appId: string;
+  entity: string;
+  body: Record<string, unknown>;
+  status: string;
+  createdAt: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+}
+
 /** 应用会员（会员试点）：注册表 platform_app_members 的管理台视图（不含凭据） */
 export interface MemberItem {
   id: string;
@@ -753,6 +796,85 @@ export const api = {
         throw err;
       }
       return body as unknown as AssetItem;
+    },
+  },
+
+  /** 管理侧数据（M15 第③步：按运营授权执法、不走员工权限快照；只读 + 编辑） */
+  adminData: {
+    async meta(appId: string): Promise<AdminDataMeta> {
+      return apiFetch<AdminDataMeta>(
+        `/admin/apps/${encodeURIComponent(appId)}/data`,
+      );
+    },
+    async list(
+      appId: string,
+      entity: string,
+      params?: {
+        q?: string;
+        limit?: number;
+        offset?: number;
+        /** 等值筛选：序列化为可重复的 filter=<field>:<value>（与 q 并存同时生效） */
+        filters?: Record<string, string>;
+      },
+    ): Promise<{ rows: Row[]; total: number }> {
+      const sp = new URLSearchParams();
+      if (params?.q) sp.set("q", params.q);
+      if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+      if (params?.offset !== undefined) sp.set("offset", String(params.offset));
+      for (const [k, v] of Object.entries(params?.filters ?? {})) {
+        sp.append("filter", `${k}:${v}`);
+      }
+      const query = sp.toString();
+      const res = await apiFetch<{ rows: Row[]; total: number }>(
+        `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}${query ? `?${query}` : ""}`,
+      );
+      return {
+        rows: Array.isArray(res.rows) ? res.rows : [],
+        total: typeof res.total === "number" ? res.total : 0,
+      };
+    },
+    async get(appId: string, entity: string, id: string): Promise<Row> {
+      const res = await apiFetch<{ row: Row }>(
+        `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+      );
+      return res.row;
+    },
+    async update(
+      appId: string,
+      entity: string,
+      id: string,
+      fields: Record<string, unknown>,
+    ): Promise<Row> {
+      const res = await apiFetch<{ row: Row }>(
+        `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+        { method: "PUT", body: JSON.stringify(fields) },
+      );
+      return res.row;
+    },
+  },
+
+  /** 公开提交审核（端点在 public.ts，M15 第③步补管理台页） */
+  submissions: {
+    async list(
+      appId: string,
+      status?: string,
+    ): Promise<SubmissionItem[]> {
+      const res = await apiFetch<{ submissions: SubmissionItem[] }>(
+        `/admin/apps/${encodeURIComponent(appId)}/submissions${qs({ status })}`,
+      );
+      return Array.isArray(res.submissions) ? res.submissions : [];
+    },
+    async approve(appId: string, id: string): Promise<void> {
+      await apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/submissions/${encodeURIComponent(id)}/approve`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+    },
+    async reject(appId: string, id: string): Promise<void> {
+      await apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/submissions/${encodeURIComponent(id)}/reject`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
     },
   },
 };
