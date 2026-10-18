@@ -40,6 +40,18 @@ export interface AppInfo {
   id: string;
   name: string;
   scenario: string | null;
+  /** M15 主领域（创建响应携带；列表接口未带时为空） */
+  domain?: string | null;
+  skeleton?: string | null;
+}
+
+/** M15 领域注册表条目（GET /domains） */
+export interface DomainInfo {
+  key: string;
+  name: string;
+  description: string;
+  available: boolean;
+  skeleton: string | null;
 }
 
 export interface VersionInfo {
@@ -313,12 +325,17 @@ export const api = {
     return res.apps;
   },
   /** 新建应用（M10 补强）：服务端建 platform_apps 行，设计包由 GET /design 合成起始包 */
-  async createApp(id: string, name: string): Promise<AppInfo> {
+  async createApp(id: string, name: string, domain?: string): Promise<AppInfo> {
     const res = await apiFetch<{ app: AppInfo }>("/apps", {
       method: "POST",
-      body: JSON.stringify({ id, name }),
+      body: JSON.stringify(domain ? { id, name, domain } : { id, name }),
     });
     return res.app;
+  },
+  /** M15 领域列表（新建应用时选主领域用） */
+  async domains(): Promise<DomainInfo[]> {
+    const res = await apiFetch<{ domains: DomainInfo[] }>("/domains");
+    return res.domains;
   },
   async design(appId: string): Promise<DesignData> {
     return apiFetch<DesignData>(`/apps/${encodeURIComponent(appId)}/design`);

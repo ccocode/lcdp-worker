@@ -29,6 +29,7 @@ import type {
   AppInfo,
   BundleView,
   DesignData,
+  DomainInfo,
   UserInfo,
 } from "./api.js";
 import { ApiError, api, getStoredUser, normalizeAgents, storeSession } from "./api.js";
@@ -180,19 +181,30 @@ function AppsView({
   const [createError, setCreateError] = useState<string | null>(null);
   const [newAppId, setNewAppId] = useState("");
   const [newAppName, setNewAppName] = useState("");
+  /** M15 主领域选择：默认空白领域；有骨架的领域创建即落骨架草稿 */
+  const [domains, setDomains] = useState<DomainInfo[]>([]);
+  const [newAppDomain, setNewAppDomain] = useState("generic");
 
   useEffect(() => {
     api
       .apps()
       .then(setApps)
       .catch((err) => setError(errText(err)));
+    api
+      .domains()
+      .then(setDomains)
+      .catch(() => {});
   }, []);
 
   const submitCreate = async () => {
     setCreateBusy(true);
     setCreateError(null);
     try {
-      const app = await api.createApp(newAppId.trim(), newAppName.trim());
+      const app = await api.createApp(
+        newAppId.trim(),
+        newAppName.trim(),
+        newAppDomain,
+      );
       setCreateOpen(false);
       onOpen(app.id);
     } catch (err) {
@@ -253,6 +265,22 @@ function AppsView({
               onChange={(e) => setNewAppName(e.target.value)}
               placeholder="如 星桥科技官网 CMS"
             />
+          </Form.Item>
+          <Form.Item label="主领域（创建后不可变更；选有骨架的领域将自动生成数据模型、页面与权限草稿）">
+            <Select
+              value={newAppDomain}
+              onChange={(v) => setNewAppDomain(v)}
+              options={domains.map((d) => ({
+                value: d.key,
+                disabled: !d.available,
+                label: d.available
+                  ? `${d.name}领域${d.skeleton ? `（骨架 ${d.skeleton}）` : ""}`
+                  : `${d.name}领域（骨架打磨中）`,
+              }))}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {domains.find((d) => d.key === newAppDomain)?.description ?? ""}
+            </Typography.Text>
           </Form.Item>
           {createError && <Alert type="error" message={createError} />}
         </Form>
