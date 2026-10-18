@@ -49,6 +49,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsOption } from "echarts";
 import type {
   AggregateGroupItem,
+  EntityAccess,
   RendererContextValue,
   Row,
   RuntimeAdapter,
@@ -705,16 +706,37 @@ function buildPayload(entityDef: Entity, source: Row): Row {
   return out;
 }
 
-function missingRequired(entityDef: Entity, payload: Row): string[] {
+function missingRequired(
+  entityDef: Entity,
+  payload: Row,
+  isExempt?: (f: Field) => boolean,
+): string[] {
   return entityDef.fields
     .filter(
       (f) =>
         f.required &&
+        !isExempt?.(f) &&
         (payload[f.key] === null ||
           payload[f.key] === undefined ||
           payload[f.key] === ""),
     )
     .map((f) => f.label);
+}
+
+/**
+ * 字段级权限下用户无从填写的字段（readonly/masked 渲染为禁用控件、hidden 不渲染）
+ * 不进客户端必填校验：新建时由服务端按 schema 默认值兜底（pickWritable），
+ * 无默认值时服务端仍会如实报缺失；编辑时原值不在 payload 里也不会被覆盖。
+ * 典型场景：编辑者对流程状态字段只读、状态由默认值与流程驱动（内容领域骨架验收实证）。
+ */
+function unfillableExempt(
+  access: Record<string, EntityAccess> | undefined,
+  entityKey: string,
+): (f: Field) => boolean {
+  return (f) => {
+    const a = access?.[entityKey]?.fields?.[f.key];
+    return a === "readonly" || a === "masked" || a === "hidden";
+  };
 }
 
 /** 子表编辑器：父表单内嵌的明细行编辑（支持增删行与金额类字段自动小计） */
@@ -1074,7 +1096,11 @@ export function EntityForm({ node }: NodeProps) {
       if (rollupActive && rollupField) {
         payload[rollupField.key] = sumChildren(childRows);
       }
-      const missing = missingRequired(entity, payload);
+      const missing = missingRequired(
+        entity,
+        payload,
+        unfillableExempt(ctx.access, entity.key),
+      );
       if (missing.length) throw new Error(`缺少必填字段：${missing.join("、")}`);
       const saved = isEdit
         ? await ctx.adapter.update(entity.key, id!, payload)
@@ -1093,7 +1119,11 @@ export function EntityForm({ node }: NodeProps) {
             ([k, v]) => k !== child.parentField && v !== null && v !== undefined && v !== "",
           );
           if (!row.id && !meaningful) continue; // 跳过空白新增行
-          const cmissing = missingRequired(child, cp);
+          const cmissing = missingRequired(
+            child,
+            cp,
+            unfillableExempt(ctx.access, child.key),
+          );
           if (cmissing.length) {
             throw new Error(`${child.label}缺少必填字段：${cmissing.join("、")}`);
           }
