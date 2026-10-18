@@ -4,7 +4,6 @@ import {
   Card,
   Input,
   Modal,
-  Select,
   Space,
   Table,
   Tag,
@@ -12,17 +11,16 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { api, type MemberItem, type Row } from "../api";
+import { api, type MemberItem } from "../api";
 import { asText, fmtTime } from "../helpers";
 
 /**
  * 应用会员（会员试点）：按应用查看其生效会员域的注册会员并启停。
  * 会员域 = appConfig.memberScope ?? 应用 id（一期单应用单域；多应用共用同域时，
  * 任一应用下看到的都是同一域的会员全集，启停在域内全局生效）。
+ * M15 第③步起应用由全局上下文给定（顶栏切换器 / URL ?app=），页内不再自选。
  */
-export default function Members() {
-  const [apps, setApps] = useState<Row[]>([]);
-  const [appId, setAppId] = useState<string | null>(null);
+export default function Members({ appId }: { appId: string }) {
   const [scope, setScope] = useState("");
   const [rows, setRows] = useState<MemberItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -32,18 +30,6 @@ export default function Members() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  useEffect(() => {
-    api
-      .apps.list()
-      .then((list) => {
-        setApps(list);
-        if (list.length > 0) setAppId(String(list[0]!.id));
-      })
-      .catch((err) =>
-        message.error(err instanceof Error ? err.message : "加载应用失败"),
-      );
-  }, []);
 
   const load = useCallback(async () => {
     if (!appId) return;
@@ -157,19 +143,6 @@ export default function Members() {
       }
     >
       <Space size={12} style={{ marginBottom: 16 }} wrap>
-        <Select
-          style={{ width: 320 }}
-          placeholder="选择应用"
-          value={appId ?? undefined}
-          options={apps.map((a) => ({
-            value: String(a.id),
-            label: `${asText(a.name ?? a.id)}（${String(a.id)}）`,
-          }))}
-          onChange={(v) => {
-            setAppId(v);
-            setPage(1);
-          }}
-        />
         <Input.Search
           style={{ width: 260 }}
           placeholder="按标识搜索"

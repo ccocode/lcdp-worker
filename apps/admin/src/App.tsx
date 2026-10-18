@@ -7,7 +7,9 @@ import {
   Input,
   Layout,
   Menu,
+  Select,
   Space,
+  Spin,
   Typography,
   message,
 } from "antd";
@@ -36,7 +38,9 @@ import {
   getStoredUser,
   storeGrants,
   storeSession,
+  type AdminDataMeta,
   type GrantsMe,
+  type Row,
   type UserInfo,
 } from "./api";
 import Overview from "./pages/Overview";
@@ -53,6 +57,11 @@ import ConfigPage from "./pages/ConfigPage";
 import Switches from "./pages/Switches";
 import Sites from "./pages/Sites";
 import Themes from "./pages/Themes";
+import DataAdmin from "./pages/DataAdmin";
+import Submissions from "./pages/Submissions";
+import StaticStatus from "./pages/StaticStatus";
+import AppSettings, { domainHealth } from "./pages/AppSettings";
+import ContentArticles from "./pages/ContentArticles";
 
 const { Header, Sider, Content } = Layout;
 
@@ -61,7 +70,6 @@ type PageKey =
   | "tenants"
   | "users"
   | "apps"
-  | "members"
   | "audit"
   | "replay"
   | "kb"
@@ -70,14 +78,31 @@ type PageKey =
   | "config"
   | "switches"
   | "sites"
-  | "themes";
+  | "themes"
+  // 应用区（M15 第③步：须先选当前应用，见应用上下文）
+  | "data"
+  | "members"
+  | "submissions"
+  | "static"
+  | "appsettings"
+  // 内容领域模版（当前应用 domain=content 且映射健康时出现）
+  | "content-workbench"
+  | "content-categories"
+  | "content-authors"
+  | "content-messages";
 
-const MENU: { key: PageKey; label: string; icon: React.ReactNode }[] = [
+interface MenuDef {
+  key: PageKey;
+  label: string;
+  icon: React.ReactNode;
+}
+
+/** 平台区菜单（不受应用上下文影响） */
+const PLATFORM_MENU: MenuDef[] = [
   { key: "overview", label: "概览", icon: <DashboardOutlined /> },
   { key: "tenants", label: "租户", icon: <ApartmentOutlined /> },
   { key: "users", label: "用户与角色", icon: <TeamOutlined /> },
   { key: "apps", label: "应用管理", icon: <AppstoreOutlined /> },
-  { key: "members", label: "应用会员", icon: <IdcardOutlined /> },
   { key: "audit", label: "审计中心", icon: <AuditOutlined /> },
   { key: "replay", label: "审计回放", icon: <PlayCircleOutlined /> },
   { key: "kb", label: "知识库", icon: <BookOutlined /> },
@@ -89,10 +114,42 @@ const MENU: { key: PageKey; label: string; icon: React.ReactNode }[] = [
   { key: "themes", label: "主题管理", icon: <SkinOutlined /> },
 ];
 
+/** 应用区通用模版菜单（所有应用自动拥有，吃当前应用上下文） */
+const APP_MENU: MenuDef[] = [
+  { key: "data", label: "数据管理", icon: <AppstoreOutlined /> },
+  { key: "members", label: "应用会员", icon: <IdcardOutlined /> },
+  { key: "submissions", label: "提交审核", icon: <AuditOutlined /> },
+  { key: "static", label: "静态状态", icon: <GlobalOutlined /> },
+  { key: "appsettings", label: "应用设置", icon: <SettingOutlined /> },
+];
+
+/** 内容领域模版菜单 */
+const CONTENT_MENU: MenuDef[] = [
+  { key: "content-workbench", label: "文章工作台", icon: <BookOutlined /> },
+  { key: "content-categories", label: "栏目管理", icon: <ApartmentOutlined /> },
+  { key: "content-authors", label: "作者管理", icon: <TeamOutlined /> },
+  { key: "content-messages", label: "留言审核", icon: <AuditOutlined /> },
+];
+
+const ALL_MENU: MenuDef[] = [...PLATFORM_MENU, ...APP_MENU, ...CONTENT_MENU];
+
 function pageFromPath(): PageKey {
   const h = window.location.pathname.replace(/^\//, "");
-  const found = MENU.find((m) => m.key === h);
+  const found = ALL_MENU.find((m) => m.key === h);
   return found ? found.key : "overview";
+}
+
+/** 应用上下文：当前应用以 URL 查询 ?app=<id> 承载（深链可达、刷新保持） */
+function appFromSearch(): string | null {
+  try {
+    return new URLSearchParams(window.location.search).get("app");
+  } catch {
+    return null;
+  }
+}
+
+function pathWithApp(key: PageKey, appId: string | null): string {
+  return appId ? `/${key}?app=${encodeURIComponent(appId)}` : `/${key}`;
 }
 
 /** 旧 # 链接迁移（M14 线一）：首载时把 #/<key> 以 replaceState 落到等价新路径 /<key> */
@@ -200,9 +257,17 @@ export default function App() {
     migrateLegacyHash();
     return pageFromPath();
   });
+  // ---- 应用上下文（M15 第③步）----
+  const [appId, setAppId] = useState<string | null>(() => appFromSearch());
+  const [apps, setApps] = useState<Row[]>([]);
+  const [appMeta, setAppMeta] = useState<AdminDataMeta | null>(null);
+  const [metaState, setMetaState] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
   useEffect(() => {
-    const onPop = () => setPage(pageFromPath());
+    const onPop = () => {
+      setPage(pageFromPath());
+      setAppId(appFromSearch());
+    };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -234,10 +299,89 @@ export default function App() {
     };
   }, [user]);
 
-  const go = useCallback((key: PageKey) => {
-    window.history.pushState(null, "", `/${key}`);
-    setPage(key);
-  }, []);
+  // 应用清单（服务端已按身份过滤）：切换器与上下文校验的数据源
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    api
+      .apps.list()
+      .then((list) => {
+        if (!cancelled) setApps(list);
+      })
+      .catch(() => {
+        /* 失败时切换器留空，上下文页不可达但平台区不受影响 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, grants]);
+
+  const currentApp: Row | null =
+    apps.find((a) => String(a.id) === appId) ?? null;
+
+  // 上下文归位：深链带来的 appId 不在可见应用清单内时——
+  // operator 落到其第一个授权应用；admin 清空上下文（平台区继续可用）。
+  useEffect(() => {
+    if (!user || apps.length === 0) return;
+    if (appId && !apps.some((a) => String(a.id) === appId)) {
+      if (user.role !== "admin") {
+        const first = String(apps[0]!.id);
+        window.history.replaceState(null, "", pathWithApp(page, first));
+        setAppId(first);
+      } else {
+        window.history.replaceState(null, "", `/${page}`);
+        setAppId(null);
+      }
+    }
+    if (!appId && user.role !== "admin") {
+      const first = String(apps[0]!.id);
+      window.history.replaceState(null, "", pathWithApp(page, first));
+      setAppId(first);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apps, user]);
+
+  // 当前应用的领域元数据（领域菜单与模版页共用一份，切换应用即重拉）
+  useEffect(() => {
+    if (!appId) {
+      setAppMeta(null);
+      setMetaState("idle");
+      return;
+    }
+    let cancelled = false;
+    setMetaState("loading");
+    api
+      .adminData.meta(appId)
+      .then((meta) => {
+        if (cancelled) return;
+        setAppMeta(meta);
+        setMetaState("ok");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAppMeta(null);
+        setMetaState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appId]);
+
+  const go = useCallback(
+    (key: PageKey) => {
+      window.history.pushState(null, "", pathWithApp(key, appId));
+      setPage(key);
+    },
+    [appId],
+  );
+
+  const switchApp = useCallback(
+    (id: string) => {
+      window.history.pushState(null, "", pathWithApp(page, id));
+      setAppId(id);
+    },
+    [page],
+  );
 
   const logout = useCallback(() => {
     storeSession(null, null);
@@ -256,20 +400,92 @@ export default function App() {
       />
     );
 
-  // M15：运营者只见运营菜单（应用会员恒可见；知识库须客服应用授权），
-  // 其余平台页对其不存在；落在不可见页（如旧路径）时归位到首个可见页。
   const isAdmin = user.role === "admin";
-  const visibleMenu = isAdmin
-    ? MENU
-    : MENU.filter(
+  const health = appMeta ? domainHealth(appMeta) : null;
+  const showContentMenu = !!appId && !!health?.hasDomain && health.healthy;
+
+  // 平台区可见集：第 40 步口径（admin 全量；operator 仅知识库且须客服应用授权）
+  const platformVisible: MenuDef[] = isAdmin
+    ? PLATFORM_MENU
+    : PLATFORM_MENU.filter(
         (m) =>
-          m.key === "members" ||
-          (m.key === "kb" &&
-            (grants?.apps ?? []).some((a) => a.id === "supplier-service")),
+          m.key === "kb" &&
+          (grants?.apps ?? []).some((a) => a.id === "supplier-service"),
       );
-  const effectivePage: PageKey = visibleMenu.some((m) => m.key === page)
-    ? page
-    : (visibleMenu[0]?.key ?? "members");
+  const appVisible: MenuDef[] = appId ? APP_MENU : [];
+  const contentVisible: MenuDef[] = showContentMenu ? CONTENT_MENU : [];
+  const visibleKeys = new Set<PageKey>([
+    ...platformVisible.map((m) => m.key),
+    ...appVisible.map((m) => m.key),
+    ...contentVisible.map((m) => m.key),
+  ]);
+  const fallbackPage: PageKey = isAdmin
+    ? "overview"
+    : appId
+      ? "appsettings"
+      : (platformVisible[0]?.key ?? "appsettings");
+  const effectivePage: PageKey = visibleKeys.has(page) ? page : fallbackPage;
+
+  const menuItems = [
+    ...(platformVisible.length > 0
+      ? [
+          {
+            type: "group" as const,
+            label: "平台",
+            children: platformVisible.map((m) => ({
+              key: m.key,
+              label: m.label,
+              icon: m.icon,
+            })),
+          },
+        ]
+      : []),
+    ...(appVisible.length > 0
+      ? [
+          {
+            type: "group" as const,
+            label: `应用 · ${String(currentApp?.name ?? appId ?? "")}`,
+            children: appVisible.map((m) => ({
+              key: m.key,
+              label: m.label,
+              icon: m.icon,
+            })),
+          },
+        ]
+      : []),
+    ...(contentVisible.length > 0
+      ? [
+          {
+            type: "group" as const,
+            label: "内容领域",
+            children: contentVisible.map((m) => ({
+              key: m.key,
+              label: m.label,
+              icon: m.icon,
+            })),
+          },
+        ]
+      : []),
+  ];
+
+  /** 应用区页面统一占位：元数据未就绪时不渲染具体页 */
+  const appPageShell = (node: React.ReactNode) =>
+    metaState === "ok" && appMeta ? (
+      node
+    ) : metaState === "error" ? (
+      <Alert
+        type="error"
+        showIcon
+        message="应用元数据加载失败"
+        description="无法读取该应用的已发布设计与领域信息，请稍后刷新重试。"
+      />
+    ) : (
+      <div style={{ padding: 48, textAlign: "center" }}>
+        <Spin tip="加载应用信息…" />
+      </div>
+    );
+
+  const roles = appMeta?.domainModules?.roles ?? {};
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
@@ -280,11 +496,7 @@ export default function App() {
         <Menu
           mode="inline"
           selectedKeys={[effectivePage]}
-          items={visibleMenu.map((m) => ({
-            key: m.key,
-            label: m.label,
-            icon: m.icon,
-          }))}
+          items={menuItems}
           onClick={(e) => go(e.key as PageKey)}
         />
       </Sider>
@@ -299,9 +511,28 @@ export default function App() {
             paddingInline: 24,
           }}
         >
-          <Typography.Text strong>
-            {MENU.find((m) => m.key === effectivePage)?.label}
-          </Typography.Text>
+          <Space>
+            <Typography.Text strong>
+              {ALL_MENU.find((m) => m.key === effectivePage)?.label}
+            </Typography.Text>
+            <Select
+              allowClear={isAdmin}
+              placeholder="选择应用"
+              value={appId ?? undefined}
+              onChange={(v) => {
+                if (v) switchApp(v);
+              }}
+              onClear={() => {
+                window.history.pushState(null, "", `/${page}`);
+                setAppId(null);
+              }}
+              style={{ width: 240 }}
+              options={apps.map((a) => ({
+                value: String(a.id),
+                label: `${String(a.name ?? a.id)}（${String(a.id)}）`,
+              }))}
+            />
+          </Space>
           <Space>
             <Typography.Text type="secondary">
               {isAdmin ? "当前管理员" : "当前运营者"}：{user.username}（{user.role}）
@@ -316,7 +547,6 @@ export default function App() {
           {effectivePage === "tenants" && <Tenants />}
           {effectivePage === "users" && <Users currentUser={user} />}
           {effectivePage === "apps" && <Apps />}
-          {effectivePage === "members" && <Members />}
           {effectivePage === "audit" && <Audit />}
           {effectivePage === "replay" && <Replay />}
           {effectivePage === "kb" && <Kb />}
@@ -326,6 +556,52 @@ export default function App() {
           {effectivePage === "switches" && <Switches />}
           {effectivePage === "sites" && <Sites />}
           {effectivePage === "themes" && <Themes />}
+          {appId && effectivePage === "members" && (
+            <Members key={appId} appId={appId} />
+          )}
+          {appId && effectivePage === "data" &&
+            appPageShell(<DataAdmin key={appId} appId={appId} meta={appMeta!} />)}
+          {appId && effectivePage === "submissions" && (
+            <Submissions key={appId} appId={appId} />
+          )}
+          {appId && effectivePage === "static" && (
+            <StaticStatus key={appId} appId={appId} />
+          )}
+          {appId && effectivePage === "appsettings" && (
+            <AppSettings key={appId} app={currentApp} meta={appMeta} />
+          )}
+          {appId && effectivePage === "content-workbench" &&
+            appPageShell(
+              <ContentArticles key={appId} appId={appId} meta={appMeta!} />,
+            )}
+          {appId && effectivePage === "content-categories" &&
+            appPageShell(
+              <DataAdmin
+                key={`${appId}:cat`}
+                appId={appId}
+                meta={appMeta!}
+                lockEntity={roles["category"] ?? "category"}
+                title="栏目管理"
+              />,
+            )}
+          {appId && effectivePage === "content-authors" &&
+            appPageShell(
+              <DataAdmin
+                key={`${appId}:author`}
+                appId={appId}
+                meta={appMeta!}
+                lockEntity={roles["author"] ?? "author"}
+                title="作者管理"
+              />,
+            )}
+          {appId && effectivePage === "content-messages" && (
+            <Submissions
+              key={`${appId}:msg`}
+              appId={appId}
+              entityFilter={roles["message"] ?? "message"}
+              title="留言审核"
+            />
+          )}
         </Content>
       </Layout>
     </Layout>
