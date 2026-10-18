@@ -194,6 +194,39 @@ export function storeSession(token: string | null, user: UserInfo | null): void 
   else localStorage.removeItem(USER_KEY);
 }
 
+const EXPIRED_KEY = "lcdp.admin.expired";
+let sessionExpiredHandled = false;
+
+/**
+ * 会话失效（401）统一处理：清本地会话并整页重载回登录视图（App 以存储的
+ * 用户信息决定渲染登录页与否），登录页据 sessionStorage 标记给「已失效」
+ * 提示。登录请求自身的 401 是口令错误、由登录表单报错，不走这里；
+ * 并发请求同时 401 只处理一次。本页无独立登录路由，故以重载回登录视图
+ * 实现「自动跳登录页」；重载后路径不变，重新登录即回到原页面。
+ */
+export function expireSession(): void {
+  if (sessionExpiredHandled) return;
+  sessionExpiredHandled = true;
+  storeSession(null, null);
+  try {
+    sessionStorage.setItem(EXPIRED_KEY, "1");
+  } catch {
+    /* sessionStorage 不可用时仅退回登录视图、不带提示 */
+  }
+  window.location.reload();
+}
+
+/** 登录页读取并清除「会话已失效」标记（只提示一次） */
+export function consumeExpiredFlag(): boolean {
+  try {
+    const v = sessionStorage.getItem(EXPIRED_KEY);
+    if (v) sessionStorage.removeItem(EXPIRED_KEY);
+    return v === "1";
+  } catch {
+    return false;
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
@@ -204,6 +237,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+  if (res.status === 401 && path !== "/auth/login") expireSession();
   const body = (await res.json().catch(() => null)) as
     | (Record<string, unknown> & { message?: string; error?: string })
     | null;
@@ -342,6 +376,7 @@ export const api = {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
       });
+      if (res.status === 401) expireSession();
       const body = (await res.json().catch(() => null)) as
         | (Record<string, unknown> & {
             message?: string;
@@ -649,6 +684,7 @@ export const api = {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
       });
+      if (res.status === 401) expireSession();
       const body = (await res.json().catch(() => null)) as
         | (Record<string, unknown> & { message?: string; error?: string })
         | null;

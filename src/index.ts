@@ -15,6 +15,9 @@ import { Hono } from "hono";
  * 「No Access-Control-Allow-Origin」拦下正文、应用仍打不开（步骤 8 首演
  * 实证）。故降级 GET 命中与白名单预检（回源失败时）由网关镜像源站
  * platformCors 语义应答：名单内 Origin 回显 + 源站同款 allow 列表。
+ * M11 残留修复（2026-10-18）：降级应答补 Access-Control-Expose-Headers
+ * 暴露 x-lcdp-degraded；网关合成 502 与源站直回的宕机状态应答在未带
+ * ACAO 时按名单补回显，避免浏览器以 CORS 错误掩盖真实状态。
  */
 
 type Env = {
@@ -156,6 +159,9 @@ async function readSnapshot(kv: KVNamespace, key: string, req: Request): Promise
     const origin = corsOriginFor(req);
     if (origin) {
       headers.set("Access-Control-Allow-Origin", origin);
+      // 跨域 JS 读自定义头须经 Expose-Headers 声明，否则降级标记在线路上
+      // 存在、前端却读不到（M11 残留修复：将来的降级徽标依赖此行）。
+      headers.set("Access-Control-Expose-Headers", "x-lcdp-degraded");
       headers.set("Vary", "Origin");
     }
     return new Response(env.body, { status: env.status, headers });
@@ -186,6 +192,13 @@ app.all("*", async (c) => {
       const pf = syntheticPreflight(req);
       if (pf) return pf;
     }
+    // 网关合成的 502 同样须带 CORS 回显：否则浏览器只报 CORS 错误、
+    // 掩盖真实的源站不可达状态（M11 残留修复）。
+    const origin = corsOriginFor(req);
+    if (origin) {
+      c.header("Access-Control-Allow-Origin", origin);
+      c.header("Vary", "Origin");
+    }
     return c.json({ error: "origin_unreachable" }, 502);
   }
 
@@ -202,6 +215,22 @@ app.all("*", async (c) => {
   if (preflightDegradable && DOWN_STATUSES.has(res.status)) {
     const pf = syntheticPreflight(req);
     if (pf) return pf;
+  }
+  // 源站（或其前置反代）直回宕机状态时，该应答未经源站 CORS 层处理：
+  // 名单内 Origin 且应答未带 ACAO 时由网关补回显 + Vary，使浏览器呈现
+  // 真实状态而非 CORS 错误（M11 残留修复）。正常应答一律原样透传。
+  if (DOWN_STATUSES.has(res.status) && !res.headers.get("Access-Control-Allow-Origin")) {
+    const origin = corsOriginFor(req);
+    if (origin) {
+      const headers = new Headers(res.headers);
+      headers.set("Access-Control-Allow-Origin", origin);
+      headers.set("Vary", "Origin");
+      return new Response(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+      });
+    }
   }
   return res;
 });

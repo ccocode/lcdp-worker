@@ -29,7 +29,7 @@ import {
   GlobalOutlined,
   SkinOutlined,
 } from "@ant-design/icons";
-import { api, getStoredUser, storeSession, type UserInfo } from "./api";
+import { api, consumeExpiredFlag, getStoredUser, storeSession, type UserInfo } from "./api";
 import Overview from "./pages/Overview";
 import Tenants from "./pages/Tenants";
 import Users from "./pages/Users";
@@ -97,6 +97,8 @@ function migrateLegacyHash(): void {
 function Login({ onLogin }: { onLogin: (u: UserInfo) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 经 401 拦截跳回登录页时的一次性提示（api.expireSession 落标记） */
+  const [expired] = useState<boolean>(() => consumeExpiredFlag());
 
   const submit = async (values: { username: string; password: string }) => {
     setBusy(true);
@@ -136,6 +138,14 @@ function Login({ onLogin }: { onLogin: (u: UserInfo) => void }) {
         <Typography.Paragraph type="secondary">
           <SafetyOutlined /> 仅平台管理员可登录
         </Typography.Paragraph>
+        {expired && !error ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="登录已失效，请重新登录"
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
         {error ? (
           <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />
         ) : null}
