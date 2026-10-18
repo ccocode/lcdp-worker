@@ -706,6 +706,36 @@ function buildPayload(entityDef: Entity, source: Row): Row {
   return out;
 }
 
+/** 载荷值深比较（行数据均为 JSON 形状：标量 / 数组 / 纯对象），供子表「只提交真变更」判定 */
+function payloadValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return (
+      a.length === b.length &&
+      a.every((v, i) => payloadValueEqual(v, b[i]))
+    );
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const ra = a as Record<string, unknown>;
+    const rb = b as Record<string, unknown>;
+    const ka = Object.keys(ra);
+    return (
+      ka.length === Object.keys(rb).length &&
+      ka.every((k) => payloadValueEqual(ra[k], rb[k]))
+    );
+  }
+  return false;
+}
+
+/** 两份 buildPayload 载荷是否等价（按字段并集逐项深比较） */
+function payloadEqual(a: Row, b: Row): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    if (!payloadValueEqual(a[k], b[k])) return false;
+  }
+  return true;
+}
+
 function missingRequired(
   entityDef: Entity,
   payload: Row,
@@ -1106,39 +1136,158 @@ export function EntityForm({ node }: NodeProps) {
         ? await ctx.adapter.update(entity.key, id!, payload)
         : await ctx.adapter.create(entity.key, payload);
       const parentId = String(saved.id);
-      // 子表同步：新增行 create、保留行 update、被删行 delete（按原始快照对账）
+      // 子表同步：按「权限 + 变更」对账，不再无条件全量提交——
+      // ① 当前角色对子实体无对应动作权（update/create/delete）时，该类行一律不提交；
+      // ② 既有行先与原始快照深比较，未变更不发请求（无谓写入与无谓 403 的主源：
+      //    主表可写、子表只读的角色改主表时，旧逻辑会把每条未动过的子行 PUT 一遍，
+      //    第一条 403 就把整单拖成失败，而主表其实已经落库）；
+      // ③ 主表已保存成功，子表的问题（无权改动、校验缺失、接口失败）只汇总为
+      //    部分失败提示，不再 throw 成整单失败。
+      const childIssues: string[] = [];
+      // 部分失败后留在本页：已落库的子行须回写 state（新建行补服务端 id、原始
+      // 快照推进到已保存值），否则再次保存会重复 create / 重复提交同一行。
+      const nextChildRows: Record<string, Row[]> = { ...childRows };
+      const nextChildOriginal: Record<string, Row[]> = { ...childOriginal };
+      let childStateDirty = false;
       for (const child of children) {
+        // 子实体动作权与主表同口径：复用宿主透传的 ctx.access[实体].actions，
+        // 无 access（如设计态预览）时不限制，保持既有行为。
+        const childActions = ctx.access
+          ? ctx.access[child.key]?.actions
+          : undefined;
+        const childCanCreate =
+          !ctx.access || (childActions?.includes("create") ?? false);
+        const childCanUpdate =
+          !ctx.access || (childActions?.includes("update") ?? false);
+        const childCanDelete =
+          !ctx.access || (childActions?.includes("delete") ?? false);
         const current = childRows[child.key] ?? [];
         const originals = childOriginal[child.key] ?? [];
-        const originalIds = new Set(originals.map((r) => String(r.id)));
+        const originalById = new Map(
+          originals.map((r) => [String(r.id), r] as const),
+        );
         const kept = new Set<string>();
+        const savedRows: Row[] = [];
+        const savedOriginals: Row[] = [];
+        let skippedChanged = 0;
+        let skippedNew = 0;
+        let skippedDeleted = 0;
+        const failures: string[] = [];
         for (const row of current) {
           const cp = buildPayload(child, row);
           cp[child.parentField!] = parentId;
-          const meaningful = Object.entries(cp).some(
-            ([k, v]) => k !== child.parentField && v !== null && v !== undefined && v !== "",
-          );
-          if (!row.id && !meaningful) continue; // 跳过空白新增行
+          const orig = row.id ? originalById.get(String(row.id)) : undefined;
+          if (!orig) {
+            // 新增行（无 id，或 id 不在原始快照内）
+            const meaningful = Object.entries(cp).some(
+              ([k, v]) =>
+                k !== child.parentField &&
+                v !== null &&
+                v !== undefined &&
+                v !== "",
+            );
+            if (!meaningful) continue; // 跳过空白新增行
+            if (!childCanCreate) {
+              skippedNew++;
+              savedRows.push(row);
+              continue;
+            }
+            const cmissing = missingRequired(
+              child,
+              cp,
+              unfillableExempt(ctx.access, child.key),
+            );
+            if (cmissing.length) {
+              failures.push(`新增行缺少必填字段：${cmissing.join("、")}`);
+              savedRows.push(row);
+              continue;
+            }
+            try {
+              const created = await ctx.adapter.create(child.key, cp);
+              savedRows.push({ ...row, id: created.id });
+              savedOriginals.push({ ...cp, id: created.id });
+              childStateDirty = true;
+            } catch (err) {
+              failures.push(`新增行保存失败：${errText(err)}`);
+              savedRows.push(row);
+            }
+            continue;
+          }
+          kept.add(String(row.id));
+          // 既有行：先深比较，未变更直接跳过（不看权限——没动过的行谁都不该提交）
+          const op = buildPayload(child, orig);
+          op[child.parentField!] = parentId;
+          if (payloadEqual(cp, op)) {
+            savedRows.push(row);
+            savedOriginals.push(orig);
+            continue;
+          }
+          if (!childCanUpdate) {
+            // 真改动了但无 update 权：不提交、不静默吞——保留改动并计数提示
+            skippedChanged++;
+            savedRows.push(row);
+            savedOriginals.push(orig);
+            continue;
+          }
           const cmissing = missingRequired(
             child,
             cp,
             unfillableExempt(ctx.access, child.key),
           );
           if (cmissing.length) {
-            throw new Error(`${child.label}缺少必填字段：${cmissing.join("、")}`);
+            failures.push(`有行缺少必填字段：${cmissing.join("、")}`);
+            savedRows.push(row);
+            savedOriginals.push(orig);
+            continue;
           }
-          if (row.id && originalIds.has(String(row.id))) {
-            kept.add(String(row.id));
+          try {
             await ctx.adapter.update(child.key, String(row.id), cp);
-          } else {
-            await ctx.adapter.create(child.key, cp);
+            savedRows.push(row);
+            savedOriginals.push({ ...cp, id: row.id });
+            childStateDirty = true;
+          } catch (err) {
+            failures.push(`有行保存失败：${errText(err)}`);
+            savedRows.push(row);
+            savedOriginals.push(orig);
           }
         }
         for (const orig of originals) {
-          if (!kept.has(String(orig.id))) {
+          if (kept.has(String(orig.id))) continue;
+          if (!childCanDelete) {
+            // 界面里删了但无 delete 权：不发请求，快照保留该行（删除未生效）
+            skippedDeleted++;
+            savedOriginals.push(orig);
+            continue;
+          }
+          try {
             await ctx.adapter.remove(child.key, String(orig.id));
+            childStateDirty = true;
+          } catch (err) {
+            failures.push(`有行删除失败：${errText(err)}`);
+            savedOriginals.push(orig);
           }
         }
+        nextChildRows[child.key] = savedRows;
+        nextChildOriginal[child.key] = savedOriginals;
+        const notes: string[] = [];
+        if (skippedChanged)
+          notes.push(`${skippedChanged} 行有修改但无修改权限、未保存`);
+        if (skippedNew)
+          notes.push(`${skippedNew} 行有新增但无新增权限、未保存`);
+        if (skippedDeleted)
+          notes.push(`${skippedDeleted} 行删除未生效（无删除权限）`);
+        notes.push(...failures);
+        if (notes.length) childIssues.push(`${child.label}：${notes.join("；")}`);
+      }
+      if (childIssues.length) {
+        if (childStateDirty) {
+          setChildRows(nextChildRows);
+          setChildOriginal(nextChildOriginal);
+        }
+        const msg = `主表已保存；以下子表未完全保存——${childIssues.join("；")}`;
+        setError(msg);
+        ctx.adapter.notify(msg, "error");
+        return;
       }
       ctx.adapter.notify("保存成功");
       ctx.adapter.navigate(listRoute);
