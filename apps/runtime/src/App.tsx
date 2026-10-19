@@ -13,6 +13,7 @@ import {
   Layout,
   Menu,
   Modal,
+  Select,
   Space,
   Spin,
   Tabs,
@@ -3223,8 +3224,12 @@ function collectMenu(
 function assembleMenu(
   pages: PageSchema[],
   entities: DataSchema["entities"],
+  opts?: { defaultGroupLabel?: string },
 ): AssembledMenu {
-  return collectMenu(pages.map((page) => ({ page, entities })));
+  return collectMenu(
+    pages.map((page) => ({ page, entities })),
+    opts,
+  );
 }
 
 /* ---------- 多应用装配（M10）：入口全部应用的快照并集 ---------- */
@@ -3382,6 +3387,19 @@ function AppView({
   const [todoCount, setTodoCount] = useState(0);
   /** 待办/助手跟随的当前应用：随当前页归属更新；停在外壳级视图（#/flow）时保持最近归属 */
   const [activeAppId, setActiveAppId] = useState<string>(primaryAppId);
+  /** 桌面侧栏折叠态（持久化）：菜单可整栏收起，不长期占版面 */
+  const [siderCollapsed, setSiderCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("lcdp.siderCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  /** 侧栏分组展开键的用户覆盖（按应用记）：无覆盖时默认全展开 */
+  const [openKeysOverride, setOpenKeysOverride] = useState<{
+    appId: string;
+    keys: string[];
+  } | null>(null);
 
   // 全部应用快照并行加载：主应用失败按原口径整页报错；
   // 其余应用失败仅从本次装配剔除并警告，不拖垮整个入口
@@ -3457,12 +3475,15 @@ function AppView({
     () => (loaded ? buildPageUnion(loaded) : null),
     [loaded],
   );
-  const menu = useMemo(
+  /** 跨应用并集菜单仅用于当前页解析（根路径落点等），不再直接展示 */
+  const mergedMenu = useMemo(
     () => (loaded && union ? assembleMergedMenu(union, loaded) : null),
     [loaded, union],
   );
   const currentOwned =
-    union && menu ? resolveOwnedCurrent(union, menu, inPath) : undefined;
+    union && mergedMenu
+      ? resolveOwnedCurrent(union, mergedMenu, inPath)
+      : undefined;
 
   useEffect(() => {
     if (currentOwned) setActiveAppId(currentOwned.appId);
@@ -3489,7 +3510,7 @@ function AppView({
       </div>
     );
   }
-  if (!loaded || !union || !menu) {
+  if (!loaded || !union || !mergedMenu) {
     return (
       <div style={{ padding: 80, textAlign: "center" }}>
         <Spin size="large" tip="正在加载应用…" />
@@ -3535,6 +3556,54 @@ function AppView({
   const activeLoaded =
     loaded.find((l) => l.app.id === (currentOwned?.appId ?? activeAppId)) ??
     primary;
+  /**
+   * 展示菜单按当前应用作用域（2026-10-19 定调：菜单须根据应用本身获取，
+   * 不能只按角色裁剪）：每个装配应用各自组装一份菜单，展示只取当前应用那份；
+   * 跨应用并集仅用于路由解析——深链/待办跳转落到别的应用时，当前应用随当前页
+   * 归属切换（activeAppId 既有跟随逻辑），菜单自动跟着换。
+   */
+  const scopedMenus = new Map(
+    loaded.map(
+      (l) =>
+        [
+          l.app.id,
+          assembleMenu(l.snapshot.pages, l.snapshot.data.entities, {
+            defaultGroupLabel: "业务功能",
+          }),
+        ] as const,
+    ),
+  );
+  const menu: AssembledMenu = scopedMenus.get(activeLoaded.app.id) ?? mergedMenu;
+  /** 可切换应用：装配内对当前用户有可展示菜单项的应用（无菜单项的不进切换器） */
+  const switchableApps = loaded.filter(
+    (l) => (scopedMenus.get(l.app.id)?.items?.length ?? 0) > 0,
+  );
+  /** 切换当前应用：菜单换成目标应用的，并落到其首个菜单页 */
+  const switchApp = (appId: string) => {
+    if (appId === activeLoaded.app.id) return;
+    setActiveAppId(appId);
+    setOpenKeysOverride(null);
+    const target = scopedMenus.get(appId);
+    const landing =
+      target?.menuPages[0]?.page.route ??
+      target?.listPages[0]?.route ??
+      union.deduped.find((o) => o.appId === appId)?.page.route;
+    if (landing) goPage(landing);
+  };
+  /** 应用切换器（多应用装配且不止一个应用有菜单时出现；单应用入口不渲染） */
+  const appSwitcher =
+    !preview && switchableApps.length > 1 ? (
+      <Select
+        size="small"
+        value={activeLoaded.app.id}
+        onChange={switchApp}
+        style={{ minWidth: 104, maxWidth: 150 }}
+        options={switchableApps.map((l) => ({
+          value: l.app.id,
+          label: l.snapshot.app.name,
+        }))}
+      />
+    ) : null;
   const token = themeTokenOf(primary.snapshot.appConfig);
   /**
    * 助手页面上下文（尽力推导）：派生实体路由（/e/<entity>[/form]）直接给 entityKey；
@@ -3579,6 +3648,46 @@ function AppView({
     ...(menu.items ?? []),
   ];
 
+  /** 侧栏分组展开键：默认全展开；用户折叠后按应用记覆盖；当前页所在组强制展开 */
+  const allGroupKeys = (menuItems ?? [])
+    .filter((i) => (i as { type?: string } | null)?.type === "group")
+    .map((i) => String((i as { key?: unknown }).key));
+  const baseOpenKeys =
+    openKeysOverride && openKeysOverride.appId === activeLoaded.app.id
+      ? openKeysOverride.keys
+      : allGroupKeys;
+  const selectedGroupKey = current
+    ? ((
+        menuItems.find(
+          (i) =>
+            (i as { type?: string } | null)?.type === "group" &&
+            (
+              (i as { children?: MenuProps["items"] }).children ?? []
+            ).some(
+              (c) => (c as { key?: unknown } | null)?.key === current.route,
+            ),
+        ) as { key?: unknown } | undefined
+      )?.key as string | undefined)
+    : undefined;
+  const openGroupKeys =
+    selectedGroupKey && !baseOpenKeys.includes(selectedGroupKey)
+      ? [...baseOpenKeys, selectedGroupKey]
+      : baseOpenKeys;
+  /** 桌面侧栏专用形态：分组转可折叠子菜单；站点横排与移动拍平仍消费 group 形态 */
+  const siderMenuItems: MenuProps["items"] = (menuItems ?? []).map((item) => {
+    const it = item as {
+      type?: string;
+      key?: unknown;
+      label?: ReactNode;
+      children?: MenuProps["items"];
+    } | null;
+    if (it && it.type === "group" && Array.isArray(it.children)) {
+      const { key, label, children } = it;
+      if (typeof key === "string") return { key, label, children };
+    }
+    return item;
+  });
+
   const content = isFlow ? (
     <FlowCenter
       key={activeLoaded.app.id}
@@ -3620,7 +3729,12 @@ function AppView({
             selectedKey={isFlow ? "/flow" : current ? current.route : null}
             onNavigate={goPage}
             searchRoute={globalVarText(cfg, "siteSearchRoute")}
-            right={<Button onClick={onLogout}>退出（{user.username}）</Button>}
+            right={
+              <Space>
+                {appSwitcher}
+                <Button onClick={onLogout}>退出（{user.username}）</Button>
+              </Space>
+            }
           />
           <Layout.Content
             style={{
@@ -3648,7 +3762,11 @@ function AppView({
     return (
       <ConfigProvider locale={zhCN} theme={{ token }}>
         <MobileShell
-          title={brandTextOf(cfg, primary.snapshot.app.name)}
+          title={
+            switchableApps.length > 1
+              ? activeLoaded.snapshot.app.name
+              : brandTextOf(cfg, primary.snapshot.app.name)
+          }
           entries={navEntries}
           selectedKey={isFlow ? "/flow" : current ? current.route : null}
           onNavigate={goPage}
@@ -3663,9 +3781,12 @@ function AppView({
                 入口首页
               </Button>
             ) : (
-              <Button type="text" size="small" onClick={onLogout}>
-                退出
-              </Button>
+              <>
+                {appSwitcher}
+                <Button type="text" size="small" onClick={onLogout}>
+                  退出
+                </Button>
+              </>
             )
           }
           moreFooter={
@@ -3705,7 +3826,17 @@ function AppView({
         <Layout.Sider
           theme="light"
           width={220}
-          style={{ borderRight: "1px solid #e4e7ec" }}
+          collapsedWidth={64}
+          collapsible
+          collapsed={siderCollapsed}
+          trigger={null}
+          style={{
+            borderRight: "1px solid #e4e7ec",
+            position: "sticky",
+            top: 0,
+            height: "100vh",
+            alignSelf: "flex-start",
+          }}
         >
           <div
             style={{
@@ -3717,14 +3848,48 @@ function AppView({
               boxSizing: "border-box",
             }}
           >
-            <div style={{ padding: "0 8px" }}>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>
-                {primary.snapshot.app.name}
-              </div>
-              <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 2 }}>
-                {preview ? "预览" : (entryName ?? "运行入口")}
-              </div>
+            <div
+              style={{
+                padding: "0 8px",
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              {!siderCollapsed && (
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>
+                    {activeLoaded.snapshot.app.name}
+                  </div>
+                  <div
+                    style={{ color: "#9ca3af", fontSize: 12, marginTop: 2 }}
+                  >
+                    {preview ? "预览" : (entryName ?? "运行入口")}
+                  </div>
+                </div>
+              )}
+              <Button
+                size="small"
+                type="text"
+                title={siderCollapsed ? "展开菜单" : "收起菜单"}
+                onClick={() => {
+                  const v = !siderCollapsed;
+                  setSiderCollapsed(v);
+                  try {
+                    localStorage.setItem(
+                      "lcdp.siderCollapsed",
+                      v ? "1" : "0",
+                    );
+                  } catch {
+                    /* 持久化失败不影响使用 */
+                  }
+                }}
+              >
+                {siderCollapsed ? "»" : "«"}
+              </Button>
             </div>
+            {!siderCollapsed && appSwitcher}
             {preview && (
               <Button
                 block
@@ -3735,18 +3900,34 @@ function AppView({
                 返回入口首页
               </Button>
             )}
-            <Menu
-              mode="inline"
-              selectedKeys={
-                isFlow ? ["/flow"] : current ? [current.route] : []
-              }
-              style={{ borderInlineEnd: "none", background: "transparent" }}
-              items={menuItems}
-              onClick={({ key }) => goPage(key)}
-            />
-            <div style={{ flex: 1 }} />
-            <Button block onClick={onLogout}>
-              退出（{user.username}）
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                overflowX: "hidden",
+              }}
+            >
+              <Menu
+                mode="inline"
+                inlineCollapsed={siderCollapsed}
+                selectedKeys={
+                  isFlow ? ["/flow"] : current ? [current.route] : []
+                }
+                openKeys={siderCollapsed ? undefined : openGroupKeys}
+                onOpenChange={(keys) =>
+                  setOpenKeysOverride({
+                    appId: activeLoaded.app.id,
+                    keys: keys as string[],
+                  })
+                }
+                style={{ borderInlineEnd: "none", background: "transparent" }}
+                items={siderMenuItems}
+                onClick={({ key }) => goPage(key)}
+              />
+            </div>
+            <Button block={!siderCollapsed} onClick={onLogout}>
+              {siderCollapsed ? "退出" : `退出（${user.username}）`}
             </Button>
           </div>
         </Layout.Sider>
