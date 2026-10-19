@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { Button, Radio, Space, message } from "antd";
+import { Alert, Button, Radio, Space, message } from "antd";
 import { api, type AdminDataMeta, type Row } from "../api";
+import type { PageKey } from "../registry";
+import { setArticleEditorIntent } from "../templates/articleEditorIntent";
 import DataAdmin from "./DataAdmin";
 
 /**
@@ -19,9 +21,13 @@ const ACTIONS: { to: string; label: string; fromNot: string }[] = [
 export default function ContentArticles({
   appId,
   meta,
+  go,
+  visibleKeys,
 }: {
   appId: string;
   meta: AdminDataMeta;
+  go: (key: PageKey) => void;
+  visibleKeys: Set<PageKey>;
 }) {
   const roles = meta.domainModules?.roles ?? {};
   const articleEntity = roles["article"] ?? "article";
@@ -33,6 +39,9 @@ export default function ContentArticles({
   }, [statusField]);
   const [queue, setQueue] = useState<string>("all");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const articleActions = entityMeta?.actions ?? [];
+  const canCreate = articleActions.includes("create");
+  const canUpdate = articleActions.includes("update");
 
   const setStatus = async (row: Row, to: string, reload: () => void) => {
     setBusyId(String(row.id));
@@ -49,16 +58,43 @@ export default function ContentArticles({
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <Radio.Group
-        value={queue}
-        onChange={(e) => setQueue(e.target.value as string)}
-        optionType="button"
-        buttonStyle="solid"
-        options={[
-          { label: "全部", value: "all" },
-          ...statusValues.map((v) => ({ label: v, value: v })),
-        ]}
-      />
+      <Space wrap>
+        <Radio.Group
+          value={queue}
+          onChange={(e) => setQueue(e.target.value as string)}
+          optionType="button"
+          buttonStyle="solid"
+          options={[
+            { label: "全部", value: "all" },
+            ...statusValues.map((v) => ({ label: v, value: v })),
+          ]}
+        />
+        {canCreate && (
+          <Button
+            type="primary"
+            onClick={() => {
+              setArticleEditorIntent({ mode: "new" });
+              go("content-article-editor");
+            }}
+          >
+            新建文章
+          </Button>
+        )}
+      </Space>
+      {queue === "待审核" && (
+        <Alert
+          type="info"
+          showIcon
+          message="正式审批请在「流程待办」中办理（记流程审计）；本页状态直改记数据审计。"
+          action={
+            visibleKeys.has("tasks") ? (
+              <Button size="small" onClick={() => go("tasks")}>
+                去流程待办
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
       <DataAdmin
         appId={appId}
         meta={meta}
@@ -67,9 +103,21 @@ export default function ContentArticles({
         statusFilter={{ field: "status", value: queue === "all" ? null : queue }}
         extraRowActions={(row, reload) => (
           <>
+            {canUpdate && (
+              <Button
+                size="small"
+                type="link"
+                onClick={() => {
+                  setArticleEditorIntent({ articleId: String(row.id) });
+                  go("content-article-editor");
+                }}
+              >
+                编辑全文
+              </Button>
+            )}
             {/* 状态直改本质是 update 动作：第 57 步起按实体 actions 门控，
                 无 update 权限时不渲染（DataAdmin 的编辑/删除同口径） */}
-            {(entityMeta?.actions ?? []).includes("update") &&
+            {canUpdate &&
               ACTIONS.filter(
                 (a) => statusValues.includes(a.to) && String(row.status ?? "") !== a.fromNot,
               ).map((a) => (

@@ -1,9 +1,10 @@
 import React from "react";
-import { ApartmentOutlined, AuditOutlined, BookOutlined, TeamOutlined } from "@ant-design/icons";
+import { ApartmentOutlined, AuditOutlined, BookOutlined, EditOutlined, TeamOutlined } from "@ant-design/icons";
 import type { PageDef, TemplateDef } from "../registry";
 import DataAdmin from "../pages/DataAdmin";
 import Submissions from "../pages/Submissions";
 import ContentArticles from "../pages/ContentArticles";
+import ArticleEditor from "../pages/ArticleEditor";
 
 /**
  * 内容领域管理模版（第 57 步自 App.tsx 菜单/渲染链迁入注册表）：
@@ -22,7 +23,34 @@ const pages: PageDef[] = [
     needsMeta: true,
     requiresEntities: [{ role: "article" }],
     render: (ctx) => (
-      <ContentArticles key={ctx.appId!} appId={ctx.appId!} meta={ctx.appMeta!} />
+      <ContentArticles
+        key={ctx.appId!}
+        appId={ctx.appId!}
+        meta={ctx.appMeta!}
+        go={ctx.go}
+        visibleKeys={ctx.visibleKeys}
+      />
+    ),
+  },
+  {
+    // 写稿面（第 58 步专做）：菜单隐藏，只从工作台「新建文章」/ 行内
+    // 「编辑全文」/ 工作台快捷入口进入（意图经 articleEditorIntent 传递）
+    key: "content-article-editor",
+    label: "文章编辑",
+    icon: <EditOutlined />,
+    segment: "template",
+    section: "内容运营",
+    templateDomain: "content",
+    needsMeta: true,
+    menuHidden: true,
+    requiresEntities: [{ role: "article" }],
+    render: (ctx) => (
+      <ArticleEditor
+        key={`${ctx.appId!}:editor`}
+        appId={ctx.appId!}
+        meta={ctx.appMeta!}
+        go={ctx.go}
+      />
     ),
   },
   {
@@ -98,6 +126,7 @@ export const contentTemplate: TemplateDef = {
   ],
   quickLinks: [
     { label: "文章工作台", page: "content-workbench" },
+    { label: "新建文章", page: "content-article-editor" },
     { label: "栏目管理", page: "content-categories" },
     { label: "留言审核", page: "content-messages" },
   ],

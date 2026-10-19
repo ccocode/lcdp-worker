@@ -75,7 +75,15 @@ export type PageKey =
   | "content-workbench"
   | "content-categories"
   | "content-authors"
-  | "content-messages";
+  | "content-messages"
+  | "content-article-editor"
+  // 领域模版段（商城领域，见 templates/commerce）
+  | "commerce-products"
+  | "commerce-orders"
+  | "commerce-categories"
+  // 领域模版段（客服领域，见 templates/support）
+  | "support-tickets"
+  | "support-stats";
 
 export type PageSegment = "platform" | "app" | "template";
 
@@ -110,6 +118,11 @@ export interface PageDef {
   operatorException?: "kb";
   /** 渲染前须经 appPageShell（依赖当前应用 appMeta 就绪） */
   needsMeta?: boolean;
+  /**
+   * 菜单隐藏（第 58 步）：页面可达（在 visibleKeys 内、go()/归位照常），
+   * 但不出现在左侧菜单分组里——如文章编辑页，只从工作台/快捷入口进入。
+   */
+  menuHidden?: boolean;
   /** 模版段：所属领域 key（可见性按 domain + 映射健康判定） */
   templateDomain?: string;
   /** 模版段：所需实体（实体 key 或 roles 语义锚点），缺一不可见（W7 数据维度） */
@@ -391,9 +404,13 @@ export function contextVisibility(args: {
             requiredEntitiesPresent(appMeta, d.requiresEntities ?? []),
         )
       : [];
-  const platformGroups = groupBySection(platformVisible);
+  // 菜单分组排除 menuHidden 页（如文章编辑页）：只隐藏菜单入口，
+  // visibleKeys 仍保留该页——归位 effect 与 go() 依赖它判定可达性。
+  const platformGroups = groupBySection(
+    platformVisible.filter((d) => !d.menuHidden),
+  );
   const appGroups = groupBySection(
-    [...appVisible, ...templateVisible],
+    [...appVisible, ...templateVisible].filter((d) => !d.menuHidden),
     APP_SECTION_ORDER,
   );
   const visibleKeys = new Set<PageKey>([

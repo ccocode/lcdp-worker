@@ -4,7 +4,7 @@
  * VITE_API_BASE 或 localStorage `lcdp.admin.apiBase` 覆盖。token 独立存储于本源 localStorage。
  * 字段形状以契约 §4 与服务端实况为准；列表信封在客户端做防御式归一化。
  */
-const API_BASE =
+export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
   (typeof localStorage !== "undefined"
     ? (localStorage.getItem("lcdp.admin.apiBase") ?? undefined)
@@ -356,6 +356,27 @@ export interface FlowTaskView {
   createdAt: string;
   instance: { createdByName: string | null; createdAt: string };
   record: Row | null;
+}
+/** 客服会话记录（第 56 步 D7 只读端点）：会话头 + 逐条消息 */
+export interface ConversationView {
+  id: string;
+  status: string;
+  visitorName: string | null;
+  contact: string | null;
+  ticketId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface ConversationMessage {
+  id: string;
+  role: string;
+  text: string;
+  status: string;
+  createdAt: string;
+}
+export interface TranscriptView {
+  conversation: ConversationView;
+  messages: ConversationMessage[];
 }
 export interface GrantsMe {
   isAdmin: boolean;
@@ -923,12 +944,15 @@ export const api = {
   /** 普通资产端点（管理台以上传人身份走 /assets，契约 M9 §2.3） */
   assets: {
     /** multipart 上传：不能走 apiFetch（它固定 JSON 头），FormData 的 Content-Type 由浏览器补 boundary；
-     * appId 给出时资产归属该应用（应用资产管理页用），不给则为未归属资产 */
-    async upload(file: File, appId?: string): Promise<AssetItem> {
+     * appId 给出时资产归属该应用（应用资产管理页用），不给则为未归属资产；
+     * visibility 显式给出时以其为准（富文本插图/封面显式 public，与 renderer
+     * 适配器同口径——服务端 POST /assets 的 multipart 字段名即 visibility） */
+    async upload(file: File, appId?: string, visibility?: string): Promise<AssetItem> {
       const token = getToken();
       const fd = new FormData();
       fd.set("file", file);
       if (appId) fd.set("appId", appId);
+      if (visibility) fd.set("visibility", visibility);
       const res = await fetch(`${API_BASE}/assets`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -1023,6 +1047,15 @@ export const api = {
       await apiFetch(
         `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
         { method: "DELETE" },
+      );
+    },
+    /**
+     * 会话记录只读（第 56 步 D7）：工单详情的会话区消费；
+     * 会话不属该应用时服务端回 404，调用方按空态呈现、不当错误。
+     */
+    async transcript(appId: string, conversationId: string): Promise<TranscriptView> {
+      return apiFetch<TranscriptView>(
+        `/admin/apps/${encodeURIComponent(appId)}/conversations/${encodeURIComponent(conversationId)}/transcript`,
       );
     },
   },

@@ -25,6 +25,8 @@ import {
   type Row,
 } from "../api";
 import { asText, fmtTime } from "../helpers";
+import RichTextField from "../components/RichTextField";
+import { htmlToText } from "../lib/richtext";
 
 /**
  * 通用数据管理（M15 第③步通用模版，第 57 步补新建/删除）：按已发布 schema
@@ -146,7 +148,11 @@ export default function DataAdmin({
         key: f.key,
         ellipsis: true,
         render: (v: unknown) =>
-          isLongText(f) ? (
+          f.type === "richtext" ? (
+            // richtext 单元格出纯文本摘要（第 58 步）：正文存 HTML，
+            // asText 直出会露标签；经净化取 textContent 再截断
+            <span>{htmlToText(typeof v === "string" ? v : "")}</span>
+          ) : isLongText(f) ? (
             <span>{asText(v).slice(0, 60)}</span>
           ) : f.type === "datetime" || f.type === "date" ? (
             <span>{fmtTime(v)}</span>
@@ -391,8 +397,12 @@ export default function DataAdmin({
                   <Switch />
                 ) : f.type === "number" || f.type === "decimal" ? (
                   <InputNumber style={{ width: "100%" }} />
+                ) : f.type === "richtext" ? (
+                  // 富文本控件（第 58 步替换 TextArea）：与运行态同款编辑器，
+                  // 正文级写作以模版专用页为准，这里保证通用面不露 HTML 源码
+                  <RichTextField appId={appId} />
                 ) : isLongText(f) ? (
-                  <Input.TextArea rows={f.type === "richtext" ? 8 : 4} />
+                  <Input.TextArea rows={4} />
                 ) : (
                   <Input />
                 )}
