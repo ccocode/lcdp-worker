@@ -13,7 +13,6 @@ import {
   Layout,
   Menu,
   Modal,
-  Select,
   Space,
   Spin,
   Tabs,
@@ -3571,35 +3570,13 @@ function AppView({
     ),
   );
   const menu: AssembledMenu = scopedMenus.get(activeLoaded.app.id) ?? mergedMenu;
-  /** 可切换应用：装配内对当前用户有可展示菜单项的应用（无菜单项的不进切换器） */
-  const switchableApps = loaded.filter(
-    (l) => (scopedMenus.get(l.app.id)?.items?.length ?? 0) > 0,
-  );
-  /** 切换当前应用：菜单换成目标应用的，并落到其首个菜单页 */
-  const switchApp = (appId: string) => {
-    if (appId === activeLoaded.app.id) return;
-    setActiveAppId(appId);
-    const target = scopedMenus.get(appId);
-    const landing =
-      target?.menuPages[0]?.page.route ??
-      target?.listPages[0]?.route ??
-      union.deduped.find((o) => o.appId === appId)?.page.route;
-    if (landing) goPage(landing);
-  };
-  /** 应用切换器（多应用装配且不止一个应用有菜单时出现；单应用入口不渲染） */
-  const appSwitcher =
-    !preview && switchableApps.length > 1 ? (
-      <Select
-        size="small"
-        value={activeLoaded.app.id}
-        onChange={switchApp}
-        style={{ minWidth: 104, maxWidth: 150 }}
-        options={switchableApps.map((l) => ({
-          value: l.app.id,
-          label: l.snapshot.app.name,
-        }))}
-      />
-    ) : null;
+  /**
+   * 运行态不设应用切换控件（2026-10-19 用户纠正）：各应用是独立的业务维度，
+   * 不存在「从采购跳去 CMS」这类导航场景；跨应用只发生在数据层互通与
+   * 按需聚合的专用面（待办中心、用户中心等），当前作用域由所在页面归属
+   * 自动决定（深链/待办跳转时 activeAppId 跟随）。应用上下文切换是管理台
+   * （admin）的概念，不下放到运行态。
+   */
   const token = themeTokenOf(primary.snapshot.appConfig);
   /**
    * 助手页面上下文（尽力推导）：派生实体路由（/e/<entity>[/form]）直接给 entityKey；
@@ -3706,7 +3683,6 @@ function AppView({
             searchRoute={globalVarText(cfg, "siteSearchRoute")}
             right={
               <Space>
-                {appSwitcher}
                 <Button onClick={onLogout}>退出（{user.username}）</Button>
               </Space>
             }
@@ -3737,11 +3713,7 @@ function AppView({
     return (
       <ConfigProvider locale={zhCN} theme={{ token }}>
         <MobileShell
-          title={
-            switchableApps.length > 1
-              ? activeLoaded.snapshot.app.name
-              : brandTextOf(cfg, primary.snapshot.app.name)
-          }
+          title={activeLoaded.snapshot.app.name}
           entries={navEntries}
           selectedKey={isFlow ? "/flow" : current ? current.route : null}
           onNavigate={goPage}
@@ -3757,7 +3729,6 @@ function AppView({
               </Button>
             ) : (
               <>
-                {appSwitcher}
                 <Button type="text" size="small" onClick={onLogout}>
                   退出
                 </Button>
@@ -3864,7 +3835,6 @@ function AppView({
                 {siderCollapsed ? "»" : "«"}
               </Button>
             </div>
-            {!siderCollapsed && appSwitcher}
             {preview && (
               <Button
                 block
