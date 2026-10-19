@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -61,6 +62,11 @@ import { cartStore } from "./cartStore.js";
 import type { CartItem } from "./cartStore.js";
 import { FieldInput } from "./fields.js";
 import { RichTextView, htmlToText } from "./richtext.js";
+import {
+  StatusBadge,
+  parseStatusColors,
+  type StatusToken,
+} from "./statusBadge.js";
 import { styles } from "./styles.js";
 
 /** 组件注册表：组件类型 -> React 组件。设计器与运行态共用同一注册表，保证所见即所得 */
@@ -90,6 +96,92 @@ export function useRendererCtx(): RendererContextValue {
   const ctx = useContext(RendererContext);
   if (!ctx) throw new Error("渲染器组件必须在 SchemaRenderer 内使用");
   return ctx;
+}
+
+/* ------------------------------------------------------------------ */
+/* 页面记录上下文 + 声明式可见性条件 visibleWhen（呈现层治理·包二）      */
+/*                                                                     */
+/* 详情页的当前行原本只存在于 Detail 组件的私有 state 里，同页的动作    */
+/* 按钮（兄弟节点）看不到记录、无法按状态收起。此处由 SchemaRenderer   */
+/* 在页面根建上下文：加载记录的组件（Detail）把加载态/当前行发布进来， */
+/* 节点渲染层（NodeView）对声明了 props.visibleWhen 的节点统一求值。    */
+/* 页面上没有发布者时状态恒为 absent，门控节点按原行为渲染（兼容兜底）。*/
+/* ------------------------------------------------------------------ */
+
+/** 页面记录状态：absent = 本页无记录发布者；pending = 发布者在但记录未就绪；ready = 已就绪 */
+export type PageRecordState =
+  | { kind: "absent" }
+  | { kind: "pending" }
+  | { kind: "ready"; record: Row };
+
+interface PageRecordContextValue {
+  state: PageRecordState;
+  publish: (state: PageRecordState) => void;
+}
+
+const PageRecordContext = createContext<PageRecordContextValue>({
+  state: { kind: "absent" },
+  publish: () => {},
+});
+
+function PageRecordProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<PageRecordState>({ kind: "absent" });
+  const publish = useCallback((next: PageRecordState) => setState(next), []);
+  const value = useMemo(() => ({ state, publish }), [state, publish]);
+  return (
+    <PageRecordContext.Provider value={value}>
+      {children}
+    </PageRecordContext.Provider>
+  );
+}
+
+/** 声明式可见性条件：对页面当前行的单字段做等值（eq）或集合（in）判断，恰一 */
+export interface VisibleWhen {
+  field: string;
+  eq?: string;
+  in?: string[];
+}
+
+/**
+ * 解析节点 props.visibleWhen：形状合法（field 为非空字符串且 eq/in 恰一合法）才返回门控；
+ * 未声明或形状非法一律返回 null（按无门控渲染），保证对存量页面零影响。
+ */
+export function parseVisibleWhen(raw: unknown): VisibleWhen | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.field !== "string" || !r.field) return null;
+  const hasEq = typeof r.eq === "string";
+  const hasIn =
+    Array.isArray(r.in) && r.in.every((v) => typeof v === "string");
+  if (hasEq === hasIn) return null;
+  return hasEq
+    ? { field: r.field, eq: r.eq as string }
+    : { field: r.field, in: r.in as string[] };
+}
+
+/** 对当前行求值 visibleWhen：字段缺失/为空视为不匹配；比较统一按字符串口径 */
+export function evalVisibleWhen(gate: VisibleWhen, record: Row): boolean {
+  const v = record[gate.field];
+  if (v === null || v === undefined) return false;
+  const s = String(v);
+  return gate.eq !== undefined ? s === gate.eq : (gate.in ?? []).includes(s);
+}
+
+/**
+ * 展示场景的状态值渲染（包二）：status 字段出彩色徽标；空值维持「—」纯文本。
+ * DataTable 单元格 / Detail 只读展示共用；colors 为应用经 props.statusColors 的覆盖。
+ */
+function StatusDisplay({
+  raw,
+  text,
+  colors,
+}: {
+  raw?: unknown;
+  text: string;
+  colors?: Record<string, StatusToken>;
+}) {
+  if (text === "" || text === "—") return <>{text}</>;
+  return <StatusBadge raw={raw} text={text} colors={colors} />;
 }
 
 function errText(err: unknown): string {
@@ -468,6 +560,22 @@ export function DataTable({ node }: NodeProps) {
       field.refEntity ? labels[field.refEntity] : undefined,
     );
 
+  // 状态徽标（包二）：props.statusColors 可覆盖个别状态值的色令牌
+  const statusColors = parseStatusColors(node.props?.statusColors);
+  /** 展示单元格：文件/图片走资产渲染，status 字段走徽标，其余维持纯文本 */
+  const displayCell = (row: Row, f: Field) =>
+    f.type === "file" || f.type === "image" ? (
+      <AssetValue
+        ids={parseAssetIds(row[f.key])}
+        image={f.type === "image"}
+        adapter={ctx.adapter}
+      />
+    ) : f.key === "status" ? (
+      <StatusDisplay raw={row[f.key]} text={cellText(row, f)} colors={statusColors} />
+    ) : (
+      cellText(row, f)
+    );
+
   const tableColumns: TableProps<Row>["columns"] = [
     { title: "ID", dataIndex: "id", key: "__id", width: 120 },
     ...fields.map((f) => ({
@@ -475,16 +583,7 @@ export function DataTable({ node }: NodeProps) {
       dataIndex: f.key,
       key: f.key,
       ellipsis: true,
-      render: (_: unknown, row: Row) =>
-        f.type === "file" || f.type === "image" ? (
-          <AssetValue
-            ids={parseAssetIds(row[f.key])}
-            image={f.type === "image"}
-            adapter={ctx.adapter}
-          />
-        ) : (
-          cellText(row, f)
-        ),
+      render: (_: unknown, row: Row) => displayCell(row, f),
     })),
   ];
 
@@ -600,9 +699,13 @@ export function DataTable({ node }: NodeProps) {
                       : String(row.id)}
                   </span>
                   {cardStatusField && (
-                    <Tag style={{ marginInlineEnd: 0, flexShrink: 0 }}>
-                      {cellText(row, cardStatusField)}
-                    </Tag>
+                    <span style={{ flexShrink: 0 }}>
+                      <StatusDisplay
+                        raw={row[cardStatusField.key]}
+                        text={cellText(row, cardStatusField)}
+                        colors={statusColors}
+                      />
+                    </span>
                   )}
                 </div>
                 {cardBodyFields.map((f) => (
@@ -627,7 +730,7 @@ export function DataTable({ node }: NodeProps) {
                       {f.label}
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      {renderCardCell(row, f)}
+                      {displayCell(row, f)}
                     </span>
                   </div>
                 ))}
@@ -779,11 +882,14 @@ function ChildEditor({
   canUpdate = true,
   canDelete = true,
   cardMode = false,
+  statusColors,
 }: {
   child: Entity;
   rows: Row[];
   onChange: (rows: Row[]) => void;
   readOnly?: boolean;
+  /** 状态徽标色覆盖（包二）：宿主表单 props.statusColors 透传，只读展示子表 status 字段时用 */
+  statusColors?: Record<string, StatusToken>;
   /** 子实体动作权（宿主按 ctx.access[子实体].actions 分项传入，与保存层对账口径一致）：
    * 增 = 添加按钮与新增行可编辑；改 = 既有行可编辑；删 = 删除按钮。缺省全开（无 access 时不限制） */
   canCreate?: boolean;
@@ -846,6 +952,7 @@ function ChildEditor({
         recordId: typeof row.id === "string" ? row.id : undefined,
       }}
       readOnly={fieldReadOnlyOf(f, row)}
+      statusColors={statusColors}
     />
   );
 
@@ -966,6 +1073,8 @@ export function EntityForm({ node }: NodeProps) {
   const entity = resolveEntity(ctx, node.binding?.source);
   const listRoute =
     typeof node.props?.listRoute === "string" ? node.props.listRoute : "/";
+  // 状态徽标色覆盖（包二）：透传给只读展示的 status 字段（主表与子表同口径）
+  const statusColors = parseStatusColors(node.props?.statusColors);
   const id = ctx.params.id;
   // 新建主单落库后的 id 回写：主单 create 成功但子表部分失败留页时，再次保存须
   // 走 update 而非二次 create——否则生成重复主单，且已落库子行会被迁挂到新单下、
@@ -1408,6 +1517,7 @@ export function EntityForm({ node }: NodeProps) {
                 readOnly={
                   locked || (rollupActive && f.key === rollupField?.key)
                 }
+                statusColors={statusColors}
               />
             </div>
           </div>
@@ -1438,6 +1548,7 @@ export function EntityForm({ node }: NodeProps) {
               !ctx.access || (childActions?.includes("delete") ?? false)
             }
             cardMode={singleMode}
+            statusColors={statusColors}
           />
         );
       })}
@@ -2041,12 +2152,26 @@ export function Detail({ node }: NodeProps) {
   const ctx = useRendererCtx();
   const entity = resolveEntity(ctx, node.binding?.source);
   const id = ctx.params.id;
+  const { publish: publishRecord } = useContext(PageRecordContext);
+  const entityKey = entity?.key;
   const [row, setRow] = useState<Row | null>(null);
   const [loading, setLoading] = useState(Boolean(id));
   const [error, setError] = useState<string | null>(null);
   const [labels, setLabels] = useState<Record<string, Record<string, string>>>(
     {},
   );
+  // 页面记录发布（包二）：本组件是详情页当前行的加载者——挂载/切换记录时先报
+  // pending（门控节点暂隐）、行到达后报 ready，卸载时撤下回 absent（兜底口径）。
+  // 用 useLayoutEffect 让 pending 在首帧绘制前落地，避免门控按钮以 absent
+  // 兜底口径闪现一帧再消失。
+  useLayoutEffect(() => {
+    if (!entityKey || !id) return;
+    publishRecord({ kind: "pending" });
+    return () => publishRecord({ kind: "absent" });
+  }, [publishRecord, entityKey, id]);
+  useLayoutEffect(() => {
+    if (row) publishRecord({ kind: "ready", record: row });
+  }, [publishRecord, row]);
 
   useEffect(() => {
     if (!entity || !id) return;
@@ -2107,6 +2232,7 @@ export function Detail({ node }: NodeProps) {
   );
   const listRoute =
     typeof node.props?.listRoute === "string" ? node.props.listRoute : null;
+  const statusColors = parseStatusColors(node.props?.statusColors);
 
   return (
     <div>
@@ -2133,6 +2259,16 @@ export function Detail({ node }: NodeProps) {
                 ids={parseAssetIds(row[f.key])}
                 image={f.type === "image"}
                 adapter={ctx.adapter}
+              />
+            ) : f.key === "status" ? (
+              <StatusDisplay
+                raw={row[f.key]}
+                text={formatCellValue(
+                  f,
+                  row[f.key],
+                  f.refEntity ? labels[f.refEntity] : undefined,
+                )}
+                colors={statusColors}
               />
             ) : (
               formatCellValue(
@@ -3040,7 +3176,53 @@ export function createDefaultRegistry(): ComponentRegistry {
   return registry;
 }
 
+/**
+ * 节点渲染入口：先过 visibleWhen 门控再进实际渲染（NodeViewBody）。
+ * 门控口径（呈现层治理·包二）：节点未声明/声明非法、或处于设计态时不门控（原行为）；
+ * 本页无记录发布者（absent）时不门控；记录未就绪（pending）时先隐藏，防错误动作闪现；
+ * 记录就绪后按 eq/in 求值决定显隐。门控组件单独消费记录上下文，
+ * 使未声明门控的节点不因记录发布而额外重渲染。
+ */
 function NodeView({
+  node,
+  registry,
+  isRoot,
+}: {
+  node: ComponentNode;
+  registry: ComponentRegistry;
+  /** 页面根节点：设计态不挂拖拽手柄（根不可拖） */
+  isRoot?: boolean;
+}) {
+  const ctx = useRendererCtx();
+  const gate = ctx.design ? null : parseVisibleWhen(node.props?.visibleWhen);
+  if (gate) {
+    return (
+      <GatedNodeView gate={gate} node={node} registry={registry} isRoot={isRoot} />
+    );
+  }
+  return <NodeViewBody node={node} registry={registry} isRoot={isRoot} />;
+}
+
+function GatedNodeView({
+  gate,
+  node,
+  registry,
+  isRoot,
+}: {
+  gate: VisibleWhen;
+  node: ComponentNode;
+  registry: ComponentRegistry;
+  isRoot?: boolean;
+}) {
+  const { state } = useContext(PageRecordContext);
+  if (state.kind === "pending") return null;
+  if (state.kind === "ready" && !evalVisibleWhen(gate, state.record)) {
+    return null;
+  }
+  return <NodeViewBody node={node} registry={registry} isRoot={isRoot} />;
+}
+
+function NodeViewBody({
   node,
   registry,
   isRoot,
@@ -3162,18 +3344,22 @@ export function SchemaRenderer({
       fontSize: 14 * mt.fontScale,
     } as CSSProperties;
     return (
-      <RendererContext.Provider
-        value={{ adapter, dataSchema, page, params, device, access, design, theme }}
-      >
-        <div style={vars}>{tree}</div>
-      </RendererContext.Provider>
+      <PageRecordProvider>
+        <RendererContext.Provider
+          value={{ adapter, dataSchema, page, params, device, access, design, theme }}
+        >
+          <div style={vars}>{tree}</div>
+        </RendererContext.Provider>
+      </PageRecordProvider>
     );
   }
   return (
-    <RendererContext.Provider
-      value={{ adapter, dataSchema, page, params, device, access, design, theme }}
-    >
-      {tree}
-    </RendererContext.Provider>
+    <PageRecordProvider>
+      <RendererContext.Provider
+        value={{ adapter, dataSchema, page, params, device, access, design, theme }}
+      >
+        {tree}
+      </RendererContext.Provider>
+    </PageRecordProvider>
   );
 }
