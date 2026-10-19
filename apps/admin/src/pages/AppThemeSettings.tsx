@@ -15,10 +15,15 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
+  entryThemeSlots,
   ThemeUploadError,
+  THEME_SLOT_LABEL,
+  versionFitsSlot,
+  versionTargetLabel,
   type EntryView,
   type ThemeConfigItem,
   type ThemeItem,
+  type ThemeSlotName,
   type ThemeVersionView,
 } from "../api";
 import { fmtTime } from "../helpers";
@@ -32,6 +37,8 @@ import { fmtTime } from "../helpers";
  * - 内置主题库：平台内置主题只读一览，供选绑对照。
  * values 编辑口径与平台区 Themes 页一致：清单 config 的 default 打底，
  * 入口已绑同版本时以已存 values 覆盖；无 config 声明时用 JSON 文本兜底。
+ * M15 第⑤步起绑定为双槽（桌面槽/移动槽独立绑/解绑、values 按槽独立），
+ * 版本按 manifest.target 进对应槽（存量无 target 视为桌面）。
  */
 
 function fmtBytes(n: number): string {
@@ -57,10 +64,11 @@ function findVersion(
     ?.versions.find((v) => v.version === version);
 }
 
-/** 绑定初值：清单 default 打底，入口已绑同版本时用已存 values 覆盖 */
+/** 绑定初值：清单 default 打底，入口该槽已绑同版本时用已存 values 覆盖 */
 function initialValues(
   themes: ThemeItem[],
   entry: EntryView,
+  slot: ThemeSlotName,
   themeId: string,
   version: string,
 ): Record<string, string> {
@@ -68,13 +76,18 @@ function initialValues(
   for (const item of configOf(findVersion(themes, themeId, version))) {
     if (typeof item.default === "string") out[item.key] = item.default;
   }
-  if (entry.theme && entry.theme.id === themeId && entry.theme.version === version) {
-    for (const [k, v] of Object.entries(entry.theme.values ?? {})) {
+  const ptr = entryThemeSlots(entry)[slot];
+  if (ptr && ptr.id === themeId && ptr.version === version) {
+    for (const [k, v] of Object.entries(ptr.values ?? {})) {
       out[k] = typeof v === "string" ? v : JSON.stringify(v);
     }
   }
   return out;
 }
+
+/** 绑定编辑态键：入口 id + 槽位（双槽各自一份编辑态） */
+const slotKey = (entryId: string, slot: ThemeSlotName) => `${entryId}:${slot}`;
+const THEME_SLOTS: ThemeSlotName[] = ["desktop", "mobile"];
 
 export default function AppThemeSettings({
   appId,
@@ -91,7 +104,7 @@ export default function AppThemeSettings({
   const [problems, setProblems] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // 绑定编辑态（按入口 id）：选中的 "themeId@version"、values 表单值、JSON 兜底文本
+  // 绑定编辑态（按「入口 id:槽位」）：选中的 "themeId@version"、values 表单值、JSON 兜底文本
   const [sel, setSel] = useState<Record<string, string>>({});
   const [vals, setVals] = useState<Record<string, Record<string, string>>>({});
   const [valsJson, setValsJson] = useState<Record<string, string>>({});
@@ -108,10 +121,14 @@ export default function AppThemeSettings({
       const nextVals: Record<string, Record<string, string>> = {};
       const nextJson: Record<string, string> = {};
       for (const e of es) {
-        if (e.theme) {
-          nextSel[e.id] = `${e.theme.id}@${e.theme.version}`;
-          nextVals[e.id] = initialValues(ts, e, e.theme.id, e.theme.version);
-          nextJson[e.id] = JSON.stringify(e.theme.values ?? {}, null, 2);
+        const slots = entryThemeSlots(e);
+        for (const slot of THEME_SLOTS) {
+          const ptr = slots[slot];
+          if (!ptr) continue;
+          const k = slotKey(e.id, slot);
+          nextSel[k] = `${ptr.id}@${ptr.version}`;
+          nextVals[k] = initialValues(ts, e, slot, ptr.id, ptr.version);
+          nextJson[k] = JSON.stringify(ptr.values ?? {}, null, 2);
         }
       }
       setSel(nextSel);
@@ -173,32 +190,38 @@ export default function AppThemeSettings({
     [appId, load],
   );
 
-  /** 主题版本下拉选项（按主题分组；value = "id@version"，含全部版本） */
-  const versionOptions = useMemo(
-    () =>
-      bindableThemes.map((t) => ({
-        label: `${t.name}（${t.id}）${t.scope === "app" ? " · 本应用私有" : ""}`,
-        options: t.versions.map((v) => ({
-          value: `${t.id}@${v.version}`,
-          label: `${t.id} @ ${v.version}`,
-        })),
-      })),
+  /** 某槽的主题版本下拉选项（按主题分组；只含 target 与槽位一致的版本） */
+  const versionOptionsFor = useCallback(
+    (slot: ThemeSlotName) =>
+      bindableThemes
+        .map((t) => ({
+          label: `${t.name}（${t.id}）${t.scope === "app" ? " · 本应用私有" : ""}`,
+          options: t.versions
+            .filter((v) => versionFitsSlot(v, slot))
+            .map((v) => ({
+              value: `${t.id}@${v.version}`,
+              label: `${t.id} @ ${v.version} · ${versionTargetLabel(v)}`,
+            })),
+        }))
+        .filter((g) => g.options.length > 0),
     [bindableThemes],
   );
 
   const onSelectVersion = useCallback(
-    (entry: EntryView, value: string) => {
-      setSel((prev) => ({ ...prev, [entry.id]: value }));
+    (entry: EntryView, slot: ThemeSlotName, value: string) => {
+      const k = slotKey(entry.id, slot);
+      setSel((prev) => ({ ...prev, [k]: value }));
       const [themeId, version] = value.split("@");
       setVals((prev) => ({
         ...prev,
-        [entry.id]: initialValues(themes, entry, themeId, version),
+        [k]: initialValues(themes, entry, slot, themeId, version),
       }));
+      const ptr = entryThemeSlots(entry)[slot];
       setValsJson((prev) => ({
         ...prev,
-        [entry.id]:
-          entry.theme && entry.theme.id === themeId && entry.theme.version === version
-            ? JSON.stringify(entry.theme.values ?? {}, null, 2)
+        [k]:
+          ptr && ptr.id === themeId && ptr.version === version
+            ? JSON.stringify(ptr.values ?? {}, null, 2)
             : "{}",
       }));
     },
@@ -206,18 +229,19 @@ export default function AppThemeSettings({
   );
 
   const saveBinding = useCallback(
-    async (entry: EntryView) => {
-      const picked = sel[entry.id];
+    async (entry: EntryView, slot: ThemeSlotName) => {
+      const k = slotKey(entry.id, slot);
+      const picked = sel[k];
       if (!picked) return;
       const [themeId, version] = picked.split("@");
       const items = configOf(findVersion(themes, themeId, version));
       let values: Record<string, unknown>;
       if (items.length > 0) {
-        values = { ...(vals[entry.id] ?? {}) };
+        values = { ...(vals[k] ?? {}) };
       } else {
         // 拿不到清单 config schema：JSON 文本域兜底
         try {
-          const parsed: unknown = JSON.parse(valsJson[entry.id] || "{}");
+          const parsed: unknown = JSON.parse(valsJson[k] || "{}");
           if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
             message.error("配置值必须是 JSON 对象");
             return;
@@ -228,12 +252,17 @@ export default function AppThemeSettings({
           return;
         }
       }
-      setBindingId(entry.id);
+      setBindingId(k);
       try {
-        await api.entries.update(entry.id, {
-          theme: { id: themeId, version, values },
-        });
-        message.success(`入口「${entry.name}」已绑定主题 ${themeId}@${version}`);
+        // 双槽整体重建：只改本槽，另一槽保持入口现值（服务端按槽复核供给）
+        const next = {
+          ...entryThemeSlots(entry),
+          [slot]: { id: themeId, version, values },
+        };
+        await api.entries.update(entry.id, { theme: next });
+        message.success(
+          `入口「${entry.name}」${THEME_SLOT_LABEL[slot]}已绑定主题 ${themeId}@${version}`,
+        );
         await load();
       } catch (err) {
         message.error(err instanceof Error ? err.message : "绑定失败");
@@ -245,11 +274,15 @@ export default function AppThemeSettings({
   );
 
   const unbind = useCallback(
-    async (entry: EntryView) => {
-      setBindingId(entry.id);
+    async (entry: EntryView, slot: ThemeSlotName) => {
+      const k = slotKey(entry.id, slot);
+      setBindingId(k);
       try {
-        await api.entries.update(entry.id, { theme: null });
-        message.success(`入口「${entry.name}」已解绑主题，公开面恢复原有分发`);
+        const next = { ...entryThemeSlots(entry), [slot]: null };
+        await api.entries.update(entry.id, { theme: next });
+        message.success(
+          `入口「${entry.name}」${THEME_SLOT_LABEL[slot]}已解绑主题`,
+        );
         await load();
       } catch (err) {
         message.error(err instanceof Error ? err.message : "解绑失败");
@@ -266,6 +299,7 @@ export default function AppThemeSettings({
         <Typography.Text key={v.version} style={{ fontSize: 12 }}>
           {t.id}@{v.version}：{v.fileCount} 个文件 / {fmtBytes(v.totalBytes)}
           ，上传人 {v.createdBy ?? "—"}，{fmtTime(v.createdAt)}
+          ；端：{versionTargetLabel(v)}
           {configOf(v).length > 0
             ? `；配置项：${configOf(v)
                 .map((c) => `${c.label}(${c.key})`)
@@ -300,7 +334,8 @@ export default function AppThemeSettings({
           )}
           {t.versions.map((v) => (
             <Tag key={v.version}>
-              {v.version}（{v.fileCount} 文件 / {fmtBytes(v.totalBytes)}）
+              {v.version}（{v.fileCount} 文件 / {fmtBytes(v.totalBytes)} ·{" "}
+              {versionTargetLabel(v)}）
             </Tag>
           ))}
         </Space>
@@ -324,154 +359,188 @@ export default function AppThemeSettings({
     },
   ];
 
+  /** 单槽编辑块：槽位标题 + 版本下拉 + values 表单（清单 config 或 JSON 兜底） */
+  const renderSlotEditor = (e: EntryView, slot: ThemeSlotName) => {
+    const k = slotKey(e.id, slot);
+    const picked = sel[k];
+    const [themeId, version] = picked ? picked.split("@") : [null, null];
+    const items =
+      themeId && version ? configOf(findVersion(themes, themeId, version)) : [];
+    return (
+      <Space direction="vertical" size={6} style={{ width: "100%" }}>
+        <Typography.Text strong style={{ fontSize: 12 }}>
+          {THEME_SLOT_LABEL[slot]}
+          {slot === "mobile" && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              （移动设备/壳内经自检或 view 参数进入，空缺回退桌面槽）
+            </Typography.Text>
+          )}
+        </Typography.Text>
+        <Select
+          allowClear
+          placeholder={`选择${THEME_SLOT_LABEL[slot]}主题版本`}
+          style={{ width: 320 }}
+          value={picked}
+          options={versionOptionsFor(slot)}
+          onChange={(v) => {
+            if (v) onSelectVersion(e, slot, v);
+            else setSel((prev) => ({ ...prev, [k]: "" }));
+          }}
+        />
+        {picked &&
+          (items.length > 0 ? (
+            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+              {items.map((item) => (
+                <Space key={item.key} size={8}>
+                  <Typography.Text style={{ width: 110, display: "inline-block" }}>
+                    {item.label}
+                  </Typography.Text>
+                  {item.type === "textarea" ? (
+                    <Input.TextArea
+                      rows={2}
+                      style={{ width: 320 }}
+                      value={vals[k]?.[item.key] ?? ""}
+                      onChange={(ev) =>
+                        setVals((prev) => ({
+                          ...prev,
+                          [k]: { ...(prev[k] ?? {}), [item.key]: ev.target.value },
+                        }))
+                      }
+                    />
+                  ) : item.type === "color" ? (
+                    <Space size={6}>
+                      <input
+                        type="color"
+                        value={vals[k]?.[item.key] || "#000000"}
+                        onChange={(ev) =>
+                          setVals((prev) => ({
+                            ...prev,
+                            [k]: { ...(prev[k] ?? {}), [item.key]: ev.target.value },
+                          }))
+                        }
+                      />
+                      <Input
+                        style={{ width: 120 }}
+                        value={vals[k]?.[item.key] ?? ""}
+                        onChange={(ev) =>
+                          setVals((prev) => ({
+                            ...prev,
+                            [k]: { ...(prev[k] ?? {}), [item.key]: ev.target.value },
+                          }))
+                        }
+                      />
+                    </Space>
+                  ) : (
+                    <Input
+                      style={{ width: 320 }}
+                      placeholder={item.type === "image" ? "图片 URL" : undefined}
+                      value={vals[k]?.[item.key] ?? ""}
+                      onChange={(ev) =>
+                        setVals((prev) => ({
+                          ...prev,
+                          [k]: { ...(prev[k] ?? {}), [item.key]: ev.target.value },
+                        }))
+                      }
+                    />
+                  )}
+                </Space>
+              ))}
+            </Space>
+          ) : (
+            <Input.TextArea
+              rows={3}
+              style={{ width: 440 }}
+              placeholder='该版本清单未声明 config，用 JSON 对象填写配置值，如 {"siteName":"星桥"}'
+              value={valsJson[k] ?? "{}"}
+              onChange={(ev) =>
+                setValsJson((prev) => ({ ...prev, [k]: ev.target.value }))
+              }
+            />
+          ))}
+      </Space>
+    );
+  };
+
   const entryColumns: ColumnsType<EntryView> = [
     {
       title: "入口",
       dataIndex: "name",
       width: 220,
-      render: (_, e) => (
-        <Space direction="vertical" size={2}>
-          <Space size={6}>
-            <Typography.Text strong>{e.name}</Typography.Text>
-            {e.isDefault && <Tag>默认</Tag>}
-          </Space>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {e.hosts.length ? e.hosts.join("、") : "（任意域名）"}
-          </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            当前绑定：
-            {e.theme ? (
-              <Tag color="processing">
-                {e.theme.id}@{e.theme.version}
-              </Tag>
-            ) : (
-              "未绑定"
-            )}
-          </Typography.Text>
-        </Space>
-      ),
-    },
-    {
-      title: "选择主题版本并配置",
       render: (_, e) => {
-        const picked = sel[e.id];
-        const [themeId, version] = picked ? picked.split("@") : [null, null];
-        const items =
-          themeId && version
-            ? configOf(findVersion(themes, themeId, version))
-            : [];
+        const slots = entryThemeSlots(e);
         return (
-          <Space direction="vertical" size={8} style={{ width: "100%" }}>
-            <Select
-              allowClear
-              placeholder="选择主题版本"
-              style={{ width: 320 }}
-              value={picked}
-              options={versionOptions}
-              onChange={(v) => {
-                if (v) onSelectVersion(e, v);
-                else setSel((prev) => ({ ...prev, [e.id]: "" }));
-              }}
-            />
-            {picked &&
-              (items.length > 0 ? (
-                <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                  {items.map((item) => (
-                    <Space key={item.key} size={8}>
-                      <Typography.Text style={{ width: 110, display: "inline-block" }}>
-                        {item.label}
-                      </Typography.Text>
-                      {item.type === "textarea" ? (
-                        <Input.TextArea
-                          rows={2}
-                          style={{ width: 320 }}
-                          value={vals[e.id]?.[item.key] ?? ""}
-                          onChange={(ev) =>
-                            setVals((prev) => ({
-                              ...prev,
-                              [e.id]: { ...(prev[e.id] ?? {}), [item.key]: ev.target.value },
-                            }))
-                          }
-                        />
-                      ) : item.type === "color" ? (
-                        <Space size={6}>
-                          <input
-                            type="color"
-                            value={vals[e.id]?.[item.key] || "#000000"}
-                            onChange={(ev) =>
-                              setVals((prev) => ({
-                                ...prev,
-                                [e.id]: { ...(prev[e.id] ?? {}), [item.key]: ev.target.value },
-                              }))
-                            }
-                          />
-                          <Input
-                            style={{ width: 120 }}
-                            value={vals[e.id]?.[item.key] ?? ""}
-                            onChange={(ev) =>
-                              setVals((prev) => ({
-                                ...prev,
-                                [e.id]: { ...(prev[e.id] ?? {}), [item.key]: ev.target.value },
-                              }))
-                            }
-                          />
-                        </Space>
-                      ) : (
-                        <Input
-                          style={{ width: 320 }}
-                          placeholder={item.type === "image" ? "图片 URL" : undefined}
-                          value={vals[e.id]?.[item.key] ?? ""}
-                          onChange={(ev) =>
-                            setVals((prev) => ({
-                              ...prev,
-                              [e.id]: { ...(prev[e.id] ?? {}), [item.key]: ev.target.value },
-                            }))
-                          }
-                        />
-                      )}
-                    </Space>
-                  ))}
-                </Space>
-              ) : (
-                <Input.TextArea
-                  rows={3}
-                  style={{ width: 440 }}
-                  placeholder='该版本清单未声明 config，用 JSON 对象填写配置值，如 {"siteName":"星桥"}'
-                  value={valsJson[e.id] ?? "{}"}
-                  onChange={(ev) =>
-                    setValsJson((prev) => ({ ...prev, [e.id]: ev.target.value }))
-                  }
-                />
-              ))}
+          <Space direction="vertical" size={2}>
+            <Space size={6}>
+              <Typography.Text strong>{e.name}</Typography.Text>
+              {e.isDefault && <Tag>默认</Tag>}
+            </Space>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {e.hosts.length ? e.hosts.join("、") : "（任意域名）"}
+            </Typography.Text>
+            {THEME_SLOTS.map((slot) => (
+              <Typography.Text key={slot} type="secondary" style={{ fontSize: 12 }}>
+                {THEME_SLOT_LABEL[slot]}：
+                {slots[slot] ? (
+                  <Tag color="processing">
+                    {slots[slot]!.id}@{slots[slot]!.version}
+                  </Tag>
+                ) : (
+                  "未绑定"
+                )}
+              </Typography.Text>
+            ))}
           </Space>
         );
       },
     },
     {
-      title: "操作",
-      width: 170,
+      title: "选择主题版本并配置（双槽）",
       render: (_, e) => (
-        <Space size={6}>
-          <Button
-            type="primary"
-            size="small"
-            loading={bindingId === e.id}
-            disabled={!sel[e.id]}
-            onClick={() => void saveBinding(e)}
-          >
-            保存绑定
-          </Button>
-          <Button
-            size="small"
-            danger
-            loading={bindingId === e.id}
-            disabled={!e.theme}
-            onClick={() => void unbind(e)}
-          >
-            解绑
-          </Button>
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          {THEME_SLOTS.map((slot) => (
+            <React.Fragment key={slot}>{renderSlotEditor(e, slot)}</React.Fragment>
+          ))}
         </Space>
       ),
+    },
+    {
+      title: "操作",
+      width: 190,
+      render: (_, e) => {
+        const slots = entryThemeSlots(e);
+        return (
+          <Space direction="vertical" size={8}>
+            {THEME_SLOTS.map((slot) => {
+              const k = slotKey(e.id, slot);
+              return (
+                <Space key={slot} size={6}>
+                  <Typography.Text style={{ fontSize: 12, width: 42, display: "inline-block" }}>
+                    {slot === "desktop" ? "桌面" : "移动"}
+                  </Typography.Text>
+                  <Button
+                    type="primary"
+                    size="small"
+                    loading={bindingId === k}
+                    disabled={!sel[k]}
+                    onClick={() => void saveBinding(e, slot)}
+                  >
+                    保存
+                  </Button>
+                  <Button
+                    size="small"
+                    danger
+                    loading={bindingId === k}
+                    disabled={!slots[slot]}
+                    onClick={() => void unbind(e, slot)}
+                  >
+                    解绑
+                  </Button>
+                </Space>
+              );
+            })}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -485,7 +554,7 @@ export default function AppThemeSettings({
           showIcon
           style={{ marginBottom: 16 }}
           message="主题绑定按入口生效，绑定权归入口的主应用（即当前应用）"
-          description="入口若同时挂有其他应用，主题呈现对同入口的全部应用一致。可选主题 = 平台内置主题全部 + 本应用私有主题；绑定、解绑、回滚（改绑旧版本）都只是切换入口指针，即时生效，与入口的运行模式互不影响。"
+          description="入口若同时挂有其他应用，主题呈现对同入口的全部应用一致。可选主题 = 平台内置主题全部 + 本应用私有主题；绑定分桌面槽/移动槽两槽（版本按 target 进对应槽、两槽各自独立的配置值），绑定、解绑、回滚（改绑旧版本）都只是切换入口指针，即时生效，与入口的运行模式互不影响。"
         />
         {!loading && myEntries.length === 0 ? (
           <Empty

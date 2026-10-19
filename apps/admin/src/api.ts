@@ -29,11 +29,43 @@ export type Row = Record<string, unknown>;
 /** 运行入口（静态化线）：站点级装配与运行模式 */
 export type SiteMode = "dynamic" | "pseudo" | "static";
 
-/** 主题绑定指针（M14 线二）：入口 config.theme 的形状，无绑定为 null */
+/** 主题绑定指针（M14 线二）：单槽指针形状 {id, version, values} */
 export interface ThemePointer {
   id: string;
   version: string;
   values: Record<string, unknown>;
+}
+
+/**
+ * 主题双槽指针（M15 第⑤步）：入口 config.theme 的现行形状。
+ * themePointerOf 只认此形状（旧单指针视为未绑定）；每槽独立绑定/解绑，
+ * values 按槽独立（D10）。
+ */
+export interface ThemeSlots {
+  desktop: ThemePointer | null;
+  mobile: ThemePointer | null;
+}
+
+export type ThemeSlotName = keyof ThemeSlots;
+
+/**
+ * 入口出参 theme 归一为双槽：null/旧单指针形状/形状非法一律两槽皆 null
+ * （与服务端「旧形状视为未绑定」同口径），页面层只消费归一结果。
+ */
+export function entryThemeSlots(entry: EntryView): ThemeSlots {
+  const empty: ThemeSlots = { desktop: null, mobile: null };
+  const raw = entry.theme as unknown;
+  if (!raw || typeof raw !== "object") return empty;
+  if (!("desktop" in raw) && !("mobile" in raw)) return empty;
+  const slot = (v: unknown): ThemePointer | null =>
+    v &&
+    typeof v === "object" &&
+    typeof (v as ThemePointer).id === "string" &&
+    typeof (v as ThemePointer).version === "string"
+      ? (v as ThemePointer)
+      : null;
+  const s = raw as Record<string, unknown>;
+  return { desktop: slot(s.desktop), mobile: slot(s.mobile) };
 }
 
 export interface EntryView {
@@ -43,8 +75,8 @@ export interface EntryView {
   appIds: string[];
   isDefault: boolean;
   siteMode: SiteMode;
-  /** 主题绑定（M14 线二）：{id, version, values} 或 null */
-  theme: ThemePointer | null;
+  /** 主题绑定（M15 第⑤步双槽）：{desktop, mobile} 双槽指针，未绑定为 null */
+  theme: ThemeSlots | null;
   config: Record<string, unknown>;
 }
 
@@ -89,6 +121,9 @@ export interface ThemeManifestView {
   description?: string;
   config?: ThemeConfigItem[];
   preview?: string;
+  /** 目标端（M15 第⑤步）：新上传必填；存量版本缺失，按 P1 口径视为 desktop */
+  target?: "desktop" | "mobile";
+  routes?: string[];
 }
 
 export interface ThemeVersionView {
@@ -98,6 +133,37 @@ export interface ThemeVersionView {
   totalBytes: number;
   createdBy: string | null;
   createdAt: string | null;
+}
+
+/**
+ * 版本目标端（M15 第⑤步，含 P1 存量口径）：manifest.target 缺失/非法
+ * 一律视为 desktop（存量主题本就是桌面布局）；仅显式 mobile 归移动端。
+ */
+export function versionTarget(v: ThemeVersionView): "desktop" | "mobile" {
+  return v.manifest?.target === "mobile" ? "mobile" : "desktop";
+}
+
+/** 是否为无 target 声明的存量版本（标注用） */
+export function isLegacyTargetVersion(v: ThemeVersionView): boolean {
+  const t = v.manifest?.target;
+  return t !== "desktop" && t !== "mobile";
+}
+
+/** 版本可绑入的槽位：与 versionTarget 同口径（存量只入桌面槽） */
+export function versionFitsSlot(v: ThemeVersionView, slot: ThemeSlotName): boolean {
+  return versionTarget(v) === slot;
+}
+
+/** 槽位中文名 */
+export const THEME_SLOT_LABEL: Record<ThemeSlotName, string> = {
+  desktop: "桌面槽",
+  mobile: "移动槽",
+};
+
+/** 版本端别标注文案：移动 / 桌面 / 桌面（存量） */
+export function versionTargetLabel(v: ThemeVersionView): string {
+  if (versionTarget(v) === "mobile") return "移动";
+  return isLegacyTargetVersion(v) ? "桌面（存量）" : "桌面";
 }
 
 export interface ThemeBoundEntry {
@@ -452,10 +518,11 @@ export const api = {
       const res = await apiFetch<{ entries: EntryView[] }>("/admin/entries");
       return res.entries;
     },
-    /** siteMode 与 theme 指针同居入口 config、互不覆盖：只传要改的那一项 */
+    /** siteMode 与 theme 指针同居入口 config、互不覆盖：只传要改的那一项；
+     * theme 传完整双槽对象（按槽重建，单槽解绑 = 该槽置 null）或 null 清空双槽 */
     async update(
       id: string,
-      body: { siteMode?: SiteMode; theme?: ThemePointer | null },
+      body: { siteMode?: SiteMode; theme?: ThemeSlots | null },
     ): Promise<EntryView> {
       const res = await apiFetch<{ entry: EntryView }>(
         `/admin/entries/${encodeURIComponent(id)}`,
