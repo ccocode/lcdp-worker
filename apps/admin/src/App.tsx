@@ -61,6 +61,7 @@ import DataAdmin from "./pages/DataAdmin";
 import Submissions from "./pages/Submissions";
 import StaticStatus from "./pages/StaticStatus";
 import AppSettings, { domainHealth } from "./pages/AppSettings";
+import AppThemeSettings from "./pages/AppThemeSettings";
 import ContentArticles from "./pages/ContentArticles";
 
 const { Header, Sider, Content } = Layout;
@@ -85,6 +86,7 @@ type PageKey =
   | "submissions"
   | "static"
   | "appsettings"
+  | "theme-settings"
   // 内容领域模版（当前应用 domain=content 且映射健康时出现）
   | "content-workbench"
   | "content-categories"
@@ -121,6 +123,7 @@ const APP_MENU: MenuDef[] = [
   { key: "submissions", label: "提交审核", icon: <AuditOutlined /> },
   { key: "static", label: "静态状态", icon: <GlobalOutlined /> },
   { key: "appsettings", label: "应用设置", icon: <SettingOutlined /> },
+  { key: "theme-settings", label: "主题设置", icon: <SkinOutlined /> },
 ];
 
 /** 内容领域模版菜单 */
@@ -573,6 +576,9 @@ export default function App() {
           )}
           {appId && effectivePage === "appsettings" && (
             <AppSettings key={appId} app={currentApp} meta={appMeta} />
+          )}
+          {appId && effectivePage === "theme-settings" && (
+            <AppThemeSettings key={appId} appId={appId} isAdmin={isAdmin} />
           )}
           {appId && effectivePage === "content-workbench" &&
             appPageShell(

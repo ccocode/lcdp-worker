@@ -112,6 +112,10 @@ export interface ThemeItem {
   id: string;
   name: string;
   description: string | null;
+  /** 供给维度（M15 第④步）：builtin = 平台内置库；app = 应用私有 */
+  scope: "builtin" | "app";
+  /** scope=app 时的归属应用 id；builtin 为 null */
+  ownerAppId?: string | null;
   versions: ThemeVersionView[];
   boundEntries: ThemeBoundEntry[];
 }
@@ -466,11 +470,16 @@ export const api = {
       const res = await apiFetch<{ themes: ThemeItem[] }>("/admin/themes");
       return res.themes;
     },
-    /** multipart 上传主题包 zip：校验失败抛 ThemeUploadError（带逐项 problems） */
-    async upload(file: File): Promise<ThemeUploadResult> {
+    /**
+     * multipart 上传主题包 zip：校验失败抛 ThemeUploadError（带逐项 problems）。
+     * appId 给出时为应用私有通道（M15 第④步）：服务端按该应用的运营授权执法，
+     * 落 scope=app / owner=appId；不给时为平台内置通道（admin）。
+     */
+    async upload(file: File, appId?: string): Promise<ThemeUploadResult> {
       const token = getToken();
       const fd = new FormData();
       fd.set("file", file);
+      if (appId) fd.set("appId", appId);
       const res = await fetch(`${API_BASE}/admin/themes`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},

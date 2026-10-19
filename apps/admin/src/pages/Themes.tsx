@@ -243,6 +243,16 @@ export default function Themes() {
       ),
     },
     {
+      title: "供给",
+      dataIndex: "scope",
+      render: (_, t) =>
+        t.scope === "app" ? (
+          <Tag color="purple">应用私有 · {t.ownerAppId ?? "—"}</Tag>
+        ) : (
+          <Tag>内置</Tag>
+        ),
+    },
+    {
       title: "版本",
       dataIndex: "versions",
       render: (_, t) => (
