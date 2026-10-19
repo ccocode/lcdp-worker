@@ -3901,12 +3901,15 @@ function AppView({
                   isFlow ? ["/flow"] : current ? [current.route] : []
                 }
                 openKeys={siderCollapsed ? undefined : openGroupKeys}
-                onOpenChange={(keys) =>
+                onOpenChange={(keys) => {
+                  // 折叠态下 antd 会以弹出模式回放 openKeys 变化，不记覆盖，
+                  // 否则整栏收起再展开会把所有分组误记为已折叠
+                  if (siderCollapsed) return;
                   setOpenKeysOverride({
                     appId: activeLoaded.app.id,
                     keys: keys as string[],
-                  })
-                }
+                  });
+                }}
                 style={{ borderInlineEnd: "none", background: "transparent" }}
                 items={siderMenuItems}
                 onClick={({ key }) => goPage(key)}
