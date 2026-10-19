@@ -854,12 +854,46 @@ export const api = {
           : [],
       };
     },
+    /**
+     * 按应用会话详情（对象形态归正按应用回放端点）：会话不属该应用回 404，
+     * 响应形状同全局 conversation。
+     */
+    async conversationForApp(
+      appId: string,
+      id: string,
+    ): Promise<{
+      conversation: Row;
+      messages: Row[];
+      toolCalls: Row[];
+    }> {
+      const res = await apiFetch<Record<string, unknown>>(
+        `/admin/apps/${encodeURIComponent(appId)}/replay/conversations/${encodeURIComponent(id)}`,
+      );
+      return {
+        conversation: (res.conversation as Row) ?? (res as Row),
+        messages: Array.isArray(res.messages) ? (res.messages as Row[]) : [],
+        toolCalls: Array.isArray(res.toolCalls)
+          ? (res.toolCalls as Row[])
+          : [],
+      };
+    },
     async proposals(params?: {
       page?: number;
       pageSize?: number;
+      appId?: string;
     }): Promise<PageResult<Row>> {
       const res = await apiFetch<unknown>(
         `/admin/replay/proposals${qs(params ?? {})}`,
+      );
+      return pageOf<Row>(res);
+    },
+    /** 按应用提案列表（对象形态归正按应用回放端点），响应形状同全局 proposals。 */
+    async proposalsForApp(
+      appId: string,
+      params?: { page?: number; pageSize?: number },
+    ): Promise<PageResult<Row>> {
+      const res = await apiFetch<unknown>(
+        `/admin/apps/${encodeURIComponent(appId)}/replay/proposals${qs(params ?? {})}`,
       );
       return pageOf<Row>(res);
     },
@@ -869,12 +903,30 @@ export const api = {
       );
       return ((res.proposal as Row) ?? res) as Row;
     },
+    /** 按应用提案详情：提案不属该应用回 404，响应形状同全局 proposal。 */
+    async proposalForApp(appId: string, id: string): Promise<Row> {
+      const res = await apiFetch<Record<string, unknown>>(
+        `/admin/apps/${encodeURIComponent(appId)}/replay/proposals/${encodeURIComponent(id)}`,
+      );
+      return ((res.proposal as Row) ?? res) as Row;
+    },
     async flows(params?: {
       page?: number;
       pageSize?: number;
+      appId?: string;
     }): Promise<PageResult<Row>> {
       const res = await apiFetch<unknown>(
         `/admin/replay/flows${qs(params ?? {})}`,
+      );
+      return pageOf<Row>(res);
+    },
+    /** 按应用流程列表（对象形态归正按应用回放端点），响应形状同全局 flows。 */
+    async flowsForApp(
+      appId: string,
+      params?: { page?: number; pageSize?: number },
+    ): Promise<PageResult<Row>> {
+      const res = await apiFetch<unknown>(
+        `/admin/apps/${encodeURIComponent(appId)}/replay/flows${qs(params ?? {})}`,
       );
       return pageOf<Row>(res);
     },
@@ -885,6 +937,24 @@ export const api = {
     }> {
       const res = await apiFetch<Record<string, unknown>>(
         `/admin/replay/flows/${encodeURIComponent(id)}`,
+      );
+      return {
+        instance: ((res.instance as Row) ?? (res.flow as Row) ?? res) as Row,
+        tasks: Array.isArray(res.tasks) ? (res.tasks as Row[]) : [],
+        events: Array.isArray(res.events) ? (res.events as Row[]) : [],
+      };
+    },
+    /** 按应用流程详情：实例不属该应用回 404，响应形状同全局 flow。 */
+    async flowForApp(
+      appId: string,
+      id: string,
+    ): Promise<{
+      instance: Row;
+      tasks: Row[];
+      events: Row[];
+    }> {
+      const res = await apiFetch<Record<string, unknown>>(
+        `/admin/apps/${encodeURIComponent(appId)}/replay/flows/${encodeURIComponent(id)}`,
       );
       return {
         instance: ((res.instance as Row) ?? (res.flow as Row) ?? res) as Row,

@@ -46,7 +46,7 @@ function ToolCallCard({ call }: { call: Row }) {
   );
 }
 
-function ConversationDetail({ id }: { id: string }) {
+function ConversationDetail({ id, appId }: { id: string; appId?: string | null }) {
   const [data, setData] = useState<{
     conversation: Row;
     messages: Row[];
@@ -55,8 +55,10 @@ function ConversationDetail({ id }: { id: string }) {
 
   useEffect(() => {
     let alive = true;
-    void api.replay
-      .conversation(id)
+    void (appId
+      ? api.replay.conversationForApp(appId, id)
+      : api.replay.conversation(id)
+    )
       .then((d) => alive && setData(d))
       .catch((err) =>
         message.error(err instanceof Error ? err.message : "加载会话失败"),
@@ -64,7 +66,7 @@ function ConversationDetail({ id }: { id: string }) {
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, appId]);
 
   const callsByMessage = useMemo(() => {
     const map = new Map<string, Row[]>();
@@ -139,12 +141,11 @@ function ConversationDetail({ id }: { id: string }) {
   );
 }
 
-function ProposalDetail({ id }: { id: string }) {
+function ProposalDetail({ id, appId }: { id: string; appId?: string | null }) {
   const [p, setP] = useState<Row | null>(null);
   useEffect(() => {
     let alive = true;
-    void api.replay
-      .proposal(id)
+    void (appId ? api.replay.proposalForApp(appId, id) : api.replay.proposal(id))
       .then((d) => alive && setP(d))
       .catch((err) =>
         message.error(err instanceof Error ? err.message : "加载提案失败"),
@@ -152,7 +153,7 @@ function ProposalDetail({ id }: { id: string }) {
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, appId]);
   if (!p) return <Typography.Text type="secondary">加载中…</Typography.Text>;
   const log = p.log;
   const logText = Array.isArray(log)
@@ -185,14 +186,13 @@ function ProposalDetail({ id }: { id: string }) {
   );
 }
 
-function FlowDetail({ id }: { id: string }) {
+function FlowDetail({ id, appId }: { id: string; appId?: string | null }) {
   const [data, setData] = useState<{ instance: Row; tasks: Row[]; events: Row[] } | null>(
     null,
   );
   useEffect(() => {
     let alive = true;
-    void api.replay
-      .flow(id)
+    void (appId ? api.replay.flowForApp(appId, id) : api.replay.flow(id))
       .then((d) => alive && setData(d))
       .catch((err) =>
         message.error(err instanceof Error ? err.message : "加载流程失败"),
@@ -200,7 +200,7 @@ function FlowDetail({ id }: { id: string }) {
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, appId]);
   if (!data) return <Typography.Text type="secondary">加载中…</Typography.Text>;
   const inst = data.instance;
   return (
@@ -267,8 +267,9 @@ export default function Replay({
   appId,
 }: {
   /**
-   * platform：会话回放须先选定一个应用（以 appId 取其会话），不混显各应用明细；
-   * app：会话固定本应用（P2 按应用端点），无应用选择。提案/流程回放沿全局口径。
+   * platform：回放明细（会话/提案/流程）须先选定一个应用才取数，不混显各应用
+   * 明细；选定后列表走全局端点 + appId 过滤、详情走全局端点；
+   * app：三类列表与详情全部固定本应用（按应用回放端点），无应用选择。
    */
   scope: "platform" | "app";
   appId?: string;
@@ -281,8 +282,9 @@ export default function Replay({
   const [detailId, setDetailId] = useState<string | null>(null);
   const pageSize = 20;
 
-  // platform scope 会话回放的应用必选（仅 admin 可达 platform scope）
-  const [convAppId, setConvAppId] = useState<string | null>(null);
+  // platform scope 回放的应用必选：同时治理会话/提案/流程三个列表
+  // （仅 admin 可达 platform scope）
+  const [replayAppId, setReplayAppId] = useState<string | null>(null);
   const [appOptions, setAppOptions] = useState<{ value: string; label: string }[]>([]);
   useEffect(() => {
     if (scope !== "platform") return;
@@ -306,24 +308,30 @@ export default function Replay({
   }, [scope]);
 
   const load = useCallback(async () => {
+    // platform scope 未选应用：三个列表一律不取数，统一空态提示
+    if (scope === "platform" && !replayAppId) {
+      setRows([]);
+      setTotal(0);
+      return;
+    }
     setLoading(true);
     try {
       let res: { rows: Row[]; total: number };
       if (kind === "conversations") {
-        if (scope === "app") {
-          res = await api.replay.listForApp(appId!, { page, pageSize });
-        } else if (!convAppId) {
-          // 必选未选：不取数，列表呈空态提示
-          setRows([]);
-          setTotal(0);
-          return;
-        } else {
-          res = await api.replay.conversations({ appId: convAppId, page, pageSize });
-        }
+        res =
+          scope === "app"
+            ? await api.replay.listForApp(appId!, { page, pageSize })
+            : await api.replay.conversations({ appId: replayAppId!, page, pageSize });
       } else if (kind === "proposals") {
-        res = await api.replay.proposals({ page, pageSize });
+        res =
+          scope === "app"
+            ? await api.replay.proposalsForApp(appId!, { page, pageSize })
+            : await api.replay.proposals({ appId: replayAppId!, page, pageSize });
       } else {
-        res = await api.replay.flows({ page, pageSize });
+        res =
+          scope === "app"
+            ? await api.replay.flowsForApp(appId!, { page, pageSize })
+            : await api.replay.flows({ appId: replayAppId!, page, pageSize });
       }
       setRows(res.rows);
       setTotal(res.total);
@@ -332,7 +340,7 @@ export default function Replay({
     } finally {
       setLoading(false);
     }
-  }, [kind, page, scope, appId, convAppId]);
+  }, [kind, page, scope, appId, replayAppId]);
 
   useEffect(() => {
     void load();
@@ -388,6 +396,9 @@ export default function Replay({
     flows: "流程实例回放",
   };
 
+  // 详情取数口径：app scope 走按应用详情端点（固定本应用）；platform scope 走全局详情
+  const detailAppId = scope === "app" ? (appId ?? null) : null;
+
   return (
     <Card
       title="审计回放"
@@ -407,21 +418,21 @@ export default function Replay({
         />
       }
     >
-      {scope === "platform" && kind === "conversations" && (
+      {scope === "platform" && (
         <Space style={{ marginBottom: 16 }} wrap>
           <Select
-            placeholder="先选择一个应用查看其会话回放"
+            placeholder="先选择一个应用查看其回放"
             style={{ width: 320 }}
-            value={convAppId ?? undefined}
+            value={replayAppId ?? undefined}
             options={appOptions}
             onChange={(v) => {
-              setConvAppId(v);
+              setReplayAppId(v);
               setPage(1);
               setDetailId(null);
             }}
           />
           <Typography.Text type="secondary">
-            会话明细按应用归属，平台层不混显：选定应用后只取该应用的会话。
+            回放明细按应用归属，平台层不混显：选定应用后只取该应用的会话、提案与流程。
           </Typography.Text>
         </Space>
       )}
@@ -430,8 +441,8 @@ export default function Replay({
         loading={loading}
         locale={{
           emptyText:
-            scope === "platform" && kind === "conversations" && !convAppId
-              ? "先选择一个应用，才显示该应用的会话列表"
+            scope === "platform" && !replayAppId
+              ? `先选择一个应用，才显示该应用的${{ conversations: "会话", proposals: "提案", flows: "流程" }[kind]}列表`
               : "暂无数据",
         }}
         columns={[
@@ -462,10 +473,14 @@ export default function Replay({
         destroyOnClose
       >
         {detailId && kind === "conversations" ? (
-          <ConversationDetail id={detailId} />
+          <ConversationDetail id={detailId} appId={detailAppId} />
         ) : null}
-        {detailId && kind === "proposals" ? <ProposalDetail id={detailId} /> : null}
-        {detailId && kind === "flows" ? <FlowDetail id={detailId} /> : null}
+        {detailId && kind === "proposals" ? (
+          <ProposalDetail id={detailId} appId={detailAppId} />
+        ) : null}
+        {detailId && kind === "flows" ? (
+          <FlowDetail id={detailId} appId={detailAppId} />
+        ) : null}
       </Drawer>
     </Card>
   );
