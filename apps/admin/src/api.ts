@@ -250,6 +250,14 @@ export interface AdminFieldMeta {
 export interface AdminEntityMeta {
   key: string;
   label: string;
+  /** 父实体关联字段（自引用层级实体，如栏目 parent_id） */
+  parentField?: string;
+  /**
+   * 调用者对该实体的数据动作（第 56 步）：服务端按数据权限三档裁剪下发，
+   * 值为 read/create/update/delete 的子集；actions 为空的实体不在 meta 中出现。
+   * 页面动作按钮以此为唯一门控（只有 read 的实体不渲染新建/编辑/删除）。
+   */
+  actions: string[];
   fields: AdminFieldMeta[];
 }
 
@@ -313,6 +321,41 @@ export interface GrantApp {
   id: string;
   name: string;
   role: string;
+  /**
+   * 可运营来源（第 56 步 E1）：grant = 显式运营授权；derived = 领域角色命中推导。
+   * admin 身份时服务端不下发此字段（role 恒为 admin）。
+   */
+  source?: "grant" | "derived";
+}
+
+/** 按应用的运营名单（第 56 步只读端点）：grant 与推导合并、逐项标注来源 */
+export interface AppOperator {
+  userId: string;
+  username: string;
+  displayName: string | null;
+  role: string;
+  source: "grant" | "derived";
+}
+
+/**
+ * 管理侧流程待办（第 56 步）：按调用者数据权限整形的记录摘要；
+ * record 在调用者无该行读权限时为 null。
+ */
+export interface FlowTaskView {
+  id: string;
+  instanceId: string;
+  workflowId: string;
+  entity: string;
+  recordId: string;
+  nodeLabel: string | null;
+  mode: string;
+  status: string;
+  assigneeUserId: string | null;
+  assigneeName: string | null;
+  assigneeRole: string | null;
+  createdAt: string;
+  instance: { createdByName: string | null; createdAt: string };
+  record: Row | null;
 }
 export interface GrantsMe {
   isAdmin: boolean;
@@ -389,11 +432,18 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const err = new Error(
       body?.message ?? body?.error ?? `请求失败 (${res.status})`,
-    ) as Error & { status?: number };
+    ) as ApiRequestError;
     err.status = res.status;
+    err.body = body;
     throw err;
   }
   return body as T;
+}
+
+/** apiFetch 失败错误：附 HTTP 状态与完整响应体（结构化错误如删除被引用的 referencedBy 在此读取） */
+export interface ApiRequestError extends Error {
+  status?: number;
+  body?: (Record<string, unknown> & { message?: string; error?: string }) | null;
 }
 
 function qs(params: Record<string, string | number | undefined | null>): string {
@@ -492,6 +542,13 @@ export const api = {
         { method: "DELETE" },
       );
     },
+    /** 按应用查运营名单（第 56 步）：grant ∪ 推导合并名单，只读 */
+    async listForApp(appId: string): Promise<AppOperator[]> {
+      const res = await apiFetch<{ appId: string; operators: AppOperator[] }>(
+        `/admin/apps/${encodeURIComponent(appId)}/grants`,
+      );
+      return Array.isArray(res.operators) ? res.operators : [];
+    },
   },
 
   tenants: {
@@ -519,10 +576,17 @@ export const api = {
       return res.entries;
     },
     /** siteMode 与 theme 指针同居入口 config、互不覆盖：只传要改的那一项；
-     * theme 传完整双槽对象（按槽重建，单槽解绑 = 该槽置 null）或 null 清空双槽 */
+     * theme 传完整双槽对象（按槽重建，单槽解绑 = 该槽置 null）或 null 清空双槽；
+     * hosts / appIds 为入口装配（第 56 步起 admin 可写：hosts 跨入口去重、
+     * appIds 须为本租户存在的应用；operator 分支仍只许 theme） */
     async update(
       id: string,
-      body: { siteMode?: SiteMode; theme?: ThemeSlots | null },
+      body: {
+        siteMode?: SiteMode;
+        theme?: ThemeSlots | null;
+        hosts?: string[];
+        appIds?: string[];
+      },
     ): Promise<EntryView> {
       const res = await apiFetch<{ entry: EntryView }>(
         `/admin/entries/${encodeURIComponent(id)}`,
@@ -829,32 +893,42 @@ export const api = {
     },
   },
 
-  /** 管理台跨租户资产列表与删除（契约 M9 §2.3：GET /admin/assets；删除走 DELETE /assets/:id） */
-  adminAssets: {
-    async list(params: {
-      tenant?: string;
-      q?: string;
-      appId?: string;
-      limit?: number;
-      offset?: number;
-    }): Promise<PageResult<AssetItem>> {
-      const res = await apiFetch<unknown>(`/admin/assets${qs(params)}`);
-      return pageOf<AssetItem>(res, "items");
+  /** 按应用圈定的资产（第 56 步）：列表/删除走 /admin/apps/:appId/assets，
+   * 归属按 app_id 收口，他应用资产不可见不可删（删除回审计 asset.delete） */
+  appAssets: {
+    async list(
+      appId: string,
+      params?: { q?: string; limit?: number; offset?: number },
+    ): Promise<PageResult<AssetItem>> {
+      const res = await apiFetch<{ items: AssetItem[]; total: number }>(
+        `/admin/apps/${encodeURIComponent(appId)}/assets${qs({
+          q: params?.q,
+          limit: params?.limit,
+          offset: params?.offset,
+        })}`,
+      );
+      return {
+        rows: Array.isArray(res.items) ? res.items : [],
+        total: typeof res.total === "number" ? res.total : 0,
+      };
     },
-    async remove(id: string): Promise<void> {
-      await apiFetch(`/assets/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
+    async remove(appId: string, id: string): Promise<void> {
+      await apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/assets/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
     },
   },
 
   /** 普通资产端点（管理台以上传人身份走 /assets，契约 M9 §2.3） */
   assets: {
-    /** multipart 上传：不能走 apiFetch（它固定 JSON 头），FormData 的 Content-Type 由浏览器补 boundary */
-    async upload(file: File): Promise<AssetItem> {
+    /** multipart 上传：不能走 apiFetch（它固定 JSON 头），FormData 的 Content-Type 由浏览器补 boundary；
+     * appId 给出时资产归属该应用（应用资产管理页用），不给则为未归属资产 */
+    async upload(file: File, appId?: string): Promise<AssetItem> {
       const token = getToken();
       const fd = new FormData();
       fd.set("file", file);
+      if (appId) fd.set("appId", appId);
       const res = await fetch(`${API_BASE}/assets`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -875,7 +949,8 @@ export const api = {
     },
   },
 
-  /** 管理侧数据（M15 第③步：按运营授权执法、不走员工权限快照；只读 + 编辑） */
+  /** 管理侧数据（M15 第③步起，按第 56 步数据权限三档执法、不走员工权限快照；
+   * 口径为读 + 新建 + 编辑 + 删除，删除被引用行回 409 referencedBy） */
   adminData: {
     async meta(appId: string): Promise<AdminDataMeta> {
       return apiFetch<AdminDataMeta>(
@@ -926,6 +1001,73 @@ export const api = {
         { method: "PUT", body: JSON.stringify(fields) },
       );
       return res.row;
+    },
+    /** 新建一行（第 56 步）：字段须在已发布 Schema 内、必填/enum/ref 由服务端校验 */
+    async create(
+      appId: string,
+      entity: string,
+      fields: Record<string, unknown>,
+    ): Promise<Row> {
+      const res = await apiFetch<{ row: Row }>(
+        `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}`,
+        { method: "POST", body: JSON.stringify(fields) },
+      );
+      return res.row;
+    },
+    /**
+     * 删除一行（第 56 步）：被其他记录引用时服务端回 409，
+     * 响应体 {error:"referenced", referencedBy:[{entity,field,count}]}，
+     * 经 ApiRequestError.body 读取；不静默级联。
+     */
+    async remove(appId: string, entity: string, id: string): Promise<void> {
+      await apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
+    },
+  },
+
+  /**
+   * 流程待办（第 56 步管理侧队列 + 员工面办理）：
+   * 队列走 /admin/apps/:appId/flow/tasks（按调用者数据权限裁剪）；
+   * 办理/催办复用员工面端点，执法只认流程指派——运营授权不赋予审批资格。
+   */
+  flow: {
+    async tasks(
+      appId: string,
+      params?: { status?: string; limit?: number; offset?: number },
+    ): Promise<{ tasks: FlowTaskView[]; total: number }> {
+      const res = await apiFetch<{ tasks: FlowTaskView[]; total: number }>(
+        `/admin/apps/${encodeURIComponent(appId)}/flow/tasks${qs({
+          status: params?.status ?? "pending",
+          limit: params?.limit,
+          offset: params?.offset,
+        })}`,
+      );
+      return {
+        tasks: Array.isArray(res.tasks) ? res.tasks : [],
+        total: typeof res.total === "number" ? res.total : 0,
+      };
+    },
+    /** 办理（通过/驳回）：指派给他人或角色不匹配时服务端 403 */
+    async act(
+      appId: string,
+      taskId: string,
+      decision: "approve" | "reject",
+      comment?: string,
+    ): Promise<Row> {
+      const res = await apiFetch<{ instance: Row }>(
+        `/apps/${encodeURIComponent(appId)}/flow/tasks/${encodeURIComponent(taskId)}/act`,
+        { method: "POST", body: JSON.stringify({ decision, comment }) },
+      );
+      return res.instance;
+    },
+    /** 催办：仅实例发起人（admin 例外）且实例进行中 */
+    async urge(appId: string, instanceId: string): Promise<void> {
+      await apiFetch(
+        `/apps/${encodeURIComponent(appId)}/flow/instances/${encodeURIComponent(instanceId)}/urge`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
     },
   },
 

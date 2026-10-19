@@ -60,6 +60,15 @@ export function fmtDate(v: unknown): string {
   return v.slice(0, 10);
 }
 
+/** 字节 → 人类可读（B / KB / MB，KB 起保留一位小数；自平台资产页迁入共享） */
+export function fmtSize(v: unknown): string {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function Mono({ children }: { children: React.ReactNode }) {
   return (
     <Typography.Text code style={{ fontSize: 12 }}>
