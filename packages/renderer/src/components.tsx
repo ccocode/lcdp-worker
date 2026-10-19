@@ -2369,7 +2369,7 @@ export function ActionButton({ node }: NodeProps) {
         ctx.adapter.navigate(payUrl);
       }
     } catch (err) {
-      ctx.adapter.notify("支付发起失败，请稍后重试", "error");
+      ctx.adapter.notify(errText(err), "error");
     }
   };
 
@@ -2393,7 +2393,7 @@ export function ActionButton({ node }: NodeProps) {
       ctx.adapter.notify("订单已取消");
       if (route) ctx.adapter.navigate(route);
     } catch (err) {
-      ctx.adapter.notify("取消订单失败，请稍后重试", "error");
+      ctx.adapter.notify(errText(err), "error");
     }
   };
 
