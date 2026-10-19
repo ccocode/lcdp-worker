@@ -265,7 +265,10 @@ function PendingReview() {
 export default function Kb() {
   return (
     <Card title="知识库">
+      {/* 页签切换销毁非活动面板：两面板均只在挂载时取数，不销毁则切换后
+          长期停在首次数据（待审队列尤其误导），销毁后每次切入按既有挂载取数重拉 */}
       <Tabs
+        destroyInactiveTabPane
         items={[
           { key: "docs", label: "文档", children: <Documents /> },
           { key: "pending", label: "FAQ 待审", children: <PendingReview /> },

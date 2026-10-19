@@ -155,6 +155,52 @@ function pathWithApp(key: PageKey, appId: string | null): string {
   return appId ? `/${key}?app=${encodeURIComponent(appId)}` : `/${key}`;
 }
 
+/**
+ * 应用上下文的可见页集与落点页：菜单渲染（effectivePage 掩盖）与会话内
+ * 切换归位（改 URL 与 page 状态）共用同一套口径，避免两处各算一份日后漂移。
+ */
+function contextVisibility(args: {
+  isAdmin: boolean;
+  grants: GrantsMe | null;
+  appId: string | null;
+  appMeta: AdminDataMeta | null;
+}): {
+  platformVisible: MenuDef[];
+  appVisible: MenuDef[];
+  contentVisible: MenuDef[];
+  visibleKeys: Set<PageKey>;
+  fallbackPage: PageKey;
+} {
+  const { isAdmin, grants, appId, appMeta } = args;
+  const health = appMeta ? domainHealth(appMeta) : null;
+  const showContentMenu =
+    !!appId &&
+    appMeta?.app.domain === "content" &&
+    !!health?.hasDomain &&
+    health.healthy;
+  // 平台区可见集：第 40 步口径（admin 全量；operator 仅知识库且须客服应用授权）
+  const platformVisible: MenuDef[] = isAdmin
+    ? PLATFORM_MENU
+    : PLATFORM_MENU.filter(
+        (m) =>
+          m.key === "kb" &&
+          (grants?.apps ?? []).some((a) => a.id === "supplier-service"),
+      );
+  const appVisible: MenuDef[] = appId ? APP_MENU : [];
+  const contentVisible: MenuDef[] = showContentMenu ? CONTENT_MENU : [];
+  const visibleKeys = new Set<PageKey>([
+    ...platformVisible.map((m) => m.key),
+    ...appVisible.map((m) => m.key),
+    ...contentVisible.map((m) => m.key),
+  ]);
+  const fallbackPage: PageKey = isAdmin
+    ? "overview"
+    : appId
+      ? "appsettings"
+      : (platformVisible[0]?.key ?? "appsettings");
+  return { platformVisible, appVisible, contentVisible, visibleKeys, fallbackPage };
+}
+
 /** 旧 # 链接迁移（M14 线一）：首载时把 #/<key> 以 replaceState 落到等价新路径 /<key> */
 function migrateLegacyHash(): void {
   const h = window.location.hash;
@@ -370,6 +416,28 @@ export default function App() {
     };
   }, [appId]);
 
+  // 会话内归位：切换应用上下文后，若当前页不在新上下文的可见页集内，把 URL
+  // 与 page 状态真正归位到落点页。此前只有渲染层经 effectivePage 掩盖，page
+  // 状态与 URL 仍停在不可见页上（在内容页切到非内容应用时正文与地址栏不一致，
+  // 切换器与 go() 也继续沿用旧页）。可见集与落点页与渲染口径同一套逻辑
+  // （contextVisibility）。元数据尚在途时不判：内容菜单可见性依赖领域元数据，
+  // 按旧应用的可见集判断会把「切回内容应用」途中的合法内容页误赶走；元数据
+  // 出错时 appMeta 已清空、按无内容菜单判断（页面本就不可用，归位合理）。
+  useEffect(() => {
+    if (!user || apps.length === 0) return;
+    if (appId && metaState !== "error" && appMeta?.app.id !== appId) return;
+    const { visibleKeys, fallbackPage } = contextVisibility({
+      isAdmin: user.role === "admin",
+      grants,
+      appId,
+      appMeta,
+    });
+    if (!visibleKeys.has(page)) {
+      window.history.replaceState(null, "", pathWithApp(fallbackPage, appId));
+      setPage(fallbackPage);
+    }
+  }, [user, apps, appId, appMeta, metaState, page, grants]);
+
   const go = useCallback(
     (key: PageKey) => {
       window.history.pushState(null, "", pathWithApp(key, appId));
@@ -404,33 +472,8 @@ export default function App() {
     );
 
   const isAdmin = user.role === "admin";
-  const health = appMeta ? domainHealth(appMeta) : null;
-  const showContentMenu =
-    !!appId &&
-    appMeta?.app.domain === "content" &&
-    !!health?.hasDomain &&
-    health.healthy;
-
-  // 平台区可见集：第 40 步口径（admin 全量；operator 仅知识库且须客服应用授权）
-  const platformVisible: MenuDef[] = isAdmin
-    ? PLATFORM_MENU
-    : PLATFORM_MENU.filter(
-        (m) =>
-          m.key === "kb" &&
-          (grants?.apps ?? []).some((a) => a.id === "supplier-service"),
-      );
-  const appVisible: MenuDef[] = appId ? APP_MENU : [];
-  const contentVisible: MenuDef[] = showContentMenu ? CONTENT_MENU : [];
-  const visibleKeys = new Set<PageKey>([
-    ...platformVisible.map((m) => m.key),
-    ...appVisible.map((m) => m.key),
-    ...contentVisible.map((m) => m.key),
-  ]);
-  const fallbackPage: PageKey = isAdmin
-    ? "overview"
-    : appId
-      ? "appsettings"
-      : (platformVisible[0]?.key ?? "appsettings");
+  const { platformVisible, appVisible, contentVisible, visibleKeys, fallbackPage } =
+    contextVisibility({ isAdmin, grants, appId, appMeta });
   const effectivePage: PageKey = visibleKeys.has(page) ? page : fallbackPage;
 
   const menuItems = [
