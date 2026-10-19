@@ -1,8 +1,14 @@
 import type { CSSProperties } from "react";
 
-/** M1 渲染器内置样式（零依赖内联样式；后续由 @lcdp/ui 的主题体系接管） */
+/**
+ * 渲染器内置样式 = B 端视觉基线在 renderer 的消费点（第 50 步，包三全量迁移）。
+ * 令牌与管理台 ConfigProvider（第 49 步）同源：主色 #1677ff、文字三级
+ * #1f2328 / #5f6b7a / #8a94a6、布局边框 #e4e7ec、控件边框 #d9d9d9、
+ * 表头底 #f8f9fb、表格行高 ≈44（td 纵向 padding 11）、卡片圆角 8 / 控件圆角 6。
+ * 手写组件（表单/子表/三态）一律经此对象取值，不再散写色值。
+ */
 export const styles: Record<string, CSSProperties> = {
-  page: { fontFamily: "system-ui, -apple-system, sans-serif", color: "#111827" },
+  page: { fontFamily: "system-ui, -apple-system, sans-serif", color: "#1f2328" },
   title: { fontSize: 20, fontWeight: 600, margin: "4px 0 16px" },
   toolbar: {
     display: "flex",
@@ -14,7 +20,7 @@ export const styles: Record<string, CSSProperties> = {
   btn: {
     padding: "6px 14px",
     borderRadius: 6,
-    border: "1px solid #d1d5db",
+    border: "1px solid #d9d9d9",
     background: "#fff",
     cursor: "pointer",
     fontSize: 14,
@@ -22,8 +28,8 @@ export const styles: Record<string, CSSProperties> = {
   btnPrimary: {
     padding: "6px 14px",
     borderRadius: 6,
-    border: "1px solid #2563eb",
-    background: "#2563eb",
+    border: "1px solid #1677ff",
+    background: "#1677ff",
     color: "#fff",
     cursor: "pointer",
     fontSize: 14,
@@ -31,9 +37,9 @@ export const styles: Record<string, CSSProperties> = {
   btnDanger: {
     padding: "6px 14px",
     borderRadius: 6,
-    border: "1px solid #dc2626",
+    border: "1px solid #cf1322",
     background: "#fff",
-    color: "#dc2626",
+    color: "#cf1322",
     cursor: "pointer",
     fontSize: 14,
   },
@@ -45,14 +51,16 @@ export const styles: Record<string, CSSProperties> = {
   },
   th: {
     textAlign: "left",
-    padding: "8px 10px",
-    borderBottom: "2px solid #e5e7eb",
-    color: "#374151",
+    padding: "10px",
+    borderBottom: "1px solid #e4e7ec",
+    background: "#f8f9fb",
+    color: "#5f6b7a",
+    fontWeight: 600,
     whiteSpace: "nowrap",
   },
   td: {
-    padding: "8px 10px",
-    borderBottom: "1px solid #f3f4f6",
+    padding: "11px 10px",
+    borderBottom: "1px solid #eef0f3",
     whiteSpace: "nowrap",
   },
   rowHover: { cursor: "pointer" },
@@ -62,7 +70,7 @@ export const styles: Record<string, CSSProperties> = {
     gap: 10,
     marginTop: 12,
     fontSize: 14,
-    color: "#4b5563",
+    color: "#5f6b7a",
   },
   form: { maxWidth: 760 },
   formRow: {
@@ -76,14 +84,14 @@ export const styles: Record<string, CSSProperties> = {
     flexShrink: 0,
     paddingTop: 7,
     fontSize: 14,
-    color: "#374151",
+    color: "#5f6b7a",
     textAlign: "right",
   },
-  required: { color: "#dc2626" },
+  required: { color: "#cf1322" },
   input: {
     flex: 1,
     padding: "6px 9px",
-    border: "1px solid #d1d5db",
+    border: "1px solid #d9d9d9",
     borderRadius: 6,
     fontSize: 14,
     minWidth: 0,
@@ -92,7 +100,7 @@ export const styles: Record<string, CSSProperties> = {
   textarea: {
     flex: 1,
     padding: "6px 9px",
-    border: "1px solid #d1d5db",
+    border: "1px solid #d9d9d9",
     borderRadius: 6,
     fontSize: 14,
     minWidth: 0,
@@ -103,33 +111,35 @@ export const styles: Record<string, CSSProperties> = {
     fontSize: 15,
     fontWeight: 600,
     margin: "22px 0 10px",
-    color: "#1f2937",
+    color: "#1f2328",
   },
   childTable: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
   childTh: {
     textAlign: "left",
-    padding: "6px 8px",
-    borderBottom: "2px solid #e5e7eb",
-    color: "#374151",
+    padding: "8px",
+    borderBottom: "1px solid #e4e7ec",
+    background: "#f8f9fb",
+    color: "#5f6b7a",
+    fontWeight: 600,
   },
-  childTd: { padding: "4px 6px", borderBottom: "1px solid #f3f4f6" },
+  childTd: { padding: "6px 8px", borderBottom: "1px solid #eef0f3" },
   childInput: {
     width: "100%",
     padding: "5px 7px",
-    border: "1px solid #d1d5db",
-    borderRadius: 5,
+    border: "1px solid #d9d9d9",
+    borderRadius: 6,
     fontSize: 14,
     boxSizing: "border-box",
     background: "#fff",
   },
   error: {
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
-    color: "#991b1b",
+    background: "#fff2f0",
+    border: "1px solid #ffccc7",
+    color: "#a8071a",
     borderRadius: 6,
     padding: "8px 12px",
     fontSize: 14,
     marginBottom: 12,
   },
-  empty: { padding: "28px 0", textAlign: "center", color: "#9ca3af", fontSize: 14 },
+  empty: { padding: "28px 0", textAlign: "center", color: "#8a94a6", fontSize: 14 },
 };

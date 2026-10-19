@@ -678,7 +678,7 @@ export function DataTable({ node }: NodeProps) {
                 onClick={() => openRow(row)}
                 style={{
                   background: "#fff",
-                  border: "1px solid #f0f0f0",
+                  border: "1px solid #e4e7ec",
                   borderRadius: 12,
                   padding: "var(--lcdp-card-pad, 12px)",
                   boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
@@ -777,6 +777,7 @@ export function DataTable({ node }: NodeProps) {
       ) : (
         <Table<Row>
         rowKey={(r) => String(r.id)}
+        size="middle"
         columns={tableColumns}
         dataSource={labelsPending ? [] : rows}
         loading={loading || labelsPending}
@@ -982,7 +983,7 @@ function ChildEditor({
               key={idx}
               style={{
                 background: "#fff",
-                border: "1px solid #f0f0f0",
+                border: "1px solid #e4e7ec",
                 borderRadius: 12,
                 padding: "var(--lcdp-card-pad, 12px)",
                 boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
@@ -993,7 +994,7 @@ function ChildEditor({
                   <div
                     style={{
                       fontSize: 13,
-                      color: "#374151",
+                      color: "#5f6b7a",
                       fontWeight: 500,
                       marginBottom: 6,
                     }}
@@ -1461,7 +1462,7 @@ export function EntityForm({ node }: NodeProps) {
   };
   const singleLabelStyle: CSSProperties = {
     fontSize: 13,
-    color: "#374151",
+    color: "#5f6b7a",
     fontWeight: 500,
   };
   const singleControlStyle: CSSProperties = {
@@ -1480,7 +1481,7 @@ export function EntityForm({ node }: NodeProps) {
     alignItems: "center",
     gap: 8,
     background: "#fff",
-    border: "1px solid #f0f0f0",
+    border: "1px solid #e4e7ec",
     borderRadius: 12,
     padding: 10,
     marginTop: 20,
