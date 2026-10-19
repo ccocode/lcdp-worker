@@ -26,7 +26,13 @@ export type {
 export { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
 export { CART_CHANGED_EVENT, cartStore } from "./cartStore.js";
 export type { CartItem } from "./cartStore.js";
-export type { ComponentRegistry, NodeProps, SchemaRendererProps } from "./components.js";
+export type {
+  ComponentRegistry,
+  NodeProps,
+  PageRecordState,
+  SchemaRendererProps,
+  VisibleWhen,
+} from "./components.js";
 export {
   ActionButton,
   AgentChat,
@@ -49,12 +55,20 @@ export {
   createDefaultRegistry,
   createRegistry,
   eqFiltersOf,
+  evalVisibleWhen,
   formatCellValue,
+  parseVisibleWhen,
   registerComponent,
   resolveViewParams,
   useRendererCtx,
   viewFiltersOf,
 } from "./components.js";
+export {
+  StatusBadge,
+  parseStatusColors,
+  resolveStatusToken,
+  type StatusToken,
+} from "./statusBadge.js";
 export { componentCatalog } from "./catalog.js";
 export { FieldInput } from "./fields.js";
 export { RichTextInput, RichTextView, htmlToText, sanitizeHtml } from "./richtext.js";

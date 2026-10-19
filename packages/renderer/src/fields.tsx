@@ -16,6 +16,7 @@ import type { Dayjs } from "dayjs";
 import type { AssetMeta, RuntimeAdapter, SelectOption } from "./adapter.js";
 import { parseAssetIds } from "./adapter.js";
 import { RichTextInput, RichTextView } from "./richtext.js";
+import { StatusBadge, type StatusToken } from "./statusBadge.js";
 import {
   SCAN_EVENT,
   bridgeCamera,
@@ -33,6 +34,8 @@ interface FieldInputProps {
   readOnly?: boolean;
   /** 资产上传关联（宿主表单可透传实体/记录，新建未落库时 recordId 缺省） */
   linkage?: { entity?: string; recordId?: string };
+  /** 状态徽标色覆盖（包二）：宿主组件 props.statusColors 透传，仅只读展示 status 字段时用 */
+  statusColors?: Record<string, StatusToken>;
 }
 
 /** 把任意值规整成字符串（日期截到日，时间截到分） */
@@ -287,6 +290,7 @@ export function FieldInput({
   inChild,
   readOnly,
   linkage,
+  statusColors,
 }: FieldInputProps) {
   const [refOptions, setRefOptions] = useState<SelectOption[]>([]);
   const size = inChild ? "small" : "middle";
@@ -311,6 +315,13 @@ export function FieldInput({
     // 富文本只读态呈现净化后 HTML（而非把 HTML 源码塞进禁用输入框），与 Detail 同一口径
     if (field.type === "richtext") {
       return <RichTextView html={asInputString(value)} />;
+    }
+    // 状态字段只读展示走徽标（包二）：文本取枚举标签（无标签时即原值），空值维持禁用框原貌
+    if (field.key === "status" && asInputString(value)) {
+      const rawText = asInputString(value);
+      const text =
+        field.options?.find((o) => o.value === rawText)?.label ?? rawText;
+      return <StatusBadge raw={value} text={text} colors={statusColors} />;
     }
     return (
       <Input
