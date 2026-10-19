@@ -272,6 +272,8 @@ export interface AdminDataMeta {
   app: { id: string; name: string | null; domain: string | null };
   domainModules: DomainModulesView | null;
   published: boolean;
+  /** 已发布 Schema 的全量实体 key 清单（不裁剪）；旧版服务可能不返回，回落 entities */
+  schemaEntities?: string[];
   entities: AdminEntityMeta[];
 }
 
