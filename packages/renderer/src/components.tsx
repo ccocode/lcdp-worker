@@ -184,8 +184,20 @@ function StatusDisplay({
   return <StatusBadge raw={raw} text={text} colors={colors} />;
 }
 
+/**
+ * 共享错误文案出口：服务端业务消息（按契约是中文）原样上屏；网络/运行时级错误
+ * （fetch 的 TypeError、各引擎网络失败消息）不把英文原文抛给用户，
+ * 统一回落友好提示。其余错误消息维持原样，不一刀切覆盖。
+ */
+const NETWORK_ERROR_PATTERN =
+  /failed to fetch|networkerror|load failed|network request failed|fetch failed/i;
+
 function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  const msg = err instanceof Error ? err.message : String(err);
+  if (err instanceof TypeError || NETWORK_ERROR_PATTERN.test(msg)) {
+    return "网络请求失败，请稍后重试";
+  }
+  return msg;
 }
 
 /**
