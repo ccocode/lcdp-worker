@@ -258,16 +258,15 @@ export default function FlowCenter({
     }
   }, [appId]);
 
+  // 切页签即重拉该页签列表：在别处（其他页签内处理、助手、他人）变动过的
+  // 任务，回到该页签应见最新状态——此前仅首次为 null 时懒加载，会话内长期
+  // 停在旧数据、只能手点刷新。手动「刷新」按钮保留（refresh 不变）。
   useEffect(() => {
-    void loadTodos();
-  }, [loadTodos]);
-
-  // 切到某个页签时按需懒加载
-  useEffect(() => {
-    if (tab === "done" && done === null) void loadDone();
-    if (tab === "mine" && mine === null) void loadMine();
-    if (tab === "notes" && notes === null) void loadNotes();
-  }, [tab, done, mine, notes, loadDone, loadMine, loadNotes]);
+    if (tab === "todos") void loadTodos();
+    if (tab === "done") void loadDone();
+    if (tab === "mine") void loadMine();
+    if (tab === "notes") void loadNotes();
+  }, [tab, loadTodos, loadDone, loadMine, loadNotes]);
 
   const refresh = () => {
     setError(null);
