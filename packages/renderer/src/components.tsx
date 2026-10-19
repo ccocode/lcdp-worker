@@ -775,12 +775,20 @@ function ChildEditor({
   rows,
   onChange,
   readOnly = false,
+  canCreate = true,
+  canUpdate = true,
+  canDelete = true,
   cardMode = false,
 }: {
   child: Entity;
   rows: Row[];
   onChange: (rows: Row[]) => void;
   readOnly?: boolean;
+  /** 子实体动作权（宿主按 ctx.access[子实体].actions 分项传入，与保存层对账口径一致）：
+   * 增 = 添加按钮与新增行可编辑；改 = 既有行可编辑；删 = 删除按钮。缺省全开（无 access 时不限制） */
+  canCreate?: boolean;
+  canUpdate?: boolean;
+  canDelete?: boolean;
   /** 移动端卡片行呈现（M13，EntityForm single 时启用）：字段竖排成卡，其余口径与表格呈现完全一致 */
   cardMode?: boolean;
 }) {
@@ -813,9 +821,15 @@ function ChildEditor({
   };
 
   // 字段只读口径（表格/卡片两呈现共用同一表达式，保证门控零漂移）：
-  // 整表只读、字段级 readonly/masked、amount 小计字段恒只读
-  const fieldReadOnlyOf = (f: Field) =>
+  // 整表只读、行级动作权（既有行看 update、新行看 create，与保存层对账同口径）、
+  // 字段级 readonly/masked、amount 小计字段恒只读
+  const rowEditable = (row: Row) =>
+    row.id !== undefined && row.id !== null && row.id !== ""
+      ? canUpdate
+      : canCreate;
+  const fieldReadOnlyOf = (f: Field, row: Row) =>
     readOnly ||
+    !rowEditable(row) ||
     fieldAccessOf(f.key) === "readonly" ||
     fieldAccessOf(f.key) === "masked" ||
     (f.key === "amount" && hasAmount);
@@ -831,7 +845,7 @@ function ChildEditor({
         entity: child.key,
         recordId: typeof row.id === "string" ? row.id : undefined,
       }}
-      readOnly={fieldReadOnlyOf(f)}
+      readOnly={fieldReadOnlyOf(f, row)}
     />
   );
 
@@ -871,7 +885,7 @@ function ChildEditor({
                   {renderFieldInput(row, idx, f)}
                 </div>
               ))}
-              {!readOnly && (
+              {!readOnly && canDelete && (
                 <div style={{ textAlign: "right" }}>
                   <Button
                     danger
@@ -885,7 +899,7 @@ function ChildEditor({
             </div>
           ))}
         </div>
-        {!readOnly && (
+        {!readOnly && canCreate && (
           <Button
             block
             style={{ marginTop: 8, minHeight: TOUCH_MIN }}
@@ -910,7 +924,7 @@ function ChildEditor({
                 {f.required && <span style={styles.required}> *</span>}
               </th>
             ))}
-            {!readOnly && <th style={styles.childTh}>操作</th>}
+            {!readOnly && canDelete && <th style={styles.childTh}>操作</th>}
           </tr>
         </thead>
         <tbody>
@@ -921,7 +935,7 @@ function ChildEditor({
                   {renderFieldInput(row, idx, f)}
                 </td>
               ))}
-              {!readOnly && (
+              {!readOnly && canDelete && (
                 <td style={styles.childTd}>
                   <Button
                     size="small"
@@ -935,7 +949,7 @@ function ChildEditor({
           ))}
         </tbody>
       </table>
-      {!readOnly && (
+      {!readOnly && canCreate && (
         <div style={{ marginTop: 8 }}>
           <Button onClick={() => onChange([...rows, {}])}>
             添加{child.label}
@@ -953,7 +967,12 @@ export function EntityForm({ node }: NodeProps) {
   const listRoute =
     typeof node.props?.listRoute === "string" ? node.props.listRoute : "/";
   const id = ctx.params.id;
-  const isEdit = Boolean(id);
+  // 新建主单落库后的 id 回写：主单 create 成功但子表部分失败留页时，再次保存须
+  // 走 update 而非二次 create——否则生成重复主单，且已落库子行会被迁挂到新单下、
+  // 第一张主单沦为空单。子表侧的回写/快照推进已在 save() 内就绪，此处补主单侧。
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const recordId = id ?? createdId ?? undefined;
+  const isEdit = Boolean(recordId);
   // 权限门控：与 DataTable 的 canCreate 同口径——宿主透传了 access 且本实体无对应
   // 动作时隐藏工具栏写按钮（只读角色不再看到点了必然 403 的保存/删除；服务端仍为
   // 权威强制）。无 access（如设计态预览）时不限制，保持设计器内行为不变。
@@ -1132,9 +1151,11 @@ export function EntityForm({ node }: NodeProps) {
         unfillableExempt(ctx.access, entity.key),
       );
       if (missing.length) throw new Error(`缺少必填字段：${missing.join("、")}`);
-      const saved = isEdit
-        ? await ctx.adapter.update(entity.key, id!, payload)
+      const saved = recordId
+        ? await ctx.adapter.update(entity.key, recordId, payload)
         : await ctx.adapter.create(entity.key, payload);
+      // 主单已落库：立即回写 id，后续（含部分失败留页后的再次保存）一律按编辑态
+      if (!recordId) setCreatedId(String(saved.id));
       const parentId = String(saved.id);
       // 子表同步：按「权限 + 变更」对账，不再无条件全量提交——
       // ① 当前角色对子实体无对应动作权（update/create/delete）时，该类行一律不提交；
@@ -1302,7 +1323,7 @@ export function EntityForm({ node }: NodeProps) {
   const remove = async () => {
     if (!window.confirm(`确认删除这条${entity.label}？此操作不可恢复。`)) return;
     try {
-      await ctx.adapter.remove(entity.key, id!);
+      await ctx.adapter.remove(entity.key, recordId!);
       ctx.adapter.notify("已删除");
       ctx.adapter.navigate(listRoute);
     } catch (err) {
@@ -1355,7 +1376,7 @@ export function EntityForm({ node }: NodeProps) {
         <div style={singleMode ? singleRowStyle : styles.formRow}>
           <div style={singleMode ? singleLabelStyle : styles.label}>ID</div>
           <div style={{ paddingTop: singleMode ? 0 : 5, fontSize: 14 }}>
-            {id}
+            {recordId}
           </div>
         </div>
       )}
@@ -1383,7 +1404,7 @@ export function EntityForm({ node }: NodeProps) {
                 value={values[f.key]}
                 onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
                 adapter={ctx.adapter}
-                linkage={{ entity: entity.key, recordId: id }}
+                linkage={{ entity: entity.key, recordId }}
                 readOnly={
                   locked || (rollupActive && f.key === rollupField?.key)
                 }
@@ -1392,18 +1413,34 @@ export function EntityForm({ node }: NodeProps) {
           </div>
         );
       })}
-      {children.map((child) => (
-        <ChildEditor
-          key={child.key}
-          child={child}
-          rows={childRows[child.key] ?? []}
-          onChange={(rows) =>
-            setChildRows((prev) => ({ ...prev, [child.key]: rows }))
-          }
-          readOnly={!(isEdit ? canUpdate : canCreate)}
-          cardMode={singleMode}
-        />
-      ))}
+      {children.map((child) => {
+        // 子实体动作权：与 save() 内对账同一表达式（无 access 时不限制），
+        // 界面门控与保存层执法同口径，不再借主表权限近似
+        const childActions = ctx.access
+          ? ctx.access[child.key]?.actions
+          : undefined;
+        return (
+          <ChildEditor
+            key={child.key}
+            child={child}
+            rows={childRows[child.key] ?? []}
+            onChange={(rows) =>
+              setChildRows((prev) => ({ ...prev, [child.key]: rows }))
+            }
+            readOnly={!(isEdit ? canUpdate : canCreate)}
+            canCreate={
+              !ctx.access || (childActions?.includes("create") ?? false)
+            }
+            canUpdate={
+              !ctx.access || (childActions?.includes("update") ?? false)
+            }
+            canDelete={
+              !ctx.access || (childActions?.includes("delete") ?? false)
+            }
+            cardMode={singleMode}
+          />
+        );
+      })}
       <div
         style={
           singleMode
