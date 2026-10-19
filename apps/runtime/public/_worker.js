@@ -7,6 +7,10 @@
  *    命中直出（应答头 x-lcdp-theme: <id>@<version>，index.html 注入
  *    window.__LCDP__ 上下文）；`/` 与无扩展名页面路径未命中文件时回退主题
  *    index.html；主题文件缺失/异常 → 落回下一层。
+ *    修法 D：theme.json 声明了非空 routes 时，仅清单内路径回退主题
+ *    index.html，清单外页面路径直接落回快照/SPA——主题只管自理的页面，
+ *    平台页面（订购/我的订单等）与之共存；未声明 routes 的旧主题保持
+ *    全路径回退。精确文件命中不受 routes 影响。
  * 2. 快照层（CMS 静态化/SEO 线）：按入口运行模式（siteMode）分发静态快照：
  *    - dynamic（缺省/未知/读配置失败）：纯透传，与无本文件时行为一致（零扰动）；
  *    - pseudo / static：按规范键查 R2（键 = static/<host><path>[?规范 query]，
@@ -118,6 +122,7 @@ async function loadEntryConfig(host, ctx, env) {
               ? raw.values
               : {};
           const config = {};
+          let routes = null;
           try {
             const mObj = await env.STATIC_R2.get(
               `themes/${raw.id}/${raw.version}/theme.json`,
@@ -135,6 +140,14 @@ async function loadEntryConfig(host, ctx, env) {
                   }
                 }
               }
+              // 修法 D：routes 声明（可选）——仅取以 / 开头的字符串项；
+              // 非空才生效，空/缺失视为未声明（保持旧主题全回退行为）
+              if (Array.isArray(manifest?.routes)) {
+                const list = manifest.routes.filter(
+                  (r) => typeof r === "string" && r.startsWith("/"),
+                );
+                if (list.length > 0) routes = list;
+              }
             }
           } catch {
             // 清单读失败：config 只用绑定 values，不阻断主题分发
@@ -147,6 +160,7 @@ async function loadEntryConfig(host, ctx, env) {
             entryName: data.entry.name ?? null,
             appId: data.primary?.appId ?? data.apps?.[0]?.id ?? null,
             config,
+            ...(routes ? { routes } : {}),
           };
         }
       }
@@ -224,10 +238,22 @@ function injectThemeContext(html, theme, host) {
   return tag + html;
 }
 
+/** 路径归一（与主题内路由同口径：去尾斜杠、空即根） */
+function normalizeRoutePath(pathname) {
+  return pathname.replace(/\/+$/, "") || "/";
+}
+
+/** routes 命中判定：清单项同样归一后精确比对 */
+function themeRouteMatches(routes, pathname) {
+  const p = normalizeRoutePath(pathname);
+  return routes.some((r) => normalizeRoutePath(r) === p);
+}
+
 /**
  * 主题分发：命中返回 Response，未命中/不适用返回 null（调用方落回快照/SPA）。
  * - 精确路径命中主题文件 → 直出（index.html 走注入）；
  * - `/` 与无扩展名页面路径未命中 → 回退主题 index.html（注入后应答）；
+ *   但主题声明了 routes 时，仅清单内路径回退，清单外返回 null（修法 D）；
  * - 文件型路径未命中、或主题 index.html 本身缺失 → null。
  */
 async function serveTheme(env, theme, url, method) {
@@ -257,6 +283,14 @@ async function serveTheme(env, theme, url, method) {
     if (obj) return respond(rel, obj, rel === "index.html");
   }
   if (!rel || isPagePath(url.pathname)) {
+    // 修法 D：声明了 routes 的主题只接管清单内路径，清单外落回快照/SPA
+    if (
+      Array.isArray(theme.routes) &&
+      theme.routes.length > 0 &&
+      !themeRouteMatches(theme.routes, url.pathname)
+    ) {
+      return null;
+    }
     const idx = await get(prefix + "index.html");
     if (idx) return respond("index.html", idx, true);
   }
