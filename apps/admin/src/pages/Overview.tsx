@@ -89,7 +89,7 @@ export default function Overview({ go }: { go: (k: PageKey) => void }) {
         </Col>
       </Row>
       <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-        用量统计起点：{stats.meteringStart ?? "—"}（M8 计量链上线日，此前消耗不补录、不折算金额）。
+        用量统计起点：{stats.meteringStart ?? "—"}（自该日起开始计量，此前消耗不补录、不折算金额）。
       </Typography.Paragraph>
     </div>
   );
