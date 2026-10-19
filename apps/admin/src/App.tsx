@@ -97,42 +97,72 @@ interface MenuDef {
   key: PageKey;
   label: string;
   icon: React.ReactNode;
+  /** 左侧菜单分组（第 49 步菜单信息架构：按功能分区，不带应用名——当前应用由顶栏切换器呈现） */
+  section: string;
 }
 
-/** 平台区菜单（不受应用上下文影响） */
+/**
+ * 平台区菜单（不受应用上下文影响），按功能分区：
+ * 总览 / 组织与权限 / 应用与资产 / 内容与知识 / 站点与发布 / 运营保障 / 审计追溯。
+ * 数组顺序即分区呈现顺序；权限可见性口径不变（见 contextVisibility）。
+ */
 const PLATFORM_MENU: MenuDef[] = [
-  { key: "overview", label: "概览", icon: <DashboardOutlined /> },
-  { key: "tenants", label: "租户", icon: <ApartmentOutlined /> },
-  { key: "users", label: "用户与角色", icon: <TeamOutlined /> },
-  { key: "apps", label: "应用管理", icon: <AppstoreOutlined /> },
-  { key: "audit", label: "审计中心", icon: <AuditOutlined /> },
-  { key: "replay", label: "审计回放", icon: <PlayCircleOutlined /> },
-  { key: "kb", label: "知识库", icon: <BookOutlined /> },
-  { key: "assets", label: "媒体资产", icon: <PictureOutlined /> },
-  { key: "usage", label: "成本看板", icon: <DollarOutlined /> },
-  { key: "config", label: "系统配置", icon: <SettingOutlined /> },
-  { key: "switches", label: "熔断与配额", icon: <StopOutlined /> },
-  { key: "sites", label: "入口与站点", icon: <GlobalOutlined /> },
-  { key: "themes", label: "主题管理", icon: <SkinOutlined /> },
+  { key: "overview", label: "概览", icon: <DashboardOutlined />, section: "总览" },
+  { key: "tenants", label: "租户", icon: <ApartmentOutlined />, section: "组织与权限" },
+  { key: "users", label: "用户与角色", icon: <TeamOutlined />, section: "组织与权限" },
+  { key: "apps", label: "应用管理", icon: <AppstoreOutlined />, section: "应用与资产" },
+  { key: "themes", label: "主题管理", icon: <SkinOutlined />, section: "应用与资产" },
+  { key: "assets", label: "媒体资产", icon: <PictureOutlined />, section: "应用与资产" },
+  { key: "kb", label: "知识库", icon: <BookOutlined />, section: "内容与知识" },
+  { key: "sites", label: "入口与站点", icon: <GlobalOutlined />, section: "站点与发布" },
+  { key: "usage", label: "成本看板", icon: <DollarOutlined />, section: "运营保障" },
+  { key: "switches", label: "熔断与配额", icon: <StopOutlined />, section: "运营保障" },
+  { key: "config", label: "系统配置", icon: <SettingOutlined />, section: "运营保障" },
+  { key: "audit", label: "审计中心", icon: <AuditOutlined />, section: "审计追溯" },
+  { key: "replay", label: "审计回放", icon: <PlayCircleOutlined />, section: "审计追溯" },
 ];
 
-/** 应用区通用模版菜单（所有应用自动拥有，吃当前应用上下文） */
+/**
+ * 应用区通用模版菜单（所有应用自动拥有，吃当前应用上下文），按功能分区：
+ * 运营管理 / 发布与外观 / 应用设置（领域模版分区「内容运营」插在运营管理之后，
+ * 见 APP_SECTION_ORDER）。组名只写功能、不带应用名。
+ */
 const APP_MENU: MenuDef[] = [
-  { key: "data", label: "数据管理", icon: <AppstoreOutlined /> },
-  { key: "members", label: "应用会员", icon: <IdcardOutlined /> },
-  { key: "submissions", label: "提交审核", icon: <AuditOutlined /> },
-  { key: "static", label: "静态状态", icon: <GlobalOutlined /> },
-  { key: "appsettings", label: "应用设置", icon: <SettingOutlined /> },
-  { key: "theme-settings", label: "主题设置", icon: <SkinOutlined /> },
+  { key: "data", label: "数据管理", icon: <AppstoreOutlined />, section: "运营管理" },
+  { key: "members", label: "应用会员", icon: <IdcardOutlined />, section: "运营管理" },
+  { key: "submissions", label: "提交审核", icon: <AuditOutlined />, section: "运营管理" },
+  { key: "static", label: "静态状态", icon: <GlobalOutlined />, section: "发布与外观" },
+  { key: "theme-settings", label: "主题设置", icon: <SkinOutlined />, section: "发布与外观" },
+  { key: "appsettings", label: "应用设置", icon: <SettingOutlined />, section: "应用设置" },
 ];
 
-/** 内容领域模版菜单 */
+/** 内容领域模版菜单（分区「内容运营」） */
 const CONTENT_MENU: MenuDef[] = [
-  { key: "content-workbench", label: "文章工作台", icon: <BookOutlined /> },
-  { key: "content-categories", label: "栏目管理", icon: <ApartmentOutlined /> },
-  { key: "content-authors", label: "作者管理", icon: <TeamOutlined /> },
-  { key: "content-messages", label: "留言审核", icon: <AuditOutlined /> },
+  { key: "content-workbench", label: "文章工作台", icon: <BookOutlined />, section: "内容运营" },
+  { key: "content-categories", label: "栏目管理", icon: <ApartmentOutlined />, section: "内容运营" },
+  { key: "content-authors", label: "作者管理", icon: <TeamOutlined />, section: "内容运营" },
+  { key: "content-messages", label: "留言审核", icon: <AuditOutlined />, section: "内容运营" },
 ];
+
+/** 应用区分区呈现顺序（领域模版分区插在通用运营管理之后、发布与设置之前） */
+const APP_SECTION_ORDER = ["运营管理", "内容运营", "发布与外观", "应用设置"];
+
+/** 把一串菜单按 section 分组：分区按首次出现顺序（给了 order 则按 order），空区不出现 */
+function groupBySection(
+  items: MenuDef[],
+  order?: string[],
+): { label: string; items: MenuDef[] }[] {
+  const bySection = new Map<string, MenuDef[]>();
+  for (const m of items) {
+    const arr = bySection.get(m.section) ?? [];
+    arr.push(m);
+    bySection.set(m.section, arr);
+  }
+  const labels = order
+    ? order.filter((l) => bySection.has(l))
+    : [...bySection.keys()];
+  return labels.map((label) => ({ label, items: bySection.get(label)! }));
+}
 
 const ALL_MENU: MenuDef[] = [...PLATFORM_MENU, ...APP_MENU, ...CONTENT_MENU];
 
@@ -165,9 +195,10 @@ function contextVisibility(args: {
   appId: string | null;
   appMeta: AdminDataMeta | null;
 }): {
-  platformVisible: MenuDef[];
-  appVisible: MenuDef[];
-  contentVisible: MenuDef[];
+  /** 平台区分组后的可见菜单（第 49 步：按 section 分组，空区不出现） */
+  platformGroups: { label: string; items: MenuDef[] }[];
+  /** 应用区分组后的可见菜单（通用模版 + 领域模版按 APP_SECTION_ORDER 合并） */
+  appGroups: { label: string; items: MenuDef[] }[];
   visibleKeys: Set<PageKey>;
   fallbackPage: PageKey;
 } {
@@ -188,6 +219,11 @@ function contextVisibility(args: {
       );
   const appVisible: MenuDef[] = appId ? APP_MENU : [];
   const contentVisible: MenuDef[] = showContentMenu ? CONTENT_MENU : [];
+  const platformGroups = groupBySection(platformVisible);
+  const appGroups = groupBySection(
+    [...appVisible, ...contentVisible],
+    APP_SECTION_ORDER,
+  );
   const visibleKeys = new Set<PageKey>([
     ...platformVisible.map((m) => m.key),
     ...appVisible.map((m) => m.key),
@@ -198,7 +234,7 @@ function contextVisibility(args: {
     : appId
       ? "appsettings"
       : (platformVisible[0]?.key ?? "appsettings");
-  return { platformVisible, appVisible, contentVisible, visibleKeys, fallbackPage };
+  return { platformGroups, appGroups, visibleKeys, fallbackPage };
 }
 
 /** 旧 # 链接迁移（M14 线一）：首载时把 #/<key> 以 replaceState 落到等价新路径 /<key> */
@@ -472,51 +508,22 @@ export default function App() {
     );
 
   const isAdmin = user.role === "admin";
-  const { platformVisible, appVisible, contentVisible, visibleKeys, fallbackPage } =
+  const { platformGroups, appGroups, visibleKeys, fallbackPage } =
     contextVisibility({ isAdmin, grants, appId, appMeta });
   const effectivePage: PageKey = visibleKeys.has(page) ? page : fallbackPage;
 
-  const menuItems = [
-    ...(platformVisible.length > 0
-      ? [
-          {
-            type: "group" as const,
-            label: "平台",
-            children: platformVisible.map((m) => ({
-              key: m.key,
-              label: m.label,
-              icon: m.icon,
-            })),
-          },
-        ]
-      : []),
-    ...(appVisible.length > 0
-      ? [
-          {
-            type: "group" as const,
-            label: `应用 · ${String(currentApp?.name ?? appId ?? "")}`,
-            children: appVisible.map((m) => ({
-              key: m.key,
-              label: m.label,
-              icon: m.icon,
-            })),
-          },
-        ]
-      : []),
-    ...(contentVisible.length > 0
-      ? [
-          {
-            type: "group" as const,
-            label: "内容领域",
-            children: contentVisible.map((m) => ({
-              key: m.key,
-              label: m.label,
-              icon: m.icon,
-            })),
-          },
-        ]
-      : []),
-  ];
+  /** 左侧菜单 = 平台分组 + 应用分组（第 49 步 IA：分区只写功能名，当前应用看顶栏切换器） */
+  const toGroupItem = (g: { label: string; items: MenuDef[] }) => ({
+    type: "group" as const,
+    key: `group:${g.label}`,
+    label: g.label,
+    children: g.items.map((m) => ({
+      key: m.key,
+      label: m.label,
+      icon: m.icon,
+    })),
+  });
+  const menuItems = [...platformGroups, ...appGroups].map(toGroupItem);
 
   /** 应用区页面统一占位：元数据未就绪时不渲染具体页 */
   const appPageShell = (node: React.ReactNode) =>
@@ -539,7 +546,7 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sider theme="light" width={208} style={{ borderRight: "1px solid #f0f0f0" }}>
+      <Sider theme="light" width={208} style={{ borderRight: "1px solid #e4e7ec" }}>
         <div style={{ padding: "16px 16px 8px", fontWeight: 600, fontSize: 16 }}>
           LCDP 管理台
         </div>
@@ -554,7 +561,7 @@ export default function App() {
         <Header
           style={{
             background: "#fff",
-            borderBottom: "1px solid #f0f0f0",
+            borderBottom: "1px solid #e4e7ec",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -592,7 +599,7 @@ export default function App() {
             </Button>
           </Space>
         </Header>
-        <Content style={{ padding: 24, background: "#f5f5f5" }}>
+        <Content style={{ padding: 24, background: "#f5f6f8" }}>
           {effectivePage === "overview" && <Overview go={go} />}
           {effectivePage === "tenants" && <Tenants />}
           {effectivePage === "users" && <Users currentUser={user} />}

@@ -3132,16 +3132,26 @@ interface AssembledMenu {
  * 有 menu 声明时按 order 升序（稳定排序，同 order 保持输入顺序），
  * 分组项在其首个成员的位置出现一次、汇集该组全部成员——跨应用同名分组由此自动合并；
  * 无任何 menu 声明时回退为列表页平铺项（fallbackItems 由调用方按各自实体口径算好标签）。
+ *
+ * 第 49 步菜单 IA：调用方给了 defaultGroupLabel 时（员工壳），未声明 group 的页面
+ * 不再平铺混排，统一收进末尾的默认组（如「业务功能」）；公开/会员壳不传此参，
+ * 保持旧平铺行为（C 端导航形态不套 B 端分区）。
  */
 function buildMenuItems(
   menuPages: MenuPage[],
   fallbackItems: NonNullable<MenuProps["items"]>,
+  defaultGroupLabel?: string,
 ): MenuProps["items"] {
   if (menuPages.length === 0) return fallbackItems;
   const arr: NonNullable<MenuProps["items"]> = [];
   const seenGroups = new Set<string>();
+  const ungrouped: MenuPage[] = [];
   for (const mp of menuPages) {
     if (!mp.group) {
+      if (defaultGroupLabel) {
+        ungrouped.push(mp);
+        continue;
+      }
       arr.push({ key: mp.page.route, label: mp.label });
       continue;
     }
@@ -3156,6 +3166,17 @@ function buildMenuItems(
         .map((g) => ({ key: g.page.route, label: g.label })),
     });
   }
+  if (defaultGroupLabel && ungrouped.length > 0) {
+    arr.push({
+      type: "group",
+      key: `group:${defaultGroupLabel}`,
+      label: defaultGroupLabel,
+      children: ungrouped.map((mp) => ({
+        key: mp.page.route,
+        label: mp.label,
+      })),
+    });
+  }
   return arr;
 }
 
@@ -3165,6 +3186,7 @@ function buildMenuItems(
  */
 function collectMenu(
   entries: { page: PageSchema; entities: DataSchema["entities"] }[],
+  opts?: { defaultGroupLabel?: string },
 ): AssembledMenu {
   const menuPages: MenuPage[] = entries
     .filter((e) => e.page.menu && !e.page.menu.hidden)
@@ -3189,6 +3211,7 @@ function collectMenu(
       key: e.page.route,
       label: navLabel(e.page, e.entities),
     })),
+    opts?.defaultGroupLabel,
   );
   return { items, menuPages, listPages: listEntries.map((e) => e.page) };
 }
@@ -3252,7 +3275,11 @@ function buildPageUnion(loaded: LoadedApp[]): PageUnion {
   return { all, deduped, byRoute };
 }
 
-/** 跨应用合并菜单：对并集（去重后）页面跑同一套组装算法，同名分组跨应用合并 */
+/**
+ * 跨应用合并菜单：对并集（去重后）页面跑同一套组装算法，同名分组跨应用合并。
+ * 员工壳专用口径（第 49 步）：未声明 group 的页面收进默认组「业务功能」末尾成区，
+ * 不与声明组混排；公开/会员壳走 assembleMenu、保持平铺。
+ */
 function assembleMergedMenu(
   union: PageUnion,
   loaded: LoadedApp[],
@@ -3265,6 +3292,7 @@ function assembleMergedMenu(
       page: o.page,
       entities: entitiesByApp.get(o.appId) ?? [],
     })),
+    { defaultGroupLabel: "业务功能" },
   );
 }
 
@@ -3303,9 +3331,18 @@ function resolveCurrentPage(
 /** 主题令牌：应用配置里的 colorPrimary / borderRadius 注入 antd 主题 */
 function themeTokenOf(appConfig: {
   theme: Record<string, unknown>;
-} | null): { colorPrimary?: string; borderRadius?: number } {
+} | null): {
+  colorPrimary?: string;
+  borderRadius?: number;
+  colorBorder?: string;
+} {
   const themeCfg = appConfig?.theme ?? {};
-  const token: { colorPrimary?: string; borderRadius?: number } = {};
+  // B 端视觉基线默认值（第 49 步）：应用主题未声明时按基线令牌走，声明了以应用为准
+  const token: {
+    colorPrimary?: string;
+    borderRadius?: number;
+    colorBorder?: string;
+  } = { colorPrimary: "#1677ff", borderRadius: 6, colorBorder: "#e4e7ec" };
   if (typeof themeCfg.colorPrimary === "string") {
     token.colorPrimary = themeCfg.colorPrimary;
   }
@@ -3517,16 +3554,27 @@ function AppView({
     if (params.id) ctx.recordId = params.id;
     return ctx;
   })();
-  /** 菜单顶部固定「待办中心」（外壳级视图，key 与页面路由同走 goPage 的 hash 切换） */
+  /**
+   * 左侧菜单（第 49 步 IA）：固定「工作台」组置顶（待办中心，外壳级视图），
+   * 其后是页面菜单分区（声明组 + 默认组「业务功能」，见 assembleMergedMenu）。
+   * 组名只写功能、不带应用名——当前应用看侧栏顶部标题区。
+   */
   const menuItems: MenuProps["items"] = [
     {
-      key: "/flow",
-      label: (
-        <span>
-          待办中心{" "}
-          <Badge count={todoCount} size="small" offset={[2, -2]} />
-        </span>
-      ),
+      type: "group",
+      key: "group:工作台",
+      label: "工作台",
+      children: [
+        {
+          key: "/flow",
+          label: (
+            <span>
+              待办中心{" "}
+              <Badge count={todoCount} size="small" offset={[2, -2]} />
+            </span>
+          ),
+        },
+      ],
     },
     ...(menu.items ?? []),
   ];
@@ -3644,12 +3692,20 @@ function AppView({
   }
 
   return (
-    <ConfigProvider locale={zhCN} theme={{ token }}>
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token,
+        components: {
+          Menu: { groupTitleColor: "#8a94a6", itemBorderRadius: 6 },
+        },
+      }}
+    >
       <Layout style={{ minHeight: "100vh" }}>
         <Layout.Sider
           theme="light"
           width={220}
-          style={{ borderRight: "1px solid #f0f0f0" }}
+          style={{ borderRight: "1px solid #e4e7ec" }}
         >
           <div
             style={{
@@ -3694,7 +3750,7 @@ function AppView({
             </Button>
           </div>
         </Layout.Sider>
-        <Layout.Content style={{ padding: "24px 28px", background: "#fff" }}>
+        <Layout.Content style={{ padding: "24px 28px", background: "#f5f6f8" }}>
           {content}
         </Layout.Content>
       </Layout>
