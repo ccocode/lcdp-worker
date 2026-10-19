@@ -292,7 +292,7 @@ function Login({ onLogin }: { onLogin: (u: UserInfo) => void }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f0f2f5",
+        background: "#f5f6f8",
         padding: 24,
       }}
     >
