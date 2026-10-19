@@ -3648,31 +3648,17 @@ function AppView({
     ...(menu.items ?? []),
   ];
 
-  /** 侧栏分组展开键：默认全展开；用户折叠后按应用记覆盖；当前页所在组强制展开 */
+  /**
+   * 侧栏分组展开键：默认全展开；用户一旦手动折叠/展开，按应用记的覆盖即全权生效
+   * （含当前页所在组——不强制弹开用户刚合上的组，切换应用时覆盖清空回默认）。
+   */
   const allGroupKeys = (menuItems ?? [])
     .filter((i) => (i as { type?: string } | null)?.type === "group")
     .map((i) => String((i as { key?: unknown }).key));
-  const baseOpenKeys =
+  const openGroupKeys =
     openKeysOverride && openKeysOverride.appId === activeLoaded.app.id
       ? openKeysOverride.keys
       : allGroupKeys;
-  const selectedGroupKey = current
-    ? ((
-        menuItems.find(
-          (i) =>
-            (i as { type?: string } | null)?.type === "group" &&
-            (
-              (i as { children?: MenuProps["items"] }).children ?? []
-            ).some(
-              (c) => (c as { key?: unknown } | null)?.key === current.route,
-            ),
-        ) as { key?: unknown } | undefined
-      )?.key as string | undefined)
-    : undefined;
-  const openGroupKeys =
-    selectedGroupKey && !baseOpenKeys.includes(selectedGroupKey)
-      ? [...baseOpenKeys, selectedGroupKey]
-      : baseOpenKeys;
   /** 桌面侧栏专用形态：分组转可折叠子菜单；站点横排与移动拍平仍消费 group 形态 */
   const siderMenuItems: MenuProps["items"] = (menuItems ?? []).map((item) => {
     const it = item as {
