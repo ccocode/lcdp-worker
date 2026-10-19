@@ -7,6 +7,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Select,
   Space,
   Switch,
@@ -20,15 +21,19 @@ import {
   type AdminDataMeta,
   type AdminEntityMeta,
   type AdminFieldMeta,
+  type ApiRequestError,
   type Row,
 } from "../api";
 import { asText, fmtTime } from "../helpers";
 
 /**
- * 通用数据管理（M15 第③步通用模版）：按已发布 schema 的实体元数据生成
- * 列表 / 检索 / 分页 / 详情编辑（含状态字段直改）。读写走管理侧数据端点族
- * （按运营授权执法、编辑全程审计），不经员工权限快照。
- * 内容领域模版以 lockEntity + 状态筛选复用本组件。
+ * 通用数据管理（M15 第③步通用模版，第 57 步补新建/删除）：按已发布 schema
+ * 的实体元数据生成列表 / 检索 / 分页 / 新建 / 编辑（含状态字段直改）/ 删除。
+ * 读写走管理侧数据端点族（按数据权限三档执法、全程审计），不经员工权限
+ * 快照。新建/编辑/删除按钮以 meta 下发的实体 actions 为唯一门控：只有
+ * read 的实体三者皆不渲染（点了必吃 403 的假按钮不出现）。
+ * 删除被其他记录引用时服务端回 409 referencedBy，前端弹窗逐项明示。
+ * 内容领域模版以 lockEntity + 状态筛选复用本组件（自动继承本套能力）。
  */
 
 export interface StatusFilter {
@@ -80,6 +85,7 @@ export default function DataAdmin({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [editing, setEditing] = useState<Row | null>(null);
+  const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
 
@@ -151,30 +157,110 @@ export default function DataAdmin({
       {
         title: "操作",
         key: "actions",
-        width: extraRowActions ? 260 : 90,
+        width: extraRowActions ? 300 : 150,
         render: (_: unknown, row: Row) => (
           <Space size="small">
             {extraRowActions?.(row, () => void load())}
-            <Button
-              size="small"
-              type="link"
-              onClick={() => {
-                setEditing(row);
-                form.setFieldsValue({ ...row });
-              }}
-            >
-              编辑
-            </Button>
+            {entity.actions.includes("update") && (
+              <Button
+                size="small"
+                type="link"
+                onClick={() => {
+                  setEditing(row);
+                  form.setFieldsValue({ ...row });
+                }}
+              >
+                编辑
+              </Button>
+            )}
+            {entity.actions.includes("delete") && (
+              <Button
+                size="small"
+                type="link"
+                danger
+                onClick={() => removeRow(row)}
+              >
+                删除
+              </Button>
+            )}
           </Space>
         ),
       },
     ];
     return cols;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity, extraRowActions, form, load]);
 
+  /** 删除一行：二次确认；被引用时 409 弹窗逐项明示 referencedBy，不吞错误 */
+  const removeRow = (row: Row) => {
+    if (!entityKey) return;
+    Modal.confirm({
+      title: `删除这条${entity?.label ?? "记录"}？`,
+      content: `记录 ID：${String(row.id)}。删除后不可恢复（操作记入审计）。若该记录仍被其他记录引用，将无法删除并会列明引用来源。`,
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          await api.adminData.remove(appId, entityKey, String(row.id));
+          message.success("已删除（操作已记入审计）");
+          void load();
+        } catch (err) {
+          const apiErr = err as ApiRequestError;
+          const refs = apiErr.body?.referencedBy;
+          if (apiErr.status === 409 && Array.isArray(refs)) {
+            Modal.warning({
+              title: "该记录仍被引用，不能删除",
+              content: (
+                <div>
+                  <p>以下记录正在引用它，请先处理引用关系后再删：</p>
+                  <ul style={{ paddingLeft: 18, margin: 0 }}>
+                    {(refs as { entity: string; field: string; count: number }[]).map(
+                      (r) => (
+                        <li key={`${r.entity}.${r.field}`}>
+                          {r.entity}.{r.field} × {r.count}
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                </div>
+              ),
+            });
+            return;
+          }
+          message.error(err instanceof Error ? err.message : "删除失败");
+        }
+      },
+    });
+  };
+
   const save = async () => {
-    if (!editing || !entity || !entityKey) return;
+    if (!entity || !entityKey) return;
     const values = (await form.validateFields()) as Record<string, unknown>;
+    if (creating) {
+      // 新建：系统列不进表单；只提交已填写字段，必填/enum/ref 由服务端校验，
+      // 校验错误（400）原文呈现不吞
+      const body: Record<string, unknown> = {};
+      for (const f of entity.fields) {
+        if (SYSTEM_COLS.includes(f.key)) continue;
+        const v = values[f.key];
+        if (v !== undefined && v !== null && v !== "") body[f.key] = v;
+      }
+      setSaving(true);
+      try {
+        await api.adminData.create(appId, entityKey, body);
+        message.success("已新建（操作已记入审计）");
+        setCreating(false);
+        setPage(1);
+        void load();
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : "新建失败");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    if (!editing) return;
     // 只提交真实变更字段（sensitive 的 masked 值原样未改时服务端会跳过回写）
     const changed: Record<string, unknown> = {};
     for (const f of entity.fields) {
@@ -237,8 +323,19 @@ export default function DataAdmin({
           style={{ width: 260 }}
         />
         <Button onClick={() => void load()}>刷新</Button>
+        {entity?.actions.includes("create") && (
+          <Button
+            type="primary"
+            onClick={() => {
+              form.resetFields();
+              setCreating(true);
+            }}
+          >
+            新建{entity.label}
+          </Button>
+        )}
         <Typography.Text type="secondary">
-          管理侧直改全程审计；敏感字段以掩码呈现，未修改不会回写。
+          读 + 新建 + 编辑 + 删除（按你的数据权限呈现动作），全程审计；敏感字段以掩码呈现，未修改不会回写；被引用的记录不能删除。
         </Typography.Text>
       </Space>
       <Table
@@ -258,9 +355,18 @@ export default function DataAdmin({
         }}
       />
       <Drawer
-        title={editing ? `编辑 ${entity?.label ?? ""} · ${String(editing.id ?? "")}` : "编辑"}
-        open={editing !== null}
-        onClose={() => setEditing(null)}
+        title={
+          creating
+            ? `新建 ${entity?.label ?? ""}`
+            : editing
+              ? `编辑 ${entity?.label ?? ""} · ${String(editing.id ?? "")}`
+              : "编辑"
+        }
+        open={editing !== null || creating}
+        onClose={() => {
+          setEditing(null);
+          setCreating(false);
+        }}
         width={560}
         extra={
           <Button type="primary" loading={saving} onClick={() => void save()}>
@@ -268,9 +374,11 @@ export default function DataAdmin({
           </Button>
         }
       >
-        {editing && entity && (
+        {(editing || creating) && entity && (
           <Form form={form} layout="vertical">
-            {entity.fields.map((f) => (
+            {entity.fields
+              .filter((f) => !creating || !SYSTEM_COLS.includes(f.key))
+              .map((f) => (
               <Form.Item
                 key={f.key}
                 name={f.key}

@@ -67,9 +67,12 @@ export default function ContentArticles({
         statusFilter={{ field: "status", value: queue === "all" ? null : queue }}
         extraRowActions={(row, reload) => (
           <>
-            {ACTIONS.filter(
-              (a) => statusValues.includes(a.to) && String(row.status ?? "") !== a.fromNot,
-            ).map((a) => (
+            {/* 状态直改本质是 update 动作：第 57 步起按实体 actions 门控，
+                无 update 权限时不渲染（DataAdmin 的编辑/删除同口径） */}
+            {(entityMeta?.actions ?? []).includes("update") &&
+              ACTIONS.filter(
+                (a) => statusValues.includes(a.to) && String(row.status ?? "") !== a.fromNot,
+              ).map((a) => (
               <Button
                 key={a.to}
                 size="small"

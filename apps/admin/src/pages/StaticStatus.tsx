@@ -4,19 +4,22 @@ import {
   Button,
   Card,
   Descriptions,
+  Select,
   Space,
   Table,
   Tag,
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { api, type Row, type StaticSiteStatus } from "../api";
+import { api, type Row, type SiteMode, type StaticSiteStatus } from "../api";
 import { fmtTime } from "../helpers";
 
 /**
  * 静态状态（M15 第③步通用模版）：当前应用作为主应用的各入口站点模式与
  * 快照生成状态 + 手动全量重建。端点为既有 staticGen（按运营授权执法）。
- * 入口维度的模式切换仍在平台区「入口与站点」，此处只做应用视角的状态与重建。
+ * 第 57 步起承接 Sites 页解散后的唯一写操作——入口 siteMode 切换
+ * （走 entries.update{siteMode}）：写权在服务端为 admin 分支
+ * （operator 分支只许 theme），故切换控件仅 admin 可用，运营者只读呈现。
  */
 
 const MODE_META: Record<string, { color: string; text: string }> = {
@@ -25,10 +28,30 @@ const MODE_META: Record<string, { color: string; text: string }> = {
   dynamic: { color: "default", text: "动态" },
 };
 
-export default function StaticStatus({ appId }: { appId: string }) {
+export default function StaticStatus({
+  appId,
+  isAdmin,
+}: {
+  appId: string;
+  isAdmin: boolean;
+}) {
   const [sites, setSites] = useState<StaticSiteStatus[]>([]);
   const [loading, setLoading] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
+  const [switchingId, setSwitchingId] = useState<string | null>(null);
+
+  const switchMode = async (entryId: string, mode: SiteMode) => {
+    setSwitchingId(entryId);
+    try {
+      await api.entries.update(entryId, { siteMode: mode });
+      message.success(`已切换为「${MODE_META[mode]?.text ?? mode}」（审计 entry.update 已记录）`);
+      void load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "切换模式失败");
+    } finally {
+      setSwitchingId(null);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -62,6 +85,7 @@ export default function StaticStatus({ appId }: { appId: string }) {
   const hostRows: (Row & { key: string })[] = sites.flatMap((s) =>
     s.hosts.map((h) => ({
       key: `${s.entryId}:${h.host}`,
+      entryId: s.entryId,
       entryName: s.entryName,
       siteMode: s.siteMode,
       host: h.host,
@@ -82,10 +106,28 @@ export default function StaticStatus({ appId }: { appId: string }) {
       title: "运行模式",
       dataIndex: "siteMode",
       key: "siteMode",
-      width: 110,
-      render: (v: string) => (
-        <Tag color={MODE_META[v]?.color ?? "default"}>{MODE_META[v]?.text ?? v}</Tag>
-      ),
+      width: 150,
+      render: (v: string, r: Row) =>
+        isAdmin ? (
+          <Select
+            size="small"
+            value={v}
+            loading={switchingId === String(r.entryId)}
+            style={{ width: 110 }}
+            options={[
+              { label: "动态", value: "dynamic" },
+              { label: "伪静态", value: "pseudo" },
+              { label: "真静态", value: "static" },
+            ]}
+            onChange={(mode) =>
+              void switchMode(String(r.entryId), mode as SiteMode)
+            }
+          />
+        ) : (
+          <Tag color={MODE_META[v]?.color ?? "default"}>
+            {MODE_META[v]?.text ?? v}
+          </Tag>
+        ),
     },
     {
       title: "最近生成",
@@ -129,7 +171,7 @@ export default function StaticStatus({ appId }: { appId: string }) {
           type="info"
           showIcon
           message="该应用没有作为主应用绑定的入口"
-          description="静态快照按入口生成；入口装配在平台区「入口与站点」中维护。"
+          description="静态快照按入口生成；入口装配在平台区「应用管理」中维护，本应用的绑定情况见「域名绑定」页。"
         />
       ) : (
         <>
@@ -137,6 +179,7 @@ export default function StaticStatus({ appId }: { appId: string }) {
             <Descriptions.Item label="主应用入口数">{sites.length}</Descriptions.Item>
             <Descriptions.Item label="说明">
               生成状态以快照清单为准；进程内最近运行记录在 api 重启后会清空。
+              {!isAdmin && "运行模式切换由平台管理员操作。"}
             </Descriptions.Item>
           </Descriptions>
           <Table
