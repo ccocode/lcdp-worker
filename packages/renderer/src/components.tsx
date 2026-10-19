@@ -544,6 +544,24 @@ export function DataTable({ node }: NodeProps) {
     };
   }, [ctx.adapter, refEntitiesKey]);
 
+  // 标签门超时放行：待就绪的被引实体集合（pendingGateKey）若 1.5s 内未全部就绪，
+  // 放行下方的渲染门先出数据行（引用列暂显原始值、标签到达后自动换成标签文本），
+  // 避免慢标签请求（冷路径）让首帧无限空等、被误记成「列表为空」。
+  // 集合变化（有标签落定）会重置计时；全部就绪后 pendingGateKey 为空、门自然打开。
+  const pendingGateKey = refEntitiesKey
+    ? refEntitiesKey
+        .split(",")
+        .filter((k) => !labelsDone[k])
+        .sort()
+        .join(",")
+    : "";
+  const [gateReleasedFor, setGateReleasedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingGateKey) return;
+    const t = setTimeout(() => setGateReleasedFor(pendingGateKey), 1500);
+    return () => clearTimeout(t);
+  }, [pendingGateKey]);
+
   if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
 
   // 显示列：props.columns 指定字段 key 与顺序；未指定时取实体前 7 个字段
@@ -558,12 +576,14 @@ export function DataTable({ node }: NodeProps) {
         .filter((f): f is Field => Boolean(f))
     : entity.fields.slice(0, 7);
   // 可见列涉及的被引实体标签尚未全部就绪时不渲染数据行，
-  // 避免把原始 ID 当成最终内容闪现（映射到达后才出首屏）
+  // 避免把原始 ID 当成最终内容闪现（映射到达后才出首屏）；
+  // 但门只等 1.5s（见上方 pendingGateKey 计时），超时先放行出数据行
   const pendingRefs = fields
     .filter((f) => f.type === "ref" && f.refEntity)
     .map((f) => f.refEntity!)
     .filter((k, i, a) => a.indexOf(k) === i && !labelsDone[k]);
   const labelsPending = pendingRefs.length > 0;
+  const labelsGate = labelsPending && gateReleasedFor !== pendingGateKey;
 
   const cellText = (row: Row, field: Field): string =>
     formatCellValue(
@@ -667,7 +687,7 @@ export function DataTable({ node }: NodeProps) {
       )}
       {cardMode ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {labelsPending || (loading && rows.length === 0) ? (
+          {labelsGate || (loading && rows.length === 0) ? (
             <div style={styles.empty}>加载中…</div>
           ) : rows.length === 0 ? (
             <div style={styles.empty}>暂无数据</div>
@@ -779,8 +799,8 @@ export function DataTable({ node }: NodeProps) {
         rowKey={(r) => String(r.id)}
         size="middle"
         columns={tableColumns}
-        dataSource={labelsPending ? [] : rows}
-        loading={loading || labelsPending}
+        dataSource={labelsGate ? [] : rows}
+        loading={loading || labelsGate}
         locale={{ emptyText: "暂无数据" }}
         pagination={{
           current: pageIdx + 1,

@@ -2774,9 +2774,13 @@ function PublicShell({
     [primary.appId, goPage, publicNotify, memberHooks],
   );
 
+  // 适配器只经 ref 读令牌与会话（makeMemberAdapter 入参为令牌 getter + memberHooks），
+  // 身份以令牌为准：依赖收窄到 token 字符串，/me 刷新简档（同令牌、换会话对象）
+  // 不再触发适配器换代与会员面全量重拉
+  const memberToken = memberSession?.token ?? null;
   const memberAdapter = useMemo(
     () =>
-      memberSession
+      memberToken
         ? makeMemberAdapter(
             primary.appId,
             goPage,
@@ -2786,7 +2790,7 @@ function PublicShell({
             memberHooks,
           )
         : null,
-    [primary.appId, goPage, memberSession, clearMemberSession, memberHooks],
+    [primary.appId, goPage, memberToken, clearMemberSession, memberHooks],
   );
 
   /** 导航守卫：未登录点会员页先弹登录弹窗（页面照常切过去，内容区呈占位引导） */
