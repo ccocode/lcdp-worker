@@ -3395,11 +3395,8 @@ function AppView({
       return false;
     }
   });
-  /** 侧栏分组展开键的用户覆盖（按应用记）：无覆盖时默认全展开 */
-  const [openKeysOverride, setOpenKeysOverride] = useState<{
-    appId: string;
-    keys: string[];
-  } | null>(null);
+  /** 侧栏分组展开：非受控（defaultOpenKeys）+ 按应用/折叠态换 key 重挂，
+   * 避开受控 openKeys 在侧栏折叠模式切换时被 antd 内部回放污染的问题 */
 
   // 全部应用快照并行加载：主应用失败按原口径整页报错；
   // 其余应用失败仅从本次装配剔除并警告，不拖垮整个入口
@@ -3582,7 +3579,6 @@ function AppView({
   const switchApp = (appId: string) => {
     if (appId === activeLoaded.app.id) return;
     setActiveAppId(appId);
-    setOpenKeysOverride(null);
     const target = scopedMenus.get(appId);
     const landing =
       target?.menuPages[0]?.page.route ??
@@ -3648,17 +3644,10 @@ function AppView({
     ...(menu.items ?? []),
   ];
 
-  /**
-   * 侧栏分组展开键：默认全展开；用户一旦手动折叠/展开，按应用记的覆盖即全权生效
-   * （含当前页所在组——不强制弹开用户刚合上的组，切换应用时覆盖清空回默认）。
-   */
+  /** 侧栏分组键（默认全展开；折叠/展开由 Menu 非受控自持，见 siderMenuItems 处 key 重挂口径） */
   const allGroupKeys = (menuItems ?? [])
     .filter((i) => (i as { type?: string } | null)?.type === "group")
     .map((i) => String((i as { key?: unknown }).key));
-  const openGroupKeys =
-    openKeysOverride && openKeysOverride.appId === activeLoaded.app.id
-      ? openKeysOverride.keys
-      : allGroupKeys;
   /** 桌面侧栏专用形态：分组转可折叠子菜单；站点横排与移动拍平仍消费 group 形态 */
   const siderMenuItems: MenuProps["items"] = (menuItems ?? []).map((item) => {
     const it = item as {
@@ -3895,21 +3884,13 @@ function AppView({
               }}
             >
               <Menu
+                key={`${activeLoaded.app.id}:${siderCollapsed ? "c" : "e"}`}
                 mode="inline"
                 inlineCollapsed={siderCollapsed}
                 selectedKeys={
                   isFlow ? ["/flow"] : current ? [current.route] : []
                 }
-                openKeys={siderCollapsed ? undefined : openGroupKeys}
-                onOpenChange={(keys) => {
-                  // 折叠态下 antd 会以弹出模式回放 openKeys 变化，不记覆盖，
-                  // 否则整栏收起再展开会把所有分组误记为已折叠
-                  if (siderCollapsed) return;
-                  setOpenKeysOverride({
-                    appId: activeLoaded.app.id,
-                    keys: keys as string[],
-                  });
-                }}
+                defaultOpenKeys={allGroupKeys}
                 style={{ borderInlineEnd: "none", background: "transparent" }}
                 items={siderMenuItems}
                 onClick={({ key }) => goPage(key)}
