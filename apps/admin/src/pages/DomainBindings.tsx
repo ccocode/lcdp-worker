@@ -1,34 +1,20 @@
 import React, { useCallback, useEffect, useState } from "react";
-import {
-  Alert,
-  Button,
-  Card,
-  Empty,
-  Form,
-  Modal,
-  Select,
-  Space,
-  Table,
-  Tag,
-  message,
-} from "antd";
-import type { ColumnsType } from "antd/es/table";
+import { Alert, Button, Input, Space, Typography, message } from "antd";
 import { api, type EntryView } from "../api";
 
 /**
- * 域名绑定（第 57 步新增基础页，Sites 页解散后的应用视角承接）：
- * 域名绑定是单应用的事——只列「绑定应用含当前应用」的入口。
- * 与平台区「应用管理」的装配编辑写同一端点（PUT /admin/entries/:id），
- * 写权同为 admin-only；operator 只读。appIds 不在此页改（归装配编辑），
- * siteMode 切换在「静态状态」页承接、不在此重复实现。
+ * 域名（对象形态归正 W3 终版口径，用户 2026-10-20 03:42 定案）：
+ * 域名是应用的**单值属性**——本页签就是应用设置里的一个域名输入框，
+ * 不是入口列表。值的读写落点 = 该应用的专属入口（entries 中 appIds
+ * 恰为 [本应用] 的那条）的 hosts 首项：
+ * - 有专属入口 → 读 hosts[0]（存量若有多项只显首项，保存收敛为单值）；
+ * - 无专属入口 → 未绑定（空值），admin 保存时经 POST /admin/entries
+ *   新建专属入口承载；
+ * - 员工默认入口（多应用装配）只是运行外壳兜底，不算任何应用的绑定，
+ *   不出现在本页签。
+ * 写权 admin-only、后端错误原文呈现；operator 只读（disabled 输入框 +
+ * 注记）。
  */
-
-const MODE_META: Record<string, { color: string; text: string }> = {
-  static: { color: "success", text: "真静态" },
-  pseudo: { color: "processing", text: "伪静态" },
-  dynamic: { color: "default", text: "动态" },
-};
-
 export default function DomainBindings({
   appId,
   isAdmin,
@@ -36,21 +22,23 @@ export default function DomainBindings({
   appId: string;
   isAdmin: boolean;
 }) {
-  const [entries, setEntries] = useState<EntryView[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<EntryView | null>(null);
+  /** 本应用的专属入口（appIds 恰为 [appId]）；undefined = 加载中，null = 无 */
+  const [exclusive, setExclusive] = useState<EntryView | null | undefined>(
+    undefined,
+  );
+  const [host, setHost] = useState("");
   const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm<{ hosts: string[] }>();
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const all = await api.entries.list();
-      setEntries(all.filter((e) => e.appIds.includes(appId)));
+      const found =
+        all.find((e) => e.appIds.length === 1 && e.appIds[0] === appId) ?? null;
+      setExclusive(found);
+      setHost(found?.hosts[0] ?? "");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载入口失败");
-    } finally {
-      setLoading(false);
+      message.error(err instanceof Error ? err.message : "加载域名失败");
+      setExclusive(null);
     }
   }, [appId]);
 
@@ -58,122 +46,64 @@ export default function DomainBindings({
     void load();
   }, [load]);
 
-  const openEdit = (entry: EntryView) => {
-    setEditing(entry);
-    form.setFieldsValue({ hosts: entry.hosts });
-  };
-
   const save = async () => {
-    if (!editing) return;
-    const values = await form.validateFields();
-    const hosts = [...new Set(values.hosts.map((h) => h.trim()).filter(Boolean))];
+    const v = host.trim();
     setSaving(true);
     try {
-      await api.entries.update(editing.id, { hosts });
-      message.success("域名已保存（审计 entry.update 已记录）");
-      setEditing(null);
+      if (exclusive) {
+        await api.entries.update(exclusive.id, { hosts: v ? [v] : [] });
+        message.success(v ? "域名已保存" : "域名已解绑（清空）");
+      } else if (v) {
+        await api.entries.create({ hosts: [v], appIds: [appId] });
+        message.success("域名已绑定");
+      }
       void load();
     } catch (err) {
       // 后端口径错误（如域名已被其他入口占用）原文呈现，不吞
-      message.error(err instanceof Error ? err.message : "保存失败");
+      message.error(err instanceof Error ? err.message : "保存域名失败");
     } finally {
       setSaving(false);
     }
   };
 
-  const columns: ColumnsType<EntryView> = [
-    { title: "入口", dataIndex: "name", width: 180 },
-    {
-      title: "域名",
-      dataIndex: "hosts",
-      render: (hosts: string[]) => (
-        <Space size={[4, 4]} wrap>
-          {hosts.map((h) => (
-            <Tag key={h}>{h}</Tag>
-          ))}
-        </Space>
-      ),
-    },
-    {
-      title: "本应用地位",
-      width: 120,
-      render: (_: unknown, e: EntryView) =>
-        e.appIds[0] === appId ? (
-          <Tag color="blue">主应用</Tag>
-        ) : (
-          <Tag>绑定应用</Tag>
-        ),
-    },
-    {
-      title: "运行模式",
-      dataIndex: "siteMode",
-      width: 110,
-      render: (v: string) => (
-        <Tag color={MODE_META[v]?.color ?? "default"}>
-          {MODE_META[v]?.text ?? v}
-        </Tag>
-      ),
-    },
-    ...(isAdmin
-      ? [
-          {
-            title: "操作",
-            key: "actions",
-            width: 110,
-            render: (_: unknown, e: EntryView) => (
-              <Button size="small" type="link" onClick={() => openEdit(e)}>
-                编辑域名
-              </Button>
-            ),
-          } as ColumnsType<EntryView>[number],
-        ]
-      : []),
-  ];
+  const unchanged =
+    exclusive !== undefined && host.trim() === (exclusive?.hosts[0] ?? "");
 
   return (
-    <Card title="域名绑定">
+    <div>
+      <Space align="start" size={12} wrap>
+        <Input
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          disabled={!isAdmin || exclusive === undefined}
+          placeholder="未绑定域名"
+          style={{ width: 360 }}
+          addonBefore="域名"
+        />
+        {isAdmin && (
+          <Button
+            type="primary"
+            loading={saving}
+            disabled={exclusive === undefined || unchanged}
+            onClick={() => void save()}
+          >
+            保存
+          </Button>
+        )}
+      </Space>
       {!isAdmin && (
         <Alert
           type="info"
           showIcon
-          style={{ marginBottom: 16 }}
-          message="本页只读：入口装配（域名与绑定应用）由平台管理员在平台区「应用管理」中维护"
+          style={{ marginTop: 16 }}
+          message="域名由平台管理员在应用设置中维护"
         />
       )}
-      <Table
-        rowKey="id"
-        loading={loading}
-        columns={columns}
-        dataSource={entries}
-        pagination={false}
-        locale={{
-          emptyText: <Empty description="当前应用未绑在任何入口上（无对外域名）" />,
-        }}
-      />
-      <Modal
-        title={editing ? `编辑域名 · ${editing.name}` : "编辑域名"}
-        open={editing !== null}
-        onCancel={() => setEditing(null)}
-        onOk={() => void save()}
-        confirmLoading={saving}
-        okText="保存"
-        cancelText="取消"
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="hosts"
-            label="域名（回车分隔多个；不可与其他入口重复）"
-            rules={[{ required: true, message: "至少填写一个域名" }]}
-          >
-            <Select
-              mode="tags"
-              tokenSeparators={[",", " "]}
-              placeholder="如 www.example.com"
-              open={false}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </Card>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
+        域名是本应用的单值属性；员工默认入口（多应用装配）为运行外壳兜底，不算本应用的绑定。
+        {(exclusive?.hosts.length ?? 0) > 1 &&
+          "（注：本应用专属入口现存多个域名，此处只显首项，下次保存将收敛为单值。）"}
+      </Typography.Paragraph>
+    </div>
   );
 }

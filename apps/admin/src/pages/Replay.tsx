@@ -5,6 +5,7 @@ import {
   Descriptions,
   Drawer,
   Segmented,
+  Select,
   Space,
   Table,
   Tag,
@@ -261,7 +262,17 @@ function FlowDetail({ id }: { id: string }) {
   );
 }
 
-export default function Replay() {
+export default function Replay({
+  scope,
+  appId,
+}: {
+  /**
+   * platform：会话回放须先选定一个应用（以 appId 取其会话），不混显各应用明细；
+   * app：会话固定本应用（P2 按应用端点），无应用选择。提案/流程回放沿全局口径。
+   */
+  scope: "platform" | "app";
+  appId?: string;
+}) {
   const [kind, setKind] = useState<Kind>("conversations");
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
@@ -270,16 +281,50 @@ export default function Replay() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const pageSize = 20;
 
+  // platform scope 会话回放的应用必选（仅 admin 可达 platform scope）
+  const [convAppId, setConvAppId] = useState<string | null>(null);
+  const [appOptions, setAppOptions] = useState<{ value: string; label: string }[]>([]);
+  useEffect(() => {
+    if (scope !== "platform") return;
+    let alive = true;
+    void api.apps
+      .list()
+      .then((list) => {
+        if (alive) {
+          setAppOptions(
+            list.map((a) => ({
+              value: String(a.id),
+              label: `${asText(a.name ?? a.id)}（${String(a.id)}）`,
+            })),
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [scope]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const fn =
-        kind === "conversations"
-          ? api.replay.conversations
-          : kind === "proposals"
-            ? api.replay.proposals
-            : api.replay.flows;
-      const res = await fn({ page, pageSize });
+      let res: { rows: Row[]; total: number };
+      if (kind === "conversations") {
+        if (scope === "app") {
+          res = await api.replay.listForApp(appId!, { page, pageSize });
+        } else if (!convAppId) {
+          // 必选未选：不取数，列表呈空态提示
+          setRows([]);
+          setTotal(0);
+          return;
+        } else {
+          res = await api.replay.conversations({ appId: convAppId, page, pageSize });
+        }
+      } else if (kind === "proposals") {
+        res = await api.replay.proposals({ page, pageSize });
+      } else {
+        res = await api.replay.flows({ page, pageSize });
+      }
       setRows(res.rows);
       setTotal(res.total);
     } catch (err) {
@@ -287,7 +332,7 @@ export default function Replay() {
     } finally {
       setLoading(false);
     }
-  }, [kind, page]);
+  }, [kind, page, scope, appId, convAppId]);
 
   useEffect(() => {
     void load();
@@ -362,9 +407,33 @@ export default function Replay() {
         />
       }
     >
+      {scope === "platform" && kind === "conversations" && (
+        <Space style={{ marginBottom: 16 }} wrap>
+          <Select
+            placeholder="先选择一个应用查看其会话回放"
+            style={{ width: 320 }}
+            value={convAppId ?? undefined}
+            options={appOptions}
+            onChange={(v) => {
+              setConvAppId(v);
+              setPage(1);
+              setDetailId(null);
+            }}
+          />
+          <Typography.Text type="secondary">
+            会话明细按应用归属，平台层不混显：选定应用后只取该应用的会话。
+          </Typography.Text>
+        </Space>
+      )}
       <Table
         rowKey={(r) => asText(r.id)}
         loading={loading}
+        locale={{
+          emptyText:
+            scope === "platform" && kind === "conversations" && !convAppId
+              ? "先选择一个应用，才显示该应用的会话列表"
+              : "暂无数据",
+        }}
         columns={[
           ...columns,
           {

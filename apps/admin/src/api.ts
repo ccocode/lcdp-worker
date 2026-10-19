@@ -105,6 +105,13 @@ export interface PageResult<T> {
   total: number;
 }
 
+/** 领域注册表条目（GET /domains 子集，参照 studio DomainInfo）：新建应用选领域用 */
+export interface DomainInfo {
+  key: string;
+  name: string;
+  available: boolean;
+}
+
 /** 主题清单里的可配置项声明（主题页 values 表单按此渲染） */
 export interface ThemeConfigItem {
   key: string;
@@ -598,6 +605,18 @@ export const api = {
       const res = await apiFetch<{ entries: EntryView[] }>("/admin/entries");
       return res.entries;
     },
+    /**
+     * 新建入口（对象形态归正 P5，admin）：应用设置「域名」页签为无专属入口的
+     * 应用首次绑域名时用——建 appIds 恰为 [本应用] 的专属入口承载单值域名。
+     * 非 admin 403、id 冲突 409、校验同 PUT admin 分支。
+     */
+    async create(body: { hosts: string[]; appIds: string[] }): Promise<EntryView> {
+      const res = await apiFetch<{ entry: EntryView }>("/admin/entries", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      return res.entry;
+    },
     /** siteMode 与 theme 指针同居入口 config、互不覆盖：只传要改的那一项；
      * theme 传完整双槽对象（按槽重建，单槽解绑 = 该槽置 null）或 null 清空双槽；
      * hosts / appIds 为入口装配（第 56 步起 admin 可写：hosts 跨入口去重、
@@ -688,6 +707,36 @@ export const api = {
         body: JSON.stringify({ status }),
       });
     },
+    /** 新建应用（POST /apps，admin）：可选 domain 锚定主领域、骨架落初始草稿 */
+    async create(body: {
+      id: string;
+      name: string;
+      domain?: string;
+    }): Promise<Row> {
+      const res = await apiFetch<{ ok: boolean; app: Row }>("/apps", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      return res.app;
+    },
+    /**
+     * 删除应用（对象形态归正 P3 端点，admin）：confirm 须与应用 id 全文一致，
+     * 服务端单事务级联（设计/数据/流程/授权/资产/会话；审计留痕、入口仅摘除）。
+     */
+    async remove(id: string): Promise<{ id: string; deleted: Record<string, number> }> {
+      return apiFetch(`/admin/apps/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        body: JSON.stringify({ confirm: id }),
+      });
+    },
+  },
+
+  domains: {
+    /** 领域注册表（GET /domains，Studio 同款）：新建应用的领域下拉数据源 */
+    async list(): Promise<DomainInfo[]> {
+      const res = await apiFetch<{ domains: DomainInfo[] }>("/domains");
+      return Array.isArray(res.domains) ? res.domains : [];
+    },
   },
 
   /** 应用会员（会员试点）：按应用生效会员域列会员（标识搜索 + 分页）与启停 */
@@ -732,6 +781,8 @@ export const api = {
       actor?: string;
       appId?: string;
       tenantId?: string;
+      /** 对象形态归正 P1：scope=platform 时只回无应用归属（app_id 为空）的平台级事件 */
+      scope?: string;
       from?: string;
       to?: string;
       page?: number;
@@ -740,15 +791,50 @@ export const api = {
       const res = await apiFetch<unknown>(`/admin/audit${qs(params)}`);
       return pageOf<Row>(res);
     },
+    /**
+     * 按应用审计（对象形态归正 P2 端点）：强制 app_id = 路径应用，
+     * 其余参数与响应形状同全局 list；运营者凭本应用运营资格可达。
+     */
+    async listForApp(
+      appId: string,
+      params: {
+        action?: string;
+        actor?: string;
+        from?: string;
+        to?: string;
+        page?: number;
+        pageSize?: number;
+      },
+    ): Promise<PageResult<Row>> {
+      const res = await apiFetch<unknown>(
+        `/admin/apps/${encodeURIComponent(appId)}/audit${qs(params)}`,
+      );
+      return pageOf<Row>(res);
+    },
   },
 
   replay: {
     async conversations(params?: {
       page?: number;
       pageSize?: number;
+      appId?: string;
+      username?: string;
     }): Promise<PageResult<Row>> {
       const res = await apiFetch<unknown>(
         `/admin/replay/conversations${qs(params ?? {})}`,
+      );
+      return pageOf<Row>(res);
+    },
+    /**
+     * 按应用回放会话（对象形态归正 P2 端点）：强制 conv.app_id = 路径应用，
+     * 其余参数与响应形状同全局 conversations；运营者凭本应用运营资格可达。
+     */
+    async listForApp(
+      appId: string,
+      params?: { page?: number; pageSize?: number; username?: string },
+    ): Promise<PageResult<Row>> {
+      const res = await apiFetch<unknown>(
+        `/admin/apps/${encodeURIComponent(appId)}/replay/conversations${qs(params ?? {})}`,
       );
       return pageOf<Row>(res);
     },

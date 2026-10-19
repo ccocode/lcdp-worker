@@ -1,19 +1,27 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Alert,
   Button,
   Card,
   Col,
+  Empty,
+  Form,
+  Input,
   List,
+  Modal,
   Row,
+  Select,
   Space,
   Statistic,
   Table,
   Tag,
   Typography,
+  message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
+  type DomainInfo,
   type FlowTaskView,
   type Row as DataRow,
   type SubmissionItem,
@@ -23,15 +31,18 @@ import { templateForDomain } from "../templates";
 import { asText, fmtTime } from "../helpers";
 
 /**
- * 首页工作台（第 57 步，方案 §1.5）：全身份默认落点，按上下文组装——
- * 无应用上下文（管理员）= 平台总览；有当前应用 = 应用形态（运营者直落
- * 其首个可运营应用）。区块经注册表组装：指标卡 / 队列摘要 / 快捷入口 /
- * 动态流四类；领域关键指标由领域模版声明（templates），本页只消费。
- * 计数一律取服务端 total——唯一例外是待审提交：submissions 端点无分页
- * 与 total、返回全量数组，计数取数组长度（口径在此明示）。
+ * 首页工作台（第 57 步，方案 §1.5；对象形态归正 W4 改版）：全身份默认落点。
+ * 进入管理台即默认身处一个应用（外壳归位保证），本页统一顺序组装：
+ * 应用列表（如设计器一样列在工作台，点卡切换、当前高亮；admin 可新建/
+ * 删除应用）→ 当前应用的对象区块（待办/指标/快捷入口/动态）→ admin 附加
+ * 的平台维度三区块（平台统计数字、应用健康积压计数、平台动态——只取无
+ * 应用归属的平台级事件）。领域关键指标由领域模版声明（templates），
+ * 本页只消费。计数一律取服务端 total——唯一例外是待审提交：submissions
+ * 端点无分页与 total、返回全量数组，计数取数组长度（口径在此明示）。
  */
 
 type BlockKey =
+  | "app-list"
   | "platform-stats"
   | "app-health"
   | "recent-audit"
@@ -39,7 +50,10 @@ type BlockKey =
   | "quick-links"
   | "app-activity";
 
-/** 版式声明：平台形态与应用形态各一份有序区块清单 */
+/**
+ * 版式声明（对象形态归正 W4 后统一渲染顺序）：
+ * app-list（全身份）→ 有当前应用时 APP_LAYOUT → admin 附加 PLATFORM_LAYOUT。
+ */
 const PLATFORM_LAYOUT: BlockKey[] = ["platform-stats", "app-health", "recent-audit"];
 const APP_LAYOUT: BlockKey[] = ["task-metrics", "quick-links", "app-activity"];
 
@@ -52,8 +66,99 @@ interface FeedItem {
 }
 
 export default function Workbench({ ctx }: { ctx: PageContext }) {
-  const { isAdmin, appId, appMeta, user, go, visibleKeys } = ctx;
+  const { isAdmin, appId, appMeta, user, go, visibleKeys, switchApp, grants } = ctx;
   const appForm = appId !== null;
+
+  // ---------- 应用列表区块（W4：全身份；admin 可新建/删除） ----------
+  const [appCards, setAppCards] = useState<DataRow[] | null>(null);
+  const loadAppCards = useCallback(async (): Promise<DataRow[]> => {
+    try {
+      // admin 全量；运营者由服务端按可运营集过滤（与 grants/me 同口径），即其可运营集
+      const rows = await api.apps.list();
+      setAppCards(rows);
+      return rows;
+    } catch {
+      const fallback = (grants?.apps ?? []).map(
+        (g) => ({ id: g.id, name: g.name }) as DataRow,
+      );
+      setAppCards(fallback);
+      return fallback;
+    }
+  }, [grants]);
+
+  useEffect(() => {
+    void loadAppCards();
+  }, [loadAppCards]);
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm] = Form.useForm<{ id: string; name: string; domain?: string }>();
+  const [domains, setDomains] = useState<DomainInfo[] | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!createOpen || domains !== null) return;
+    let alive = true;
+    void api.domains
+      .list()
+      .then((list) => alive && setDomains(list))
+      .catch(() => alive && setDomains([]));
+    return () => {
+      alive = false;
+    };
+  }, [createOpen, domains]);
+
+  const submitCreate = async () => {
+    const values = await createForm.validateFields().catch(() => null);
+    if (!values) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const app = await api.apps.create({
+        id: values.id.trim(),
+        name: values.name.trim(),
+        domain: values.domain ? values.domain : undefined,
+      });
+      message.success(`应用「${values.name.trim()}」已创建`);
+      setCreateOpen(false);
+      createForm.resetFields();
+      await loadAppCards();
+      switchApp(String(app.id ?? values.id.trim()));
+    } catch (err) {
+      // 400/409 等后端口径错误原文呈现，不吞
+      setCreateError(err instanceof Error ? err.message : "创建失败");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const [deleteTarget, setDeleteTarget] = useState<DataRow | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const submitDelete = async () => {
+    if (!deleteTarget) return;
+    const id = String(deleteTarget.id);
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.apps.remove(id);
+      message.success(`应用 ${id} 已删除`);
+      const wasCurrent = id === appId;
+      setDeleteTarget(null);
+      setDeleteConfirm("");
+      const rows = await loadAppCards();
+      if (wasCurrent) {
+        const first = rows.find((r) => String(r.id) !== id);
+        switchApp(first ? String(first.id) : "");
+      }
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // ---------- 平台形态数据 ----------
   const [pStats, setPStats] = useState<{
@@ -79,7 +184,8 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   const [auditFeed, setAuditFeed] = useState<DataRow[] | null>(null);
 
   useEffect(() => {
-    if (appForm || !isAdmin) return;
+    // W4 后平台三区块是 admin 的附加维度：有无当前应用都加载（不再只限无应用形态）
+    if (!isAdmin) return;
     let alive = true;
     const set = (patch: Partial<typeof pStats>) =>
       alive && setPStats((s) => ({ ...s, ...patch }));
@@ -119,13 +225,14 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       })
       .catch(() => {});
     void api.audit
-      .list({ page: 1, pageSize: 8 })
+      // 平台动态：只取无应用归属的平台级事件（scope=platform），各应用明细不混显
+      .list({ page: 1, pageSize: 8, scope: "platform" })
       .then((r) => alive && setAuditFeed(r.rows))
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [appForm, isAdmin]);
+  }, [isAdmin]);
 
   // ---------- 应用形态数据 ----------
   const [tasks, setTasks] = useState<FlowTaskView[] | null>(null);
@@ -234,7 +341,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   const quickLinks = useMemo(() => {
     const base = [
       { label: "流程待办", page: "tasks" as PageKey },
-      { label: "数据管理", page: "data" as PageKey },
+      { label: "数据维护", page: "data" as PageKey },
       { label: "提交审核", page: "submissions" as PageKey },
       { label: "资产管理", page: "appassets" as PageKey },
     ];
@@ -281,6 +388,100 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   ];
 
   const blocks: Record<BlockKey, () => React.ReactNode> = {
+    "app-list": () => (
+      <Card
+        title="应用列表"
+        style={{ marginBottom: 16 }}
+        extra={
+          isAdmin ? (
+            <Button
+              type="primary"
+              onClick={() => {
+                setCreateError(null);
+                setCreateOpen(true);
+              }}
+            >
+              新建应用
+            </Button>
+          ) : undefined
+        }
+      >
+        {appCards === null ? (
+          <Typography.Text type="secondary">加载应用列表…</Typography.Text>
+        ) : appCards.length === 0 ? (
+          <Empty description="暂无可用应用" />
+        ) : (
+          <Row gutter={[16, 16]}>
+            {appCards.map((a) => {
+              const id = String(a.id);
+              const current = id === appId;
+              const ver = a.current_version ?? a.currentVersion;
+              const domainLabel = asText(a.domain ?? a.scenario);
+              const disabled = asText(a.status ?? "active") === "disabled";
+              return (
+                <Col xs={24} sm={12} lg={8} key={id}>
+                  <Card
+                    size="small"
+                    hoverable
+                    onClick={() => switchApp(id)}
+                    style={
+                      current
+                        ? {
+                            borderColor: "#1677ff",
+                            boxShadow: "0 0 0 1px #1677ff inset",
+                          }
+                        : undefined
+                    }
+                  >
+                    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                      <Space wrap size={6}>
+                        <Typography.Text strong>
+                          {asText(a.name ?? a.id)}
+                        </Typography.Text>
+                        {current && <Tag color="blue">当前应用</Tag>}
+                      </Space>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {id}
+                      </Typography.Text>
+                      <Space wrap size={4}>
+                        {domainLabel && <Tag>{domainLabel}</Tag>}
+                        <Tag>
+                          {ver === null || ver === undefined
+                            ? "未发布"
+                            : `v${asText(ver)}`}
+                        </Tag>
+                        {disabled ? (
+                          <Tag>已停用</Tag>
+                        ) : (
+                          <Tag color="success">启用</Tag>
+                        )}
+                      </Space>
+                      {isAdmin && (
+                        <div style={{ textAlign: "right" }}>
+                          <Button
+                            size="small"
+                            danger
+                            type="link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteError(null);
+                              setDeleteConfirm("");
+                              setDeleteTarget(a);
+                            }}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      )}
+                    </Space>
+                  </Card>
+                </Col>
+              );
+            })}
+          </Row>
+        )}
+      </Card>
+    ),
     "platform-stats": () => (
       <>
         <Row gutter={[16, 16]}>
@@ -334,7 +535,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     ),
     "recent-audit": () =>
       auditFeed && auditFeed.length > 0 ? (
-        <Card title="最近动态" style={{ marginTop: 16 }}>
+        <Card title="平台动态" style={{ marginTop: 16 }}>
           <List
             size="small"
             dataSource={auditFeed}
@@ -436,7 +637,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     );
   }
 
-  const layout = appForm ? APP_LAYOUT : PLATFORM_LAYOUT;
+  // 统一渲染顺序（W4）：app-list →（有当前应用）APP_LAYOUT →（admin）平台三区块
   return (
     <div>
       <Typography.Title level={4} style={{ marginTop: 0 }}>
@@ -444,9 +645,99 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
           ? `工作台 · ${appMeta?.app.name ?? ctx.currentApp?.name ?? appId}`
           : "工作台 · 平台总览"}
       </Typography.Title>
-      {layout.map((key) => (
-        <React.Fragment key={key}>{blocks[key]()}</React.Fragment>
-      ))}
+      {blocks["app-list"]()}
+      {!appForm && isAdmin && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="先选一个应用：点击上方应用卡片进入该应用，工作台将呈现该应用的对象形态；下方为平台维度数据。"
+        />
+      )}
+      {appForm &&
+        APP_LAYOUT.map((key) => (
+          <React.Fragment key={key}>{blocks[key]()}</React.Fragment>
+        ))}
+      {isAdmin &&
+        PLATFORM_LAYOUT.map((key) => (
+          <React.Fragment key={key}>{blocks[key]()}</React.Fragment>
+        ))}
+
+      <Modal
+        title="新建应用"
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onOk={() => void submitCreate()}
+        confirmLoading={creating}
+        okText="创建并进入"
+        cancelText="取消"
+      >
+        <Form form={createForm} layout="vertical" initialValues={{ domain: "" }}>
+          <Form.Item
+            name="id"
+            label="应用 id（小写字母开头，由小写字母、数字、连字符组成）"
+            rules={[{ required: true, message: "请输入应用 id" }]}
+          >
+            <Input placeholder="如 my-app" />
+          </Form.Item>
+          <Form.Item
+            name="name"
+            label="应用名称"
+            rules={[{ required: true, message: "请输入应用名称" }]}
+          >
+            <Input placeholder="如 我的应用" />
+          </Form.Item>
+          <Form.Item name="domain" label="领域（创建后不可变更）">
+            <Select
+              loading={domains === null}
+              placeholder="空白（不选领域）"
+              options={[
+                { value: "", label: "空白（不选领域）" },
+                ...(domains ?? [])
+                  .filter((d) => d.available)
+                  .map((d) => ({ value: d.key, label: `${d.name}（${d.key}）` })),
+              ]}
+            />
+          </Form.Item>
+        </Form>
+        {createError && (
+          <Alert type="error" showIcon message={createError} style={{ marginTop: 8 }} />
+        )}
+      </Modal>
+
+      <Modal
+        title={deleteTarget ? `删除应用 · ${String(deleteTarget.id)}` : "删除应用"}
+        open={deleteTarget !== null}
+        onCancel={() => setDeleteTarget(null)}
+        onOk={() => void submitDelete()}
+        confirmLoading={deleting}
+        okText="确认删除"
+        okButtonProps={{
+          danger: true,
+          disabled:
+            !deleteTarget || deleteConfirm !== String(deleteTarget.id),
+        }}
+        cancelText="取消"
+      >
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="删除不可恢复：将级联删除该应用的设计、数据、流程、授权、资产与会话（审计留痕保留，入口仅摘除该应用）。"
+        />
+        <Typography.Paragraph>
+          请输入应用 id 全文确认：
+          <Typography.Text code>{String(deleteTarget?.id ?? "")}</Typography.Text>
+        </Typography.Paragraph>
+        <Input
+          value={deleteConfirm}
+          onChange={(e) => setDeleteConfirm(e.target.value)}
+          placeholder={String(deleteTarget?.id ?? "")}
+        />
+        {deleteError && (
+          <Alert type="error" showIcon message={deleteError} style={{ marginTop: 12 }} />
+        )}
+      </Modal>
     </div>
   );
 }

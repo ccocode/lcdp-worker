@@ -154,6 +154,9 @@ export default function AppShell() {
   });
   const [page, setPage] = useState<PageKey>(route0.page);
   const [auditTabSeed, setAuditTabSeed] = useState<string | null>(route0.auditTab);
+  const [settingsTabSeed, setSettingsTabSeed] = useState<string | null>(
+    route0.settingsTab,
+  );
   // ---- 应用上下文 ----
   const [appId, setAppId] = useState<string | null>(() => appFromSearch());
   /** 应用行清单（仅作当前应用信息富化；切换器与归位口径走 grants/me） */
@@ -166,6 +169,7 @@ export default function AppShell() {
       const r = resolvePath();
       setPage(r.page);
       setAuditTabSeed(r.auditTab);
+      setSettingsTabSeed(r.settingsTab);
       setAppId(appFromSearch());
     };
     window.addEventListener("popstate", onPop);
@@ -226,24 +230,18 @@ export default function AppShell() {
       return g ? ({ id: g.id, name: g.name } as Row) : null;
     })();
 
-  // 上下文归位：深链带来的 appId 不在可运营集内时——
-  // operator 落到其第一个可运营应用；admin 清空上下文（平台区继续可用）。
+  // 上下文归位：进入管理台即默认身处一个应用（对象形态归正 W4）——
+  // appId 缺失或不在可运营集内时，全身份（含 admin）一律落到首个可用应用
+  // （admin 取 apps/grants 全量首个、运营者取可运营集首个，同为 operableApps 口径）。
+  // 可运营集为空（如应用全删）时不动，工作台呈现 app-list 空态。
   useEffect(() => {
     if (!user || !grants || operableApps.length === 0) return;
-    if (appId && !operableApps.some((a) => a.id === appId)) {
-      if (user.role !== "admin") {
-        const first = operableApps[0]!.id;
+    if (!appId || !operableApps.some((a) => a.id === appId)) {
+      const first = operableApps[0]!.id;
+      if (first !== appId) {
         window.history.replaceState(null, "", pathWithApp(page, first));
         setAppId(first);
-      } else {
-        window.history.replaceState(null, "", `/${page}`);
-        setAppId(null);
       }
-    }
-    if (!appId && user.role !== "admin") {
-      const first = operableApps[0]!.id;
-      window.history.replaceState(null, "", pathWithApp(page, first));
-      setAppId(first);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grants, user]);
@@ -297,6 +295,7 @@ export default function AppShell() {
   const go = useCallback(
     (key: PageKey) => {
       setAuditTabSeed(null);
+      setSettingsTabSeed(null);
       window.history.pushState(null, "", pathWithApp(key, appId));
       setPage(key);
     },
@@ -305,6 +304,12 @@ export default function AppShell() {
 
   const switchApp = useCallback(
     (id: string) => {
+      // 空 id = 清空应用上下文（工作台删光应用后的落点，呈 app-list 空态）
+      if (!id) {
+        window.history.pushState(null, "", `/${page}`);
+        setAppId(null);
+        return;
+      }
       window.history.pushState(null, "", pathWithApp(page, id));
       setAppId(id);
     },
@@ -372,6 +377,7 @@ export default function AppShell() {
     currentApp,
     visibleKeys,
     auditTabSeed,
+    settingsTabSeed,
     go,
     switchApp,
   };

@@ -1,25 +1,34 @@
 import React, { useEffect, useState } from "react";
-import { Alert, Card, Descriptions, Table, Tag, Typography } from "antd";
+import { Alert, Card, Descriptions, Table, Tabs, Tag, Typography } from "antd";
 import { api, type AdminDataMeta, type AppOperator, type Row } from "../api";
 import { domainHealth } from "../domainHealth";
 import { asText } from "../helpers";
+import DomainBindings from "./DomainBindings";
+import AppThemeSettings from "./AppThemeSettings";
+import StaticStatus from "./StaticStatus";
 
 /**
- * 应用设置（M15 第③步通用模版，只读）：应用基本信息 + 领域信息与
- * 角色映射健康检查（D12：映射缺失时领域模版降级为通用模版并显式提示）
- * + 授权名单（第 57 步：消费第 56 步按应用运营名单端点，grant 与领域
- * 角色推导合并呈现、逐项标注来源，只读）。
+ * 应用设置（对象形态归正 W3）：单个应用的设置是对象的**属性表**，不是列表——
+ * 本页为 Tabs 容器，五页签均为本应用的属性面：
+ * 基本信息（应用资料 + 领域映射健康）/ 域名（单值属性，读写本应用专属入口）/
+ * 主题（本应用主题列表为主体，入口仅作绑定载体）/ 静态（本应用入口的静态
+ * 状态与模式）/ 授权名单（grant ∪ 推导，只读）。
+ * 深链种子 settingsTabSeed（/domains 等存量深链经外壳别名携带）决定初始页签。
  */
-
 export default function AppSettings({
   appId,
   app,
   meta,
+  isAdmin,
+  settingsTabSeed,
 }: {
   appId: string;
   app: Row | null;
   meta: AdminDataMeta | null;
+  isAdmin: boolean;
+  settingsTabSeed?: string | null;
 }) {
+  const [tab, setTab] = useState<string>(settingsTabSeed ?? "basic");
   const [operators, setOperators] = useState<AppOperator[] | null>(null);
 
   useEffect(() => {
@@ -37,8 +46,9 @@ export default function AppSettings({
     };
   }, [appId]);
   const health = meta ? domainHealth(meta) : null;
-  return (
-    <Card title="应用设置">
+
+  const basicTab = (
+    <div>
       <Descriptions column={2} bordered size="small">
         <Descriptions.Item label="应用 ID">{asText(app?.id)}</Descriptions.Item>
         <Descriptions.Item label="名称">{asText(app?.name)}</Descriptions.Item>
@@ -60,7 +70,7 @@ export default function AppSettings({
         领域信息
       </Typography.Title>
       {!meta && (
-        <Alert type="info" showIcon message="领域信息加载中或暂不可用（以数据管理页的元数据为准）" />
+        <Alert type="info" showIcon message="领域信息加载中或暂不可用（以数据维护页的元数据为准）" />
       )}
       {meta && !health?.hasDomain && (
         <Alert type="info" showIcon message="该应用未绑定主领域（空白领域），仅提供通用模版" />
@@ -114,40 +124,71 @@ export default function AppSettings({
           />
         </>
       )}
-      <Typography.Title level={5} style={{ marginTop: 24 }}>
-        授权名单（谁可运营本应用）
-      </Typography.Title>
-      <Table
-        size="small"
-        pagination={false}
-        rowKey="userId"
-        loading={operators === null}
-        dataSource={operators ?? []}
-        locale={{ emptyText: "暂无运营者（仅平台管理员可进入）" }}
-        columns={[
+    </div>
+  );
+
+  const grantsTab = (
+    <Table
+      size="small"
+      pagination={false}
+      rowKey="userId"
+      loading={operators === null}
+      dataSource={operators ?? []}
+      locale={{ emptyText: "暂无运营者（仅平台管理员可进入）" }}
+      columns={[
+        {
+          title: "用户",
+          key: "user",
+          render: (_: unknown, o: AppOperator) =>
+            `${o.displayName ?? o.username}（${o.username}）`,
+        },
+        { title: "平台角色", dataIndex: "role", key: "role", width: 140 },
+        {
+          title: "来源",
+          dataIndex: "source",
+          key: "source",
+          width: 220,
+          render: (v: string) =>
+            v === "derived" ? (
+              <Tag color="purple">领域角色推导（命中本应用角色映射）</Tag>
+            ) : (
+              <Tag color="blue">运营授权</Tag>
+            ),
+        },
+      ]}
+    />
+  );
+
+  return (
+    <Card title="应用设置">
+      <Tabs
+        activeKey={tab}
+        onChange={setTab}
+        items={[
+          { key: "basic", label: "基本信息", children: basicTab },
           {
-            title: "用户",
-            key: "user",
-            render: (_: unknown, o: AppOperator) =>
-              `${o.displayName ?? o.username}（${o.username}）`,
+            key: "domains",
+            label: "域名",
+            children: <DomainBindings appId={appId} isAdmin={isAdmin} />,
           },
-          { title: "平台角色", dataIndex: "role", key: "role", width: 140 },
           {
-            title: "来源",
-            dataIndex: "source",
-            key: "source",
-            width: 220,
-            render: (v: string) =>
-              v === "derived" ? (
-                <Tag color="purple">领域角色推导（命中本应用角色映射）</Tag>
-              ) : (
-                <Tag color="blue">运营授权</Tag>
-              ),
+            key: "theme",
+            label: "主题",
+            children: <AppThemeSettings appId={appId} isAdmin={isAdmin} />,
           },
+          {
+            key: "static",
+            label: "静态",
+            children: <StaticStatus appId={appId} isAdmin={isAdmin} />,
+          },
+          { key: "grants", label: "授权名单", children: grantsTab },
         ]}
       />
       <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-        本页只读：授权的发放与回收在平台区「用户与角色」，推导名单随领域角色映射与已发布权限自动变化；应用上下架在平台区「应用管理」，设计与发布在 Studio，领域在创建应用时确定、不可变更。
+        本页各页签即本应用的属性维护面（域名 / 主题 / 静态为本应用的属性，授权名单只读）；
+        授权的发放与回收在平台区「用户与角色」，应用启停在平台区「应用管理」，
+        入口装配归属说明见「域名」页签，设计与发布在 Studio；
+        领域在创建应用时确定、不可变更，推导名单随领域角色映射与已发布权限自动变化。
       </Typography.Paragraph>
     </Card>
   );

@@ -6,13 +6,10 @@ import {
   DashboardOutlined,
   DollarOutlined,
   FileTextOutlined,
-  GlobalOutlined,
   IdcardOutlined,
   InboxOutlined,
-  LinkOutlined,
   AppstoreOutlined,
   SettingOutlined,
-  SkinOutlined,
   StopOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
@@ -38,10 +35,7 @@ import FlowTasks from "./pages/FlowTasks";
 import AppAssets from "./pages/AppAssets";
 import Members from "./pages/Members";
 import Submissions from "./pages/Submissions";
-import StaticStatus from "./pages/StaticStatus";
 import AppSettings from "./pages/AppSettings";
-import AppThemeSettings from "./pages/AppThemeSettings";
-import DomainBindings from "./pages/DomainBindings";
 
 /**
  * 页面注册表（第 57 步）：页面定义单点——key / 组件 / 所属段
@@ -61,15 +55,14 @@ export type PageKey =
   | "switches"
   | "config"
   | "audit"
-  // 应用段基础页（终态 9 页，须当前应用上下文）
+  // 应用段基础页（须当前应用上下文；归正后：运营管理 5 + 数据维护 1 + 应用设置 1，
+  // 域名/主题/静态已收进应用设置作属性页签，见归正执行单 W2/W3）
   | "tasks"
   | "data"
   | "appassets"
   | "members"
   | "submissions"
-  | "theme-settings"
-  | "domains"
-  | "static"
+  | "app-audit"
   | "appsettings"
   // 领域模版段（内容领域，见 templates/content）
   | "content-workbench"
@@ -100,6 +93,8 @@ export interface PageContext {
   visibleKeys: Set<PageKey>;
   /** 深链别名种子：/replay 进入时为 "replay"，供审计中心预选页签 */
   auditTabSeed: string | null;
+  /** 深链别名种子：/domains 等存量深链进入时为对应页签 key，供应用设置预选页签 */
+  settingsTabSeed: string | null;
   go: (key: PageKey) => void;
   switchApp: (id: string) => void;
 }
@@ -222,11 +217,16 @@ const PLATFORM_DEFS: PageDef[] = [
     icon: <AuditOutlined />,
     segment: "platform",
     section: "审计追溯",
-    render: (ctx) => <AuditCenter initialTab={ctx.auditTabSeed} />,
+    // 平台 scope：只显无应用归属的平台级事件（归正判据：带 app_id 的明细跟随应用）
+    render: (ctx) => <AuditCenter scope="platform" initialTab={ctx.auditTabSeed} />,
   },
 ];
 
-/** 应用段基础页（平台统一供给，终态 9 页） */
+/**
+ * 应用段基础页（平台统一供给）。对象形态归正后的菜单语法：
+ * 模版段（领域生成）→ 运营管理 → 数据维护 → 应用设置；
+ * 域名/主题/静态不再是独立页，已收进应用设置作本应用的属性页签（W3）。
+ */
 const APP_DEFS: PageDef[] = [
   {
     key: "tasks",
@@ -239,23 +239,12 @@ const APP_DEFS: PageDef[] = [
     ),
   },
   {
-    key: "data",
-    label: "数据管理",
-    icon: <AppstoreOutlined />,
+    key: "submissions",
+    label: "提交审核",
+    icon: <AuditOutlined />,
     segment: "app",
     section: "运营管理",
-    needsMeta: true,
-    render: (ctx) => (
-      <DataAdmin key={ctx.appId!} appId={ctx.appId!} meta={ctx.appMeta!} />
-    ),
-  },
-  {
-    key: "appassets",
-    label: "资产管理",
-    icon: <InboxOutlined />,
-    segment: "app",
-    section: "运营管理",
-    render: (ctx) => <AppAssets key={ctx.appId!} appId={ctx.appId!} />,
+    render: (ctx) => <Submissions key={ctx.appId!} appId={ctx.appId!} />,
   },
   {
     key: "members",
@@ -266,41 +255,38 @@ const APP_DEFS: PageDef[] = [
     render: (ctx) => <Members key={ctx.appId!} appId={ctx.appId!} />,
   },
   {
-    key: "submissions",
-    label: "提交审核",
+    key: "appassets",
+    label: "资产管理",
+    icon: <InboxOutlined />,
+    segment: "app",
+    section: "运营管理",
+    render: (ctx) => <AppAssets key={ctx.appId!} appId={ctx.appId!} />,
+  },
+  {
+    key: "app-audit",
+    label: "审计日志",
     icon: <AuditOutlined />,
     segment: "app",
     section: "运营管理",
-    render: (ctx) => <Submissions key={ctx.appId!} appId={ctx.appId!} />,
-  },
-  {
-    key: "theme-settings",
-    label: "主题设置",
-    icon: <SkinOutlined />,
-    segment: "app",
-    section: "发布与外观",
+    // app scope：只显本应用事件（归正 P2 按应用端点），回放固定本应用
     render: (ctx) => (
-      <AppThemeSettings key={ctx.appId!} appId={ctx.appId!} isAdmin={ctx.isAdmin} />
+      <AuditCenter
+        key={ctx.appId!}
+        scope="app"
+        appId={ctx.appId!}
+        initialTab={ctx.auditTabSeed}
+      />
     ),
   },
   {
-    key: "domains",
-    label: "域名绑定",
-    icon: <LinkOutlined />,
+    key: "data",
+    label: "数据维护",
+    icon: <AppstoreOutlined />,
     segment: "app",
-    section: "发布与外观",
+    section: "数据维护",
+    needsMeta: true,
     render: (ctx) => (
-      <DomainBindings key={ctx.appId!} appId={ctx.appId!} isAdmin={ctx.isAdmin} />
-    ),
-  },
-  {
-    key: "static",
-    label: "静态状态",
-    icon: <GlobalOutlined />,
-    segment: "app",
-    section: "发布与外观",
-    render: (ctx) => (
-      <StaticStatus key={ctx.appId!} appId={ctx.appId!} isAdmin={ctx.isAdmin} />
+      <DataAdmin key={ctx.appId!} appId={ctx.appId!} meta={ctx.appMeta!} />
     ),
   },
   {
@@ -315,6 +301,8 @@ const APP_DEFS: PageDef[] = [
         appId={ctx.appId!}
         app={ctx.currentApp}
         meta={ctx.appMeta}
+        isAdmin={ctx.isAdmin}
+        settingsTabSeed={ctx.settingsTabSeed}
       />
     ),
   },
@@ -330,11 +318,11 @@ export const DEF_BY_KEY: Map<PageKey, PageDef> = new Map(
   PAGE_DEFS.map((d) => [d.key, d]),
 );
 
-/** 应用区分区呈现顺序（领域模版分区插在通用运营管理之后、发布与设置之前） */
+/** 应用区分区呈现顺序（对象形态归正：模版段 → 运营管理 → 数据维护 → 应用设置） */
 const APP_SECTION_ORDER: string[] = [
-  "运营管理",
   ...TEMPLATES.map((t) => t.section),
-  "发布与外观",
+  "运营管理",
+  "数据维护",
   "应用设置",
 ];
 
@@ -363,7 +351,7 @@ function groupBySection(items: PageDef[], order?: string[]): MenuGroup[] {
  * - 工作台全身份可见（默认落点）；
  * - 平台段其余页 admin 全量；运营者仅 kb 例外（可运营集含 supplier-service，
  *   grant 或推导来源均可——如客服坐席 kefu 经 support 角色推导命中）；
- * - 应用段基础页须有当前应用上下文（数据管理页在 meta 未发布/实体为空时
+ * - 应用段基础页须有当前应用上下文（数据维护页在 meta 未发布/实体为空时
  *   呈现页内空态而非菜单消失）；
  * - 模版段三重门控：domain 命中 + 映射健康 + 所需实体（roles 锚点）齐备。
  */
@@ -424,19 +412,41 @@ export function contextVisibility(args: {
 /**
  * 路径别名（地址契约 /<pagekey>?app= 不变，仅补存量深链的落点）：
  * /replay → 审计中心 + 预选回放页签（E2 合并）；/overview → 工作台；
- * 已下线页（themes/assets/sites）与未知路径回落工作台。
+ * 对象形态归正后下线的应用段独立页 /theme-settings、/domains、/static →
+ * 应用设置 + 对应属性页签种子（theme/domains/static）；更早下线页
+ * （themes/assets/sites）与未知路径回落工作台。
  */
-const PATH_ALIASES: Record<string, { page: PageKey; auditTab?: string }> = {
+const PATH_ALIASES: Record<
+  string,
+  { page: PageKey; auditTab?: string; settingsTab?: string }
+> = {
   replay: { page: "audit", auditTab: "replay" },
   overview: { page: "workbench" },
+  "theme-settings": { page: "appsettings", settingsTab: "theme" },
+  domains: { page: "appsettings", settingsTab: "domains" },
+  static: { page: "appsettings", settingsTab: "static" },
 };
 
-export function resolvePath(): { page: PageKey; auditTab: string | null } {
+export function resolvePath(): {
+  page: PageKey;
+  auditTab: string | null;
+  settingsTab: string | null;
+} {
   const h = window.location.pathname.replace(/^\//, "");
   const alias = PATH_ALIASES[h];
-  if (alias) return { page: alias.page, auditTab: alias.auditTab ?? null };
+  if (alias) {
+    return {
+      page: alias.page,
+      auditTab: alias.auditTab ?? null,
+      settingsTab: alias.settingsTab ?? null,
+    };
+  }
   const found = DEF_BY_KEY.get(h as PageKey);
-  return { page: found ? found.key : "workbench", auditTab: null };
+  return {
+    page: found ? found.key : "workbench",
+    auditTab: null,
+    settingsTab: null,
+  };
 }
 
 /** 应用上下文：当前应用以 URL 查询 ?app=<id> 承载（深链可达、刷新保持） */

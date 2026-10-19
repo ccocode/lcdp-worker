@@ -26,7 +26,14 @@ interface Filters {
 
 const EMPTY: Filters = { action: "", actor: "", appId: "", tenantId: "", range: null };
 
-export default function Audit() {
+export default function Audit({
+  scope,
+  appId,
+}: {
+  /** platform = 只取无应用归属事件；app = 固定本应用（P2 按应用端点） */
+  scope: "platform" | "app";
+  appId?: string;
+}) {
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
@@ -39,16 +46,28 @@ export default function Audit() {
     async (f: Filters, p: number, ps: number) => {
       setLoading(true);
       try {
-        const res = await api.audit.list({
-          action: f.action || undefined,
-          actor: f.actor || undefined,
-          appId: f.appId || undefined,
-          tenantId: f.tenantId || undefined,
+        const rangeParams = {
           from: f.range ? f.range[0].toISOString() : undefined,
           to: f.range ? f.range[1].toISOString() : undefined,
-          page: p,
-          pageSize: ps,
-        });
+        };
+        const res =
+          scope === "app" && appId
+            ? await api.audit.listForApp(appId, {
+                action: f.action || undefined,
+                actor: f.actor || undefined,
+                ...rangeParams,
+                page: p,
+                pageSize: ps,
+              })
+            : await api.audit.list({
+                action: f.action || undefined,
+                actor: f.actor || undefined,
+                tenantId: f.tenantId || undefined,
+                scope: "platform",
+                ...rangeParams,
+                page: p,
+                pageSize: ps,
+              });
         setRows(res.rows);
         setTotal(res.total);
       } catch (err) {
@@ -57,7 +76,7 @@ export default function Audit() {
         setLoading(false);
       }
     },
-    [],
+    [scope, appId],
   );
 
   useEffect(() => {
@@ -74,10 +93,15 @@ export default function Audit() {
       title: "租户",
       render: (_, r) => asText(r.tenant_id ?? r.tenantId),
     },
-    {
-      title: "应用",
-      render: (_, r) => asText(r.app_id ?? r.appId),
-    },
+    // app scope 下应用恒为本应用，不再单列；platform scope 下平台级事件本无应用归属
+    ...(scope === "app"
+      ? []
+      : [
+          {
+            title: "应用",
+            render: (_: unknown, r: Row) => asText(r.app_id ?? r.appId),
+          } as ColumnsType<Row>[number],
+        ]),
     {
       title: "摘要",
       render: (_, r) => {
@@ -98,7 +122,7 @@ export default function Audit() {
   ];
 
   return (
-    <Card title="审计中心">
+    <Card title={scope === "app" ? "审计日志" : "审计中心"}>
       <Space wrap style={{ marginBottom: 16 }}>
         <Input
           placeholder="动作 action（如 assistant.action）"
@@ -114,20 +138,15 @@ export default function Audit() {
           value={filters.actor}
           onChange={(e) => setFilters({ ...filters, actor: e.target.value })}
         />
-        <Input
-          placeholder="应用 appId"
-          allowClear
-          style={{ width: 180 }}
-          value={filters.appId}
-          onChange={(e) => setFilters({ ...filters, appId: e.target.value })}
-        />
-        <Input
-          placeholder="租户 tenantId"
-          allowClear
-          style={{ width: 160 }}
-          value={filters.tenantId}
-          onChange={(e) => setFilters({ ...filters, tenantId: e.target.value })}
-        />
+        {scope === "platform" && (
+          <Input
+            placeholder="租户 tenantId"
+            allowClear
+            style={{ width: 160 }}
+            value={filters.tenantId}
+            onChange={(e) => setFilters({ ...filters, tenantId: e.target.value })}
+          />
+        )}
         <RangePicker
           showTime
           onChange={(v) =>

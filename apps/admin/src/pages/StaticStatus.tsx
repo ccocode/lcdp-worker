@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Button,
-  Card,
   Descriptions,
   Select,
   Space,
@@ -15,11 +14,11 @@ import { api, type Row, type SiteMode, type StaticSiteStatus } from "../api";
 import { fmtTime } from "../helpers";
 
 /**
- * 静态状态（M15 第③步通用模版）：当前应用作为主应用的各入口站点模式与
- * 快照生成状态 + 手动全量重建。端点为既有 staticGen（按运营授权执法）。
- * 第 57 步起承接 Sites 页解散后的唯一写操作——入口 siteMode 切换
- * （走 entries.update{siteMode}）：写权在服务端为 admin 分支
- * （operator 分支只许 theme），故切换控件仅 admin 可用，运营者只读呈现。
+ * 静态（对象形态归正 W3：原独立页「静态状态」收进应用设置作属性页签后的
+ * 内容组件）：本应用作为主应用的各入口站点模式与快照生成状态 + 手动
+ * 全量重建。端点为既有 staticGen（按运营授权执法）。siteMode 切换走
+ * entries.update{siteMode}：写权在服务端为 admin 分支（operator 分支
+ * 只许 theme），故切换控件仅 admin 可用，运营者只读呈现。
  */
 
 const MODE_META: Record<string, { color: string; text: string }> = {
@@ -155,23 +154,19 @@ export default function StaticStatus({
   ];
 
   return (
-    <Card
-      title="静态状态"
-      extra={
-        <Space>
-          <Button onClick={() => void load()}>刷新</Button>
-          <Button type="primary" loading={rebuilding} onClick={() => void rebuild()}>
-            全量重建快照
-          </Button>
-        </Space>
-      }
-    >
+    <div>
+      <Space style={{ marginBottom: 16 }}>
+        <Button onClick={() => void load()}>刷新</Button>
+        <Button type="primary" loading={rebuilding} onClick={() => void rebuild()}>
+          全量重建快照
+        </Button>
+      </Space>
       {sites.length === 0 && !loading ? (
         <Alert
           type="info"
           showIcon
           message="该应用没有作为主应用绑定的入口"
-          description="静态快照按入口生成；入口装配在平台区「应用管理」中维护，本应用的绑定情况见「域名绑定」页。"
+          description="静态快照按入口生成；入口装配在平台区「应用管理」中维护，本应用的域名见「域名」页签。"
         />
       ) : (
         <>
@@ -191,6 +186,6 @@ export default function StaticStatus({
           />
         </>
       )}
-    </Card>
+    </div>
   );
 }

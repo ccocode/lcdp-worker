@@ -301,7 +301,7 @@ export default function DataAdmin({
         type="warning"
         showIcon
         message="该应用尚未发布任何版本"
-        description="数据管理按已发布设计的实体元数据生成；请先在 Studio 完成设计并发布。"
+        description="数据维护按已发布设计的实体元数据生成；请先在 Studio 完成设计并发布。"
       />
     );
   }
@@ -310,7 +310,15 @@ export default function DataAdmin({
   }
 
   return (
-    <Card title={title ?? "数据管理"}>
+    <Card title={title ?? "数据维护"}>
+      {!lockEntity && (
+        <Typography.Paragraph
+          type="secondary"
+          style={{ marginBottom: 12, fontSize: 12 }}
+        >
+          保底维护工具：按实体元数据呈现；业务办理请用领域模版与运营页
+        </Typography.Paragraph>
+      )}
       <Space style={{ marginBottom: 16 }} wrap>
         {!lockEntity && (
           <Select
