@@ -89,7 +89,7 @@ export default function Usage() {
         showIcon
         style={{ marginBottom: 16 }}
         message={`统计起点：${meteringStart ?? "—"}`}
-        description="用量自 M8 计量链上线日起记录，历史消耗不补录；本看板只记 Token 量与调用次数，不折算金额。"
+        description="用量自计量功能上线之日起记录，历史消耗不补录；本看板只记 Token 量与调用次数，不折算金额。"
       />
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={12} lg={6}>

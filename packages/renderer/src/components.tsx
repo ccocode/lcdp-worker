@@ -2199,7 +2199,7 @@ export function ActionButton({ node }: NodeProps) {
       return;
     }
     if (typeof ctx.adapter.memberPayOrder !== "function") {
-      ctx.adapter.notify("当前宿主未提供会员支付能力", "error");
+      ctx.adapter.notify("当前页面暂不支持在线支付", "error");
       return;
     }
     try {
@@ -2221,7 +2221,7 @@ export function ActionButton({ node }: NodeProps) {
         ctx.adapter.navigate(payUrl);
       }
     } catch (err) {
-      ctx.adapter.notify(errText(err), "error");
+      ctx.adapter.notify("支付发起失败，请稍后重试", "error");
     }
   };
 
@@ -2237,7 +2237,7 @@ export function ActionButton({ node }: NodeProps) {
       return;
     }
     if (typeof ctx.adapter.memberCancelOrder !== "function") {
-      ctx.adapter.notify("当前宿主未提供会员取消订单能力", "error");
+      ctx.adapter.notify("当前页面暂不支持取消订单", "error");
       return;
     }
     try {
@@ -2245,7 +2245,7 @@ export function ActionButton({ node }: NodeProps) {
       ctx.adapter.notify("订单已取消");
       if (route) ctx.adapter.navigate(route);
     } catch (err) {
-      ctx.adapter.notify(errText(err), "error");
+      ctx.adapter.notify("取消订单失败，请稍后重试", "error");
     }
   };
 
@@ -2417,7 +2417,7 @@ export function SupportTranscript({ node }: NodeProps) {
     return (
       <Card title={title}>
         <Typography.Text type="secondary">
-          当前宿主未提供客服会话读取能力。
+          当前页面暂不支持查看客服会话记录。
         </Typography.Text>
       </Card>
     );
@@ -2858,7 +2858,7 @@ export function CartView({ node }: NodeProps) {
       remark?: string;
     }) => {
       if (typeof ctx.adapter.memberCheckout !== "function") {
-        setSubmitError("当前宿主未提供会员结算能力");
+        setSubmitError("当前页面暂不支持结算");
         return;
       }
       if (!validLines.length) {

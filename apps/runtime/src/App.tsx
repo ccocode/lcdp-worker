@@ -431,7 +431,7 @@ function SsoCallbackPage({ params }: { params: Record<string, string> }) {
       } catch (err) {
         if (alive) {
           setError(
-            `登录未完成：${err instanceof Error ? err.message : String(err)}。授权码可能已过期，请重新登录。`,
+            "登录未完成，授权码可能已过期，请重新登录。",
           );
         }
       }
@@ -2547,8 +2547,8 @@ function SandboxPayPage({
           style={{ fontSize: 12, marginTop: 12 }}
         >
           {cashier
-            ? "演示环境沙箱收银台：确认支付将把订单置为已支付；模拟失败则支付单置失败、订单保持待支付可再次支付。收银台链接含时效令牌，请勿转发给无关人员。"
-            : "演示环境沙箱支付：确认支付将经服务端回调把订单置为已支付；模拟失败则支付单置失败、订单保持待支付可再次支付。"}
+            ? "演示环境沙箱收银台：确认支付将把订单置为已支付；模拟失败则支付单置失败、订单保持待支付可再次支付。收银台链接有时效，请勿转发给无关人员。"
+            : "演示环境沙箱支付：确认支付后，订单将变为已支付；模拟失败则支付单置失败、订单保持待支付可再次支付。"}
         </Typography.Paragraph>
 
         {error && (

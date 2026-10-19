@@ -325,7 +325,7 @@ export default function SupportWidget({
       } else if (status === 429) {
         setStartError("操作过于频繁，请稍后再试");
       } else {
-        setStartError(err instanceof Error ? err.message : String(err));
+        setStartError("客服接入失败，请稍后重试");
       }
     } finally {
       setStartBusy(false);
@@ -347,7 +347,7 @@ export default function SupportWidget({
       pollUntilDone(sessionId, visitorKey);
     } catch (err) {
       setSending(false);
-      setTurnError(err instanceof Error ? err.message : String(err));
+      setTurnError("消息发送失败，请重试");
     }
   };
 
@@ -363,7 +363,7 @@ export default function SupportWidget({
           : "已转接人工服务",
       );
     } catch (err) {
-      antdMessage.error(err instanceof Error ? err.message : String(err));
+      antdMessage.error("转接人工失败，请稍后重试");
     } finally {
       setHandoffBusy(false);
     }
@@ -392,7 +392,7 @@ export default function SupportWidget({
       );
       await refreshDetail(sessionId, visitorKey);
     } catch (err) {
-      antdMessage.error(err instanceof Error ? err.message : String(err));
+      antdMessage.error("操作失败，请稍后重试");
     } finally {
       setConfirmingId(null);
     }
@@ -406,7 +406,7 @@ export default function SupportWidget({
       setRatedScore(rateValue);
       antdMessage.success("感谢您的评价");
     } catch (err) {
-      antdMessage.error(err instanceof Error ? err.message : String(err));
+      antdMessage.error("评价提交失败，请稍后重试");
     } finally {
       setRateBusy(false);
     }

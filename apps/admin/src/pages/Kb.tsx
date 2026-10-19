@@ -95,11 +95,11 @@ function Documents() {
                 message.success("已触发重新向量化");
                 void load();
               } catch (err) {
-                message.error(err instanceof Error ? err.message : "重嵌失败");
+                message.error(err instanceof Error ? err.message : "重新向量化失败");
               }
             }}
           >
-            重嵌
+            重新向量化
           </Button>
           <Popconfirm
             title="删除该文档？其向量片段将一并移除，助手将不再引用它。"
@@ -255,7 +255,7 @@ function PendingReview() {
       pagination={false}
       locale={{
         emptyText: (
-          <Empty description="暂无待审（M12 客服沉淀上线后产生）" />
+          <Empty description="暂无待审" />
         ),
       }}
     />
