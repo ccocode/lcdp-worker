@@ -425,6 +425,7 @@ function SsoCallbackPage({ params }: { params: Record<string, string> }) {
           member: res.member,
           policy: res.policy,
           appId,
+          roles: res.roles ?? [],
         };
         storeMemberSession(window.location.host, session);
         window.location.replace(returnTo);
@@ -1866,6 +1867,7 @@ function MemberAuthModal({
       member: res.member,
       policy: res.policy,
       appId,
+      roles: res.roles ?? [],
     };
     storeMemberSession(window.location.host, session);
     onAuthed(session);
@@ -2719,6 +2721,7 @@ function PublicShell({
             ...prev,
             member: res.member,
             policy: res.policy,
+            roles: res.roles ?? [],
           };
           storeMemberSession(host, next);
           return next;

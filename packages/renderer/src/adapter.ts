@@ -121,6 +121,13 @@ export interface MemberSessionInfo {
   displayName: string | null;
 }
 
+/** 会员侧治理角色（第 60 步 R2）：/me 载荷的 roles 项，与 api GrantedMemberRole 同形 */
+export interface MemberRoleGrant {
+  key: string;
+  label: string;
+  entityAccess: { entity: string; actions: string[] }[];
+}
+
 /**
  * 会员结算请求体（商城线）：只报商品与数量 + 收货信息，**不带金额**——
  * 服务端按 appConfig.checkout 声明以现价重算总额并落价快照，前端改价无效。
@@ -196,6 +203,24 @@ export interface RuntimeAdapter {
    * 未实现的宿主（员工面/设计器预览）上 CartView 按未登录口径呈现登录引导。
    */
   memberSession?(): MemberSessionInfo | null;
+  /**
+   * 当前会员被授予的治理角色（第 60 步 R2，可选）：领域模型在会员体系内
+   * 声明、管理员在管理台指派的会员侧角色（如论坛版主），宿主自 /me 载荷
+   * 透传。未实现/无会话/无角色 → 空数组，治理控件（Detail 治理条、
+   * DataTable 行删除）零渲染；服务端按角色 entityAccess 权威执法。
+   */
+  memberRoles?(): MemberRoleGrant[];
+  /**
+   * 治理写（第 60 步 R2，可选）：经会员面以治理角色更新一行——服务端
+   * 校验角色 update 动作与窄案字段集（白名单 ∪ status）。仅会员语境
+   * 宿主（会员适配器 / 带会员钩子的公开适配器）实现。
+   */
+  memberGovernanceUpdate?(entity: string, id: string, data: Row): Promise<Row>;
+  /**
+   * 治理删（第 60 步 R2，可选）：经会员面删除一行——服务端校验角色
+   * delete 动作与引用完整性（被引用回 409）。实现口径同上。
+   */
+  memberGovernanceRemove?(entity: string, id: string): Promise<void>;
   /**
    * 打开会员登录弹窗（商城线，可选）：公开外壳实现（与导航守卫同一弹窗）；
    * 未实现的宿主上 CartView 只呈现提示文案、不渲染登录入口。

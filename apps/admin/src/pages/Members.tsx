@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   Button,
   Card,
+  Checkbox,
   Input,
   Modal,
   Space,
@@ -11,7 +12,7 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { api, type MemberItem } from "../api";
+import { api, type MemberItem, type MemberRoleCandidate } from "../api";
 import { asText, fmtTime } from "../helpers";
 
 /**
@@ -30,6 +31,12 @@ export default function Members({ appId }: { appId: string }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // 会员侧角色（第 60 步 R2）：候选集来自本应用已发布设计的角色声明，
+  // 为空时整列与指派入口不渲染（无会员侧角色的应用保持原样）
+  const [candidates, setCandidates] = useState<MemberRoleCandidate[]>([]);
+  const [roleTarget, setRoleTarget] = useState<MemberItem | null>(null);
+  const [roleChecked, setRoleChecked] = useState<string[]>([]);
+  const [roleSaving, setRoleSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!appId) return;
@@ -43,6 +50,7 @@ export default function Members({ appId }: { appId: string }) {
       setRows(res.members);
       setTotal(res.total);
       setScope(res.scope);
+      setCandidates(res.roleCandidates);
     } catch (err) {
       message.error(err instanceof Error ? err.message : "加载会员失败");
     } finally {
@@ -81,6 +89,29 @@ export default function Members({ appId }: { appId: string }) {
     });
   };
 
+  const openRoles = (row: MemberItem) => {
+    setRoleTarget(row);
+    setRoleChecked(row.roles ?? []);
+  };
+
+  const saveRoles = async () => {
+    if (!appId || !roleTarget) return;
+    setRoleSaving(true);
+    try {
+      await api.members.setRoles(appId, roleTarget.id, roleChecked);
+      message.success("角色已更新（会员下次请求即生效）");
+      setRoleTarget(null);
+      void load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "角色设置失败");
+    } finally {
+      setRoleSaving(false);
+    }
+  };
+
+  const roleLabel = (key: string) =>
+    candidates.find((c) => c.key === key)?.label ?? key;
+
   const columns: ColumnsType<MemberItem> = [
     { title: "标识", dataIndex: "identifier", render: (v) => asText(v) },
     {
@@ -88,6 +119,27 @@ export default function Members({ appId }: { appId: string }) {
       dataIndex: "displayName",
       render: (v) => asText(v),
     },
+    ...(candidates.length > 0
+      ? [
+          {
+            title: "会员角色",
+            dataIndex: "roles",
+            width: 180,
+            render: (roles: string[] | undefined) =>
+              roles && roles.length > 0 ? (
+                <Space size={4} wrap>
+                  {roles.map((k) => (
+                    <Tag key={k} color="blue">
+                      {roleLabel(k)}
+                    </Tag>
+                  ))}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">—</Typography.Text>
+              ),
+          } as ColumnsType<MemberItem>[number],
+        ]
+      : []),
     {
       title: "状态",
       dataIndex: "status",
@@ -107,26 +159,34 @@ export default function Members({ appId }: { appId: string }) {
     },
     {
       title: "操作",
-      width: 110,
-      render: (_, r) =>
-        r.status === "active" ? (
-          <Button
-            size="small"
-            danger
-            loading={busyId === r.id}
-            onClick={() => toggle(r)}
-          >
-            禁用
-          </Button>
-        ) : (
-          <Button
-            size="small"
-            loading={busyId === r.id}
-            onClick={() => toggle(r)}
-          >
-            启用
-          </Button>
-        ),
+      width: candidates.length > 0 ? 190 : 110,
+      render: (_, r) => (
+        <Space size={8}>
+          {candidates.length > 0 ? (
+            <Button size="small" onClick={() => openRoles(r)}>
+              角色
+            </Button>
+          ) : null}
+          {r.status === "active" ? (
+            <Button
+              size="small"
+              danger
+              loading={busyId === r.id}
+              onClick={() => toggle(r)}
+            >
+              禁用
+            </Button>
+          ) : (
+            <Button
+              size="small"
+              loading={busyId === r.id}
+              onClick={() => toggle(r)}
+            >
+              启用
+            </Button>
+          )}
+        </Space>
+      ),
     },
   ];
 
@@ -173,6 +233,34 @@ export default function Members({ appId }: { appId: string }) {
         }}
         locale={{ emptyText: "该应用暂无注册会员" }}
       />
+      <Modal
+        title={roleTarget ? `会员角色 · ${roleTarget.identifier}` : "会员角色"}
+        open={roleTarget !== null}
+        onCancel={() => setRoleTarget(null)}
+        onOk={() => void saveRoles()}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={roleSaving}
+      >
+        <Typography.Paragraph type="secondary">
+          会员侧角色由本应用的设计声明（如论坛的「版主」），指派后该会员在
+          前台即获得相应治理能力，不附带任何后台登录资格。任命只对当前
+          应用生效，保存后立即生效并写入审计。
+        </Typography.Paragraph>
+        <Checkbox.Group
+          value={roleChecked}
+          onChange={(v) => setRoleChecked(v.map(String))}
+        >
+          <Space direction="vertical">
+            {candidates.map((c) => (
+              <Checkbox key={c.key} value={c.key}>
+                {c.label}
+                <Typography.Text type="secondary">（{c.key}）</Typography.Text>
+              </Checkbox>
+            ))}
+          </Space>
+        </Checkbox.Group>
+      </Modal>
     </Card>
   );
 }

@@ -305,12 +305,21 @@ export interface MemberInfo {
   tenantId?: string;
 }
 
+/** 会员侧治理角色（第 60 步 R2）：与 api /me 载荷 roles 同形，前端治理控件据此显隐 */
+export interface MemberRoleGrant {
+  key: string;
+  label: string;
+  entityAccess: { entity: string; actions: string[] }[];
+}
+
 /** 会员会话（localStorage `lcdp.member.<host>` 的存储体；与员工/访客键隔离） */
 export interface MemberSession {
   token: string;
   member: MemberInfo;
   policy: MemberPolicy;
   appId: string;
+  /** 被授予的治理角色（第 60 步 R2；旧会话无此字段时按空集，/me 刷新后补齐） */
+  roles?: MemberRoleGrant[];
 }
 
 /** 注册/登录成功响应（令牌 + 简档 + 当前已发布会员策略） */
@@ -318,6 +327,8 @@ export interface MemberAuthResult {
   token: string;
   member: MemberInfo;
   policy: MemberPolicy;
+  /** 被授予的治理角色（第 60 步 R2；注册恒空） */
+  roles?: MemberRoleGrant[];
 }
 
 /** 会员结算请求体（商城线）：不带金额，服务端按现价重算 + 价快照 + 扣库存 */
@@ -373,6 +384,7 @@ export function loadMemberSession(
       member: s.member,
       policy: { ...EMPTY_MEMBER_POLICY, ...(s.policy ?? {}) },
       appId: s.appId,
+      roles: Array.isArray(s.roles) ? s.roles : [],
     };
   } catch {
     return null;
@@ -821,13 +833,21 @@ export const memberApi = {
       { method: "POST", body: JSON.stringify(body) },
     );
   },
-  /** 当前会员简档与最新策略（外壳恢复会话时刷新 policy 用；401 → 清会话） */
+  /** 当前会员简档与最新策略（外壳恢复会话时刷新 policy 用；401 → 清会话）；roles 为治理角色（第 60 步 R2） */
   async me(
     appId: string,
     getToken: () => string | null,
     onUnauthorized?: () => void,
-  ): Promise<{ member: MemberInfo; policy: MemberPolicy }> {
-    return memberFetch<{ member: MemberInfo; policy: MemberPolicy }>(
+  ): Promise<{
+    member: MemberInfo;
+    policy: MemberPolicy;
+    roles: MemberRoleGrant[];
+  }> {
+    return memberFetch<{
+      member: MemberInfo;
+      policy: MemberPolicy;
+      roles: MemberRoleGrant[];
+    }>(
       `/member/apps/${encodeURIComponent(appId)}/me`,
       getToken,
       undefined,
@@ -904,6 +924,24 @@ export const memberApi = {
         onUnauthorized,
       );
       return res.row;
+    },
+    /**
+     * 会员面删除（第 60 步 R2）：仅被授予角色可达——服务端按角色 delete
+     * 动作准入、被引用回 409；普通会员调用恒 403（D4：删己行不开放）。
+     */
+    async remove(
+      appId: string,
+      getToken: () => string | null,
+      entity: string,
+      id: string,
+      onUnauthorized?: () => void,
+    ): Promise<void> {
+      await memberFetch<{ ok: boolean }>(
+        `/member/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
+        getToken,
+        { method: "DELETE" },
+        onUnauthorized,
+      );
     },
     /**
      * 会员聚合（商城线）：与员工面同构（服务端按 readable + owners 归属下推，
@@ -1893,6 +1931,26 @@ export function makePublicAdapter(
         hooks?.onUnauthorized,
       );
     },
+    // 第 60 步 R2 治理：角色来自会员会话（登录/换发/me 刷新随带），
+    // 治理写/删经会员面以会话令牌调用（服务端按角色执法）
+    memberRoles: () => hooks?.getSession?.()?.roles ?? [],
+    memberGovernanceUpdate: (entity, id, data) =>
+      memberApi.data.update(
+        appId,
+        () => hooks?.getSession?.()?.token ?? null,
+        entity,
+        id,
+        data,
+        hooks?.onUnauthorized,
+      ),
+    memberGovernanceRemove: (entity, id) =>
+      memberApi.data.remove(
+        appId,
+        () => hooks?.getSession?.()?.token ?? null,
+        entity,
+        id,
+        hooks?.onUnauthorized,
+      ),
     navigate,
     notify,
   };
@@ -1989,6 +2047,12 @@ export function makeMemberAdapter(
           }
         : null;
     },
+    // 第 60 步 R2 治理：角色来自会员会话，治理写/删经适配器令牌调会员面
+    memberRoles: () => hooks?.getSession?.()?.roles ?? [],
+    memberGovernanceUpdate: (entity, id, data) =>
+      memberApi.data.update(appId, getToken, entity, id, data, onUnauthorized),
+    memberGovernanceRemove: (entity, id) =>
+      memberApi.data.remove(appId, getToken, entity, id, onUnauthorized),
     openMemberLogin: hooks?.openLogin,
     memberCheckout: (body) =>
       checkoutMember(appId, getToken, body, onUnauthorized),

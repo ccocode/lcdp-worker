@@ -28,6 +28,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Pagination,
   Space,
   Statistic,
@@ -51,6 +52,7 @@ import type { EChartsOption } from "echarts";
 import type {
   AggregateGroupItem,
   EntityAccess,
+  MemberRoleGrant,
   RendererContextValue,
   Row,
   RuntimeAdapter,
@@ -443,6 +445,27 @@ export function Page({ node, children }: NodeProps) {
   );
 }
 
+/**
+ * 治理动作集（第 60 步 R2）：当前会员被授予的会员侧角色对某实体的动作
+ * 并集。宿主未实现 memberRoles / 无会话 / 无角色时恒空集——治理控件
+ * （Detail 治理条、DataTable 行删除）据此零渲染；执法在服务端。
+ */
+function governanceActions(
+  adapter: RuntimeAdapter,
+  entityKey: string,
+): Set<string> {
+  const roles: MemberRoleGrant[] = adapter.memberRoles?.() ?? [];
+  const set = new Set<string>();
+  for (const r of roles) {
+    for (const ea of r.entityAccess) {
+      if (ea.entity === entityKey) {
+        for (const a of ea.actions) set.add(a);
+      }
+    }
+  }
+  return set;
+}
+
 /** 数据表格：按绑定实体分页拉取，引用字段显示关联记录的标签，敏感字段由服务端脱敏 */
 export function DataTable({ node }: NodeProps) {
   const ctx = useRendererCtx();
@@ -608,6 +631,32 @@ export function DataTable({ node }: NodeProps) {
       cellText(row, f)
     );
 
+  // 治理删除（第 60 步 R2）：被授予角色对本实体含 delete 且宿主实现了
+  // 治理删时，行尾出现删除入口；无角色零渲染（普通会员/访客/员工面无感）
+  const govCanDelete =
+    !ctx.design &&
+    typeof ctx.adapter.memberGovernanceRemove === "function" &&
+    governanceActions(ctx.adapter, entity.key).has("delete");
+  const govRemoveRow = (row: Row) => {
+    Modal.confirm({
+      title: "删除这条记录？",
+      content: "删除后不可恢复；若该记录仍被其他记录引用，服务端会拒绝删除。",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          await ctx.adapter.memberGovernanceRemove!(entity.key, String(row.id));
+          ctx.adapter.notify("已删除");
+          void load();
+        } catch (err) {
+          ctx.adapter.notify(errText(err), "error");
+          throw err;
+        }
+      },
+    });
+  };
+
   const tableColumns: TableProps<Row>["columns"] = [
     { title: "ID", dataIndex: "id", key: "__id", width: 120 },
     ...fields.map((f) => ({
@@ -617,6 +666,28 @@ export function DataTable({ node }: NodeProps) {
       ellipsis: true,
       render: (_: unknown, row: Row) => displayCell(row, f),
     })),
+    ...(govCanDelete
+      ? [
+          {
+            title: "操作",
+            key: "__gov",
+            width: 80,
+            render: (_: unknown, row: Row) => (
+              <Button
+                type="link"
+                size="small"
+                danger
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  govRemoveRow(row);
+                }}
+              >
+                删除
+              </Button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   // 权限门控：宿主透传了 access 且本实体无 create 动作时隐藏新建按钮（服务端仍为权威强制）
@@ -766,6 +837,28 @@ export function DataTable({ node }: NodeProps) {
                     </span>
                   </div>
                 ))}
+                {govCanDelete && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      marginTop: 4,
+                    }}
+                  >
+                    <Button
+                      size="small"
+                      danger
+                      type="text"
+                      style={{ minHeight: TOUCH_MIN }}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        govRemoveRow(row);
+                      }}
+                    >
+                      删除
+                    </Button>
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -2193,6 +2286,7 @@ export function Detail({ node }: NodeProps) {
   const [labels, setLabels] = useState<Record<string, Record<string, string>>>(
     {},
   );
+  const [govBusy, setGovBusy] = useState(false);
   // 页面记录发布（包二）：本组件是详情页当前行的加载者——挂载/切换记录时先报
   // pending（门控节点暂隐）、行到达后报 ready，卸载时撤下回 absent（兜底口径）。
   // 用 useLayoutEffect 让 pending 在首帧绘制前落地，避免门控按钮以 absent
@@ -2267,6 +2361,62 @@ export function Detail({ node }: NodeProps) {
     typeof node.props?.listRoute === "string" ? node.props.listRoute : null;
   const statusColors = parseStatusColors(node.props?.statusColors);
 
+  // 治理条（第 60 步 R2）：被授予会员侧角色对本实体含 update/delete 时
+  // 呈现——update 落在 status 字段的状态切换钮（选项来自实体定义，
+  // 如下架/恢复）、delete 为删除钮；无角色/设计态零渲染，执法在服务端
+  const gov = ctx.design
+    ? new Set<string>()
+    : governanceActions(ctx.adapter, entity.key);
+  const statusField = entity.fields.find(
+    (f) => f.key === "status" && (f.options?.length ?? 0) > 0,
+  );
+  const govStatusOptions =
+    gov.has("update") && statusField && ctx.adapter.memberGovernanceUpdate
+      ? (statusField.options ?? []).filter(
+          (o) => o.value !== String(row.status ?? ""),
+        )
+      : [];
+  const showGovernance =
+    govStatusOptions.length > 0 ||
+    (gov.has("delete") && Boolean(ctx.adapter.memberGovernanceRemove));
+  const govSetStatus = async (value: string) => {
+    if (!ctx.adapter.memberGovernanceUpdate) return;
+    setGovBusy(true);
+    try {
+      const updated = await ctx.adapter.memberGovernanceUpdate(
+        entity.key,
+        id,
+        { status: value },
+      );
+      setRow(updated);
+      ctx.adapter.notify("状态已更新");
+    } catch (err) {
+      ctx.adapter.notify(errText(err), "error");
+    } finally {
+      setGovBusy(false);
+    }
+  };
+  const govDelete = () => {
+    Modal.confirm({
+      title: "删除这条记录？",
+      content:
+        "删除后不可恢复；若仍被其他记录引用（如已有回复的帖子），服务端会拒绝删除，可先行下架。",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          await ctx.adapter.memberGovernanceRemove!(entity.key, id);
+          ctx.adapter.notify("已删除");
+          ctx.adapter.navigate(listRoute ?? "/");
+        } catch (err) {
+          ctx.adapter.notify(errText(err), "error");
+          throw err;
+        }
+      },
+    });
+  };
+
   return (
     <div>
       {listRoute && (
@@ -2313,6 +2463,34 @@ export function Detail({ node }: NodeProps) {
           </Descriptions.Item>
         ))}
       </Descriptions>
+      {showGovernance && (
+        <div
+          style={{
+            marginTop: 12,
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <Typography.Text type="secondary">治理：</Typography.Text>
+          {govStatusOptions.map((o) => (
+            <Button
+              key={o.value}
+              size="small"
+              loading={govBusy}
+              onClick={() => void govSetStatus(o.value)}
+            >
+              标记为「{o.label ?? o.value}」
+            </Button>
+          ))}
+          {gov.has("delete") && ctx.adapter.memberGovernanceRemove && (
+            <Button size="small" danger onClick={govDelete}>
+              删除
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

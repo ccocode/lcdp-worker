@@ -306,6 +306,14 @@ export interface MemberItem {
   /** 生效会员域 */
   scope: string;
   createdAt: string | null;
+  /** 已授予的会员侧角色 key（第 60 步 R2，按当前应用；无任命恒空数组） */
+  roles?: string[];
+}
+
+/** 会员侧角色候选项（第 60 步 R2）：应用已发布设计中声明的会员侧角色 */
+export interface MemberRoleCandidate {
+  key: string;
+  label: string;
 }
 
 export function getStoredUser(): UserInfo | null {
@@ -744,11 +752,17 @@ export const api = {
     async list(
       appId: string,
       params?: { q?: string; limit?: number; offset?: number },
-    ): Promise<{ members: MemberItem[]; total: number; scope: string }> {
+    ): Promise<{
+      members: MemberItem[];
+      total: number;
+      scope: string;
+      roleCandidates: MemberRoleCandidate[];
+    }> {
       const res = await apiFetch<{
         members: MemberItem[];
         total: number;
         scope: string;
+        roleCandidates?: MemberRoleCandidate[];
       }>(
         `/admin/apps/${encodeURIComponent(appId)}/members${qs({
           q: params?.q,
@@ -760,7 +774,25 @@ export const api = {
         members: Array.isArray(res.members) ? res.members : [],
         total: typeof res.total === "number" ? res.total : 0,
         scope: typeof res.scope === "string" ? res.scope : "",
+        roleCandidates: Array.isArray(res.roleCandidates)
+          ? res.roleCandidates
+          : [],
       };
+    },
+    /**
+     * 会员侧角色任命（第 60 步 R2）：全量设置该会员在本应用的角色集
+     * （空数组 = 撤销全部）；合法值以服务端候选集为准，越界 400。
+     */
+    async setRoles(
+      appId: string,
+      memberId: string,
+      roleKeys: string[],
+    ): Promise<MemberItem> {
+      const res = await apiFetch<{ ok: boolean; member: MemberItem }>(
+        `/admin/apps/${encodeURIComponent(appId)}/members/${encodeURIComponent(memberId)}/roles`,
+        { method: "POST", body: JSON.stringify({ roleKeys }) },
+      );
+      return res.member;
     },
     async setStatus(
       appId: string,
