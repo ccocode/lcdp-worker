@@ -72,6 +72,41 @@ export interface EntryResult {
   apps: AppInfo[];
 }
 
+/** 站点目录项（第 68 步站点模型：应用即站点事实源，入口装配退役） */
+export interface SiteDirectoryItem {
+  id: string;
+  name: string;
+  scenario: string | null;
+  isPrimary: boolean;
+  boundHost: string | null;
+  nameEn: string | null;
+  /** 应用访问地址：绑定域名根路径，或默认域名 /<应用ID>/ */
+  url: string;
+}
+
+/**
+ * 站点解析结果（/site/current 与 /public/entry.site 同形状）：
+ * mode=app 时 app 为当前作用域应用，via 决定路径前缀（path 时前缀 = /<URL 首段>）；
+ * mode=redirect 为根域——引导层整页跳 defaultHost 并保留路径；
+ * mode=shell 为未托管 host 的兜底装配（目录中主应用 + 未绑应用）。
+ */
+export interface SiteInfo {
+  mode: "app" | "member-center" | "shell" | "redirect";
+  via: "bound" | "primary" | "path" | null;
+  defaultHost: string;
+  app: {
+    id: string;
+    name: string;
+    nameEn: string | null;
+    scenario: string | null;
+    isPrimary: boolean;
+    boundHost: string | null;
+  } | null;
+  siteMode: string;
+  kind: string | null;
+  apps: SiteDirectoryItem[];
+}
+
 /** 流程待办任务（GET /flow/todos）；record 为服务端按权限整形后的记录行 */
 export interface FlowTodoTask {
   id: string;
@@ -490,6 +525,8 @@ export interface PublicEntryResult {
   apps: AppInfo[];
   /** 会员 SSO 开关（主应用会员域命中启用清单时 enabled；缺省视为未启用） */
   memberSso?: MemberSsoInfo;
+  /** 第 68 步站点解析（新模型托管 host 才有；旧路径/未迁移时为 null） */
+  site?: SiteInfo | null;
   primary: {
     appId: string;
     name: string;
@@ -1298,11 +1335,20 @@ export const api = {
       `/entry/current?host=${encodeURIComponent(host)}`,
     );
   },
+  /** 员工侧站点解析（第 68 步新引导：域名 + 首段路径定作用域应用） */
+  async site(host: string, seg?: string | null): Promise<{ site: SiteInfo }> {
+    const q = new URLSearchParams({ host });
+    if (seg) q.set("seg", seg);
+    return apiFetch<{ site: SiteInfo }>(`/site/current?${q.toString()}`);
+  },
   /** 匿名解析入口的公开面（未登录时先调：有公开页则渲染公开外壳） */
-  async publicEntry(host: string): Promise<PublicEntryResult> {
-    return apiFetch<PublicEntryResult>(
-      `/public/entry?host=${encodeURIComponent(host)}`,
-    );
+  async publicEntry(
+    host: string,
+    seg?: string | null,
+  ): Promise<PublicEntryResult> {
+    const q = new URLSearchParams({ host });
+    if (seg) q.set("seg", seg);
+    return apiFetch<PublicEntryResult>(`/public/entry?${q.toString()}`);
   },
   data: {
     async list(

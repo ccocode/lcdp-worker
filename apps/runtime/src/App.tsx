@@ -36,6 +36,7 @@ import type {
   MemberSession,
   MemberSsoInfo,
   PublicEntryResult,
+  SiteInfo,
   Snapshot,
   SsoConsentItem,
   UserInfo,
@@ -110,6 +111,37 @@ function migrateLegacyHash(): void {
 function navigateTo(to: string): void {
   window.history.pushState(null, "", to);
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/** URL 首段（原始编码形）：拼站点路径前缀用——保留用户实际使用的段（ID/英文名/中文名编码形） */
+function rawFirstSeg(path: string): string | null {
+  const seg = path.split("/").filter(Boolean)[0];
+  return seg ?? null;
+}
+
+/** URL 首段（解码形）：传给站点解析接口——服务端按应用 ID → 英文名 → 中文名顺序匹配 */
+function decodedSeg(path: string): string | null {
+  const seg = rawFirstSeg(path);
+  if (!seg) return null;
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
+/** 剥除站点路径前缀：前缀内路径还原为应用内路径（路径恰等于前缀时即根） */
+function stripSitePrefix(path: string, prefix: string): string {
+  if (!prefix) return path;
+  if (path === prefix) return "/";
+  if (path.startsWith(`${prefix}/`)) return path.slice(prefix.length);
+  return path;
+}
+
+/** 根域跳转（第 68 步定案）：整页跳默认域名，保留路径与查询 */
+function redirectToDefaultHost(defaultHost: string): void {
+  const target = `https://${defaultHost}${window.location.pathname}${window.location.search}`;
+  if (window.location.href !== target) window.location.replace(target);
 }
 
 function useHistoryRoute(): Route {
@@ -195,10 +227,9 @@ export default function App() {
           device={device}
           onLoggedIn={(u) => {
             setUser(u);
-            // 预览深链（设计台打开）登录后保留原路径，其余回入口首页
-            if (!window.location.pathname.startsWith("/app/")) {
-              navigateTo("/");
-            }
+            // 登录后保留当前路径：站点引导按当前域名 + 首段路径解析作用域
+            // （路径作用域应用如 www/<应用ID> 登录后须仍落在该应用内；
+            // 预览深链同理保留 /app/<id> 前缀）
           }}
         />
       ) : previewAppId ? (
@@ -313,7 +344,10 @@ function AnonGate({
   useEffect(() => {
     let alive = true;
     api
-      .publicEntry(window.location.host)
+      .publicEntry(
+        window.location.host,
+        decodedSeg(window.location.pathname),
+      )
       .then((r) => {
         if (alive) {
           setPub(r);
@@ -328,7 +362,13 @@ function AnonGate({
     };
   }, []);
 
-  if (!loaded) {
+  // 根域（站点解析 mode=redirect）：整页跳默认域名，保留路径
+  const site = pub?.site ?? null;
+  useEffect(() => {
+    if (site?.mode === "redirect") redirectToDefaultHost(site.defaultHost);
+  }, [site]);
+
+  if (!loaded || site?.mode === "redirect") {
     return (
       <div style={{ padding: 80, textAlign: "center" }}>
         <Spin size="large" tip="正在加载…" />
@@ -355,15 +395,20 @@ function AnonGate({
     !showLogin &&
     !route.path.startsWith("/app/")
   ) {
+    // 路径作用域（默认域名 /<应用段>）：外壳内路径剥前缀、链接生成再拼回
+    const rawSeg = rawFirstSeg(route.path);
+    const basePrefix =
+      site?.via === "path" && rawSeg ? `/${rawSeg}` : "";
     return (
       <>
         <PublicShell
           primary={primary}
-          inPath={route.path}
+          inPath={stripSitePrefix(route.path, basePrefix)}
           params={route.params}
           device={device}
           onLogin={() => setShowLogin(true)}
           memberSso={pub?.memberSso ?? null}
+          basePrefix={basePrefix}
         />
         {anonSupport}
       </>
@@ -2657,6 +2702,7 @@ function PublicShell({
   device,
   onLogin,
   memberSso,
+  basePrefix = "",
 }: {
   primary: NonNullable<PublicEntryResult["primary"]>;
   inPath: string;
@@ -2665,10 +2711,15 @@ function PublicShell({
   onLogin: () => void;
   /** 会员 SSO 开关（/public/entry 下发）：enabled 时会员登录入口改走会员中心授权流 */
   memberSso?: MemberSsoInfo | null;
+  /** 站点路径前缀（路径作用域时为 /<应用段>，其余为空）：站内链接统一拼回 */
+  basePrefix?: string;
 }) {
-  const goPage = useCallback((to: string) => {
-    navigateTo(to);
-  }, []);
+  const goPage = useCallback(
+    (to: string) => {
+      navigateTo(`${basePrefix}${to}`);
+    },
+    [basePrefix],
+  );
   // 公开表单提交在渲染器内走既有「保存成功」提示路径，这里改写为待审口径
   const publicNotify = useCallback(
     (message: string, kind: "ok" | "error" = "ok") => {
@@ -3046,7 +3097,13 @@ function PublicShell({
   );
 }
 
-/** 入口视图：按当前域名解析入口，把其装配的全部应用交给系统壳做多应用装配（M10） */
+/**
+ * 站点视图（第 68 步新引导）：按域名 + 首段路径经 /site/current 解析作用域——
+ * 应用作用域单应用装配（路径作用域带 /<应用段> 前缀）；shell 兜底装配 =
+ * 主应用 + 未绑应用；根域整页跳默认域名；会员中心域渲染内置中心页组。
+ * /site/current 不可用时回落旧 /entry/current 垫片（行为与退役前等价）。
+ * 跨应用聚合（待办计数）经 aggregateApps 走站点目录全量，与装配集分离。
+ */
 function EntryView({
   inPath,
   params,
@@ -3060,24 +3117,37 @@ function EntryView({
   onLogout: () => void;
   device: Device;
 }) {
-  const [entry, setEntry] = useState<EntryResult | null>(null);
+  const [site, setSite] = useState<SiteInfo | null>(null);
+  const [legacy, setLegacy] = useState<EntryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     api
-      .entry(window.location.host)
+      .site(window.location.host, decodedSeg(window.location.pathname))
       .then((r) => {
-        if (alive) setEntry(r);
+        if (alive) setSite(r.site);
       })
-      .catch((err) => {
-        if (alive)
-          setError(err instanceof Error ? err.message : String(err));
+      .catch(() => {
+        // 新引导不可用（旧版 api 过渡期）→ 回落旧入口解析，不整页报错
+        api
+          .entry(window.location.host)
+          .then((r) => {
+            if (alive) setLegacy(r);
+          })
+          .catch((err) => {
+            if (alive)
+              setError(err instanceof Error ? err.message : String(err));
+          });
       });
     return () => {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (site?.mode === "redirect") redirectToDefaultHost(site.defaultHost);
+  }, [site]);
 
   if (error) {
     return (
@@ -3087,35 +3157,98 @@ function EntryView({
       </div>
     );
   }
-  if (!entry) {
+  if (legacy) {
+    if (legacy.apps.length === 0) {
+      return (
+        <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
+          <Alert
+            type="info"
+            message="当前入口尚未装配应用（先完成平台初始化）"
+            style={{ marginBottom: 12 }}
+          />
+          <Button onClick={onLogout}>退出登录</Button>
+        </div>
+      );
+    }
+    return (
+      <AppView
+        apps={legacy.apps}
+        inPath={inPath}
+        params={params}
+        user={user}
+        onLogout={onLogout}
+        device={device}
+        preview={false}
+        entryName={legacy.entry?.name ?? null}
+      />
+    );
+  }
+  if (!site || site.mode === "redirect") {
     return (
       <div style={{ padding: 80, textAlign: "center" }}>
-        <Spin size="large" tip="正在解析入口…" />
+        <Spin size="large" tip="正在解析站点…" />
       </div>
     );
   }
-  if (entry.apps.length === 0) {
+  if (site.mode === "member-center") {
+    return <MemberCenterApp route={{ path: inPath, params }} />;
+  }
+  const directory: AppInfo[] = site.apps.map((d) => ({
+    id: d.id,
+    name: d.name,
+    scenario: d.scenario,
+  }));
+  if (site.mode === "shell") {
+    const assembled = site.apps
+      .filter((d) => d.isPrimary || !d.boundHost)
+      .map((d) => ({ id: d.id, name: d.name, scenario: d.scenario }))
+      .sort((a, b) => {
+        const pa = site.apps.find((d) => d.id === a.id)?.isPrimary ? 0 : 1;
+        const pb = site.apps.find((d) => d.id === b.id)?.isPrimary ? 0 : 1;
+        return pa - pb;
+      });
+    if (assembled.length === 0) {
+      return (
+        <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
+          <Alert
+            type="info"
+            message="当前站点尚未有可用应用（先完成平台初始化）"
+            style={{ marginBottom: 12 }}
+          />
+          <Button onClick={onLogout}>退出登录</Button>
+        </div>
+      );
+    }
     return (
-      <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
-        <Alert
-          type="info"
-          message="当前入口尚未装配应用（先完成平台初始化）"
-          style={{ marginBottom: 12 }}
-        />
-        <Button onClick={onLogout}>退出登录</Button>
-      </div>
+      <AppView
+        apps={assembled}
+        aggregateApps={directory}
+        inPath={inPath}
+        params={params}
+        user={user}
+        onLogout={onLogout}
+        device={device}
+        preview={false}
+        entryName="默认站点"
+      />
     );
   }
+  // mode = app：单应用作用域
+  const app = site.app!;
+  const rawSeg = rawFirstSeg(inPath);
+  const basePrefix = site.via === "path" && rawSeg ? `/${rawSeg}` : "";
   return (
     <AppView
-      apps={entry.apps}
-      inPath={inPath}
+      apps={[{ id: app.id, name: app.name, scenario: app.scenario }]}
+      aggregateApps={directory}
+      inPath={stripSitePrefix(inPath, basePrefix)}
       params={params}
       user={user}
       onLogout={onLogout}
       device={device}
       preview={false}
-      entryName={entry.entry?.name ?? null}
+      entryName={app.name}
+      basePrefix={basePrefix}
     />
   );
 }
@@ -3372,8 +3505,10 @@ function AppView({
   device,
   preview,
   entryName,
+  basePrefix = "",
+  aggregateApps,
 }: {
-  /** 入口装配的应用（顺序即入口 app_ids 顺序，首个为主应用）；预览模式为单元素数组 */
+  /** 装配的应用（顺序敏感，首个为主应用）；站点模型下作用域单应用为单元素数组，预览模式同 */
   apps: AppInfo[];
   inPath: string;
   params: Record<string, string>;
@@ -3384,6 +3519,10 @@ function AppView({
   preview: boolean;
   /** 入口名（侧栏副标题）；预览模式传 null 并显示「预览」 */
   entryName: string | null;
+  /** 站点路径前缀（路径作用域时为 /<应用段>）：站内链接统一拼回；inPath 已由调用方剥除 */
+  basePrefix?: string;
+  /** 跨应用聚合集（待办计数等专用聚合面用）：缺省与装配集相同 */
+  aggregateApps?: AppInfo[];
 }) {
   const primaryAppId = apps[0]?.id ?? "";
   const appIdsKey = apps.map((a) => a.id).join(",");
@@ -3440,10 +3579,14 @@ function AppView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appIdsKey]);
 
-  /** 待办数刷新：逐应用拉取后求和，单个应用失败按 0 计（角标仅作提示） */
+  /** 待办数刷新：逐聚合集应用拉取后求和，单个应用失败按 0 计（角标仅作提示）。
+   * 聚合集与装配集分离（第 68 步）：单应用作用域下待办仍跨全站应用聚合，
+   * 与「作用域由页面归属决定」不冲突——待办中心是专用聚合面。 */
+  const todoApps = aggregateApps ?? apps;
+  const todoAppsKey = todoApps.map((a) => a.id).join(",");
   const refreshTodoCount = useCallback(async () => {
     const counts = await Promise.all(
-      apps.map((a) =>
+      todoApps.map((a) =>
         api.flow
           .todos(a.id)
           .then((tasks) => tasks.length)
@@ -3452,7 +3595,7 @@ function AppView({
     );
     setTodoCount(counts.reduce((sum, n) => sum + n, 0));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdsKey]);
+  }, [todoAppsKey]);
   useEffect(() => {
     void refreshTodoCount();
   }, [refreshTodoCount]);
@@ -3468,10 +3611,12 @@ function AppView({
     () =>
       (to: string) => {
         navigateTo(
-          preview ? `/app/${encodeURIComponent(primaryAppId)}${to}` : to,
+          preview
+            ? `/app/${encodeURIComponent(primaryAppId)}${to}`
+            : `${basePrefix}${to}`,
         );
       },
-    [primaryAppId, preview],
+    [primaryAppId, preview, basePrefix],
   );
 
   const union = useMemo(
@@ -3505,7 +3650,7 @@ function AppView({
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
         <Button
           onClick={() => {
-            navigateTo("/");
+            navigateTo(preview ? "/" : basePrefix || "/");
           }}
         >
           返回入口首页

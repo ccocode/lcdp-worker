@@ -22,8 +22,11 @@
  *      与 api 侧 staticgen 同规则），命中回快照 HTML（x-lcdp-static: hit）；
  *      未命中一律回落 SPA。
  *
- * 入口配置（siteMode + theme）经网关读 /public/entry?host=，用 Cache API
+ * 入口配置（siteMode + theme）经网关读 /public/entry?host=&seg=，用 Cache API
  * 缓存 60 秒；任何异常一律 fail-open 透传——宁可不分发，不可打挂站点。
+ * seg = URL 首段（第 68 步站点模型）：默认域名下首段定位应用（路径作用域应用
+ * 的 siteMode/theme 与主应用不同），配置按 (host, seg) 分开缓存；绑定域名与
+ * 主应用根路径下 seg 不影响解析结果（服务端回落主应用/绑定应用）。
  * 两层都只覆盖 GET/HEAD；其余方法原样透传，method、headers、query 不改写。
  * 未绑主题的入口在本文件的响应与旧版逐字节一致（主题层整体跳过）。
  *
@@ -179,12 +182,12 @@ function cachedSlotTheme(raw) {
  * themeSlots = { desktop, mobile }，每槽为已解析的绑定上下文或 null；
  * 缓存信封只认新形状，旧单 theme 信封按「未绑定」读（siteMode 仍沿用）。
  */
-async function loadEntryConfig(host, ctx, env) {
+async function loadEntryConfig(host, seg, ctx, env) {
   const fallback = { siteMode: "dynamic", themeSlots: { desktop: null, mobile: null } };
   try {
     const cache = caches.default;
     const cacheKey = new Request(
-      `${CONFIG_CACHE_URL}?host=${encodeURIComponent(host)}`,
+      `${CONFIG_CACHE_URL}?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(seg ?? "")}`,
     );
     const hit = await cache.match(cacheKey);
     if (hit) {
@@ -211,7 +214,7 @@ async function loadEntryConfig(host, ctx, env) {
     let themeSlots = { desktop: null, mobile: null };
     try {
       const res = await fetch(
-        `${API_BASE}/public/entry?host=${encodeURIComponent(host)}`,
+        `${API_BASE}/public/entry?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(seg ?? "")}`,
         { headers: { accept: "application/json" } },
       );
       if (res.ok) {
@@ -452,7 +455,15 @@ async function dispatch(request, env, ctx) {
     const special =
       url.pathname === "/sitemap.xml" || url.pathname === "/robots.txt";
     if ((method === "GET" || method === "HEAD") && env.STATIC_R2) {
-      const entryCfg = await loadEntryConfig(url.host, ctx, env);
+      // 站点模型：首段路径定位作用域应用，配置随作用域而变（68.2）
+      const rawSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
+      let seg = rawSeg;
+      try {
+        seg = decodeURIComponent(rawSeg);
+      } catch {
+        seg = rawSeg;
+      }
+      const entryCfg = await loadEntryConfig(url.host, seg, ctx, env);
       // 1. 主题层（M14 线二 + 第⑤步双槽）：按槽尝试，未命中/异常落回下一层
       const slots = entryCfg.themeSlots;
       if (slots.desktop || slots.mobile) {
