@@ -67,6 +67,7 @@ import type {
   WorkflowEdge,
 } from "./workflowModel.js";
 import "@xyflow/react/dist/style.css";
+import { tokens } from "@lcdp/ui";
 import "./workflow.css";
 
 /**
@@ -105,10 +106,10 @@ const TYPE_META: Record<
   { tag: string; text: string; border: string }
 > = {
   start: { tag: "cyan", text: "开始", border: "#13c2c2" },
-  approval: { tag: "blue", text: "审批", border: "#1677ff" },
+  approval: { tag: "blue", text: "审批", border: tokens.colorPrimary },
   condition: { tag: "orange", text: "条件", border: "#fa8c16" },
-  task: { tag: "green", text: "自动动作", border: "#52c41a" },
-  end: { tag: "default", text: "结束", border: "#8c8c8c" },
+  task: { tag: "green", text: "自动动作", border: tokens.colorSuccess },
+  end: { tag: "default", text: "结束", border: tokens.colorTextTertiary },
 };
 
 function FlowNodeCard({ data, selected }: NodeProps<WFNode>) {
@@ -118,7 +119,7 @@ function FlowNodeCard({ data, selected }: NodeProps<WFNode>) {
     <div
       className="wf-node"
       style={{
-        borderColor: selected ? "#1677ff" : meta.border,
+        borderColor: selected ? tokens.colorPrimary : meta.border,
         boxShadow: selected
           ? "0 0 0 3px rgba(22,119,255,0.25), 0 2px 8px rgba(0,0,0,0.12)"
           : undefined,
@@ -316,10 +317,10 @@ export default function WorkflowDesigner({
       const cond = nodeById(wf, e.from)?.type === "condition";
       const color =
         e.label === "true"
-          ? "#389e0d"
+          ? tokens.colorSuccessStrong
           : e.label === "false"
-            ? "#cf1322"
-            : "#8c8c8c";
+            ? tokens.colorDanger
+            : tokens.colorTextTertiary;
       return {
         id: e.id,
         source: e.from,
@@ -328,7 +329,7 @@ export default function WorkflowDesigner({
         selected: e.id === selRef.current.edge,
         style: { stroke: color, strokeWidth: cond ? 1.6 : 1.2 },
         labelStyle: { fill: color, fontWeight: 700, fontSize: 12 },
-        labelBgStyle: { fill: "#ffffff", fillOpacity: 0.9 },
+        labelBgStyle: { fill: tokens.colorBgContainer, fillOpacity: 0.9 },
         labelBgPadding: [5, 2] as [number, number],
         labelBgBorderRadius: 3,
       };
@@ -1220,11 +1221,11 @@ export default function WorkflowDesigner({
       <div
         style={{
           width: 250,
-          borderRight: "1px solid #f0f0f0",
+          borderRight: `1px solid ${tokens.colorBorder}`,
           padding: 12,
           overflowY: "auto",
           flexShrink: 0,
-          background: "#fff",
+          background: tokens.colorBgContainer,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
@@ -1245,18 +1246,18 @@ export default function WorkflowDesigner({
                   cursor: "pointer",
                   padding: "8px 10px",
                   borderRadius: 6,
-                  background: selected?.id === w.id ? "#e6f4ff" : undefined,
+                  background: selected?.id === w.id ? tokens.colorPrimaryBg : undefined,
                 }}
               >
                 <div>
                   <div style={{ fontWeight: 600 }}>{w.name}</div>
-                  <div style={{ color: "#9ca3af", fontSize: 12 }}>
+                  <div style={{ color: tokens.colorTextTertiary, fontSize: 12 }}>
                     {entityOf(w.entity)?.label ?? w.entity}（{w.entity}）·{" "}
                     {w.nodes.length} 个节点 · 状态字段{" "}
                     {w.statusField ?? "status"}
                   </div>
                   {wIssues.length > 0 && (
-                    <div style={{ color: "#cf1322", fontSize: 12 }}>
+                    <div style={{ color: tokens.colorDanger, fontSize: 12 }}>
                       {wIssues.length} 个校验问题
                     </div>
                   )}
@@ -1343,7 +1344,7 @@ export default function WorkflowDesigner({
           flexDirection: "column",
           padding: 12,
           minWidth: 0,
-          background: "#fff",
+          background: tokens.colorBgContainer,
         }}
       >
         {!selected ? (
@@ -1420,7 +1421,7 @@ export default function WorkflowDesigner({
                 minZoom={0.2}
                 maxZoom={1.75}
               >
-                <Background gap={16} color="#e5e7eb" />
+                <Background gap={16} color={tokens.colorBorder} />
                 <Controls />
                 <MiniMap
                   pannable
@@ -1451,11 +1452,11 @@ export default function WorkflowDesigner({
         <div
           style={{
             width: 340,
-            borderLeft: "1px solid #f0f0f0",
+            borderLeft: `1px solid ${tokens.colorBorder}`,
             padding: 12,
             overflowY: "auto",
             flexShrink: 0,
-            background: "#fff",
+            background: tokens.colorBgContainer,
           }}
         >
           {selectedIssues.length > 0 && (

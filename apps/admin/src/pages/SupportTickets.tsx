@@ -1,3 +1,4 @@
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
@@ -26,6 +27,7 @@ import {
 } from "../api";
 import { asText, fmtTime } from "../helpers";
 import { consumeTicketQueueIntent } from "../templates/ticketQueueIntent";
+import { tokens } from "@lcdp/ui";
 
 /**
  * 工单工作台（第 58 步专做，客服领域模版）：状态队列 + 行内受理/流转 +
@@ -324,7 +326,7 @@ export default function SupportTickets({
                   <div
                     key={m.id}
                     style={{
-                      border: "1px solid #eef0f3",
+                      border: `1px solid ${tokens.colorDivider}`,
                       borderRadius: 6,
                       padding: "8px 12px",
                       background: m.role === "visitor" ? "#f8f9fb" : undefined,

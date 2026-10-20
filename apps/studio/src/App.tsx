@@ -39,6 +39,7 @@ import Permissions from "./Permissions.js";
 import WorkflowDesigner from "./WorkflowDesigner.js";
 import Copilot from "./Copilot.js";
 import AgentsTab from "./AgentsTab.js";
+import { desktopTheme, tokens } from "@lcdp/ui";
 
 /**
  * 设计台（M3 起，M4 增权限页签，M5 增流程页签）：数据模型设计器 + 页面设计器 + 流程设计器 + 权限 + 应用设置 + 发布/版本/回滚。
@@ -80,7 +81,7 @@ export default function App() {
   };
 
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={zhCN} theme={desktopTheme}>
       {!user ? (
         <LoginView onLoggedIn={setUser} />
       ) : designing ? (
@@ -121,7 +122,7 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f5f5",
+        background: tokens.colorBgLayout,
       }}
     >
       <Card style={{ width: 360 }}>
@@ -593,11 +594,11 @@ function Designer({
       <div
         style={{
           width: 230,
-          borderRight: "1px solid #f0f0f0",
+          borderRight: `1px solid ${tokens.colorBorder}`,
           padding: 12,
           overflowY: "auto",
           flexShrink: 0,
-          background: "#fff",
+          background: tokens.colorBgContainer,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
@@ -636,12 +637,12 @@ function Designer({
                 cursor: "pointer",
                 padding: "8px 10px",
                 borderRadius: 6,
-                background: e.key === selectedKey ? "#e6f4ff" : undefined,
+                background: e.key === selectedKey ? tokens.colorPrimaryBg : undefined,
               }}
             >
               <div>
                 <div style={{ fontWeight: 600 }}>{e.label}</div>
-                <div style={{ color: "#9ca3af", fontSize: 12 }}>
+                <div style={{ color: tokens.colorTextTertiary, fontSize: 12 }}>
                   {e.key} · {e.fields.length} 字段
                   {e.parentField ? " · 子表" : ""}
                 </div>
@@ -653,7 +654,7 @@ function Designer({
           发布只做增量迁移：新实体建表、新字段加列，不删表不删列；回滚换回旧 Schema 即可，数据不丢。
         </Typography.Paragraph>
       </div>
-      <div style={{ flex: 1, padding: 20, overflowY: "auto", background: "#fff", minWidth: 0 }}>
+      <div style={{ flex: 1, padding: 20, overflowY: "auto", background: tokens.colorBgContainer, minWidth: 0 }}>
         {entity ? (
           <>
             <Space size={16} wrap style={{ marginBottom: 8 }}>
@@ -897,7 +898,7 @@ function Designer({
       b.appConfig = next;
     });
   const colorPrimary =
-    typeof theme.colorPrimary === "string" ? theme.colorPrimary : "#1677ff";
+    typeof theme.colorPrimary === "string" ? theme.colorPrimary : tokens.colorPrimary;
 
   const settingsTab = (
     <div style={{ padding: 20, maxWidth: 720 }}>
@@ -1116,8 +1117,8 @@ function Designer({
     <Layout style={{ minHeight: "100vh" }}>
       <Layout.Header
         style={{
-          background: "#fff",
-          borderBottom: "1px solid #f0f0f0",
+          background: tokens.colorBgContainer,
+          borderBottom: `1px solid ${tokens.colorBorder}`,
           display: "flex",
           alignItems: "center",
           gap: 12,
@@ -1208,7 +1209,7 @@ function Designer({
             key: "workflow",
             label: "流程",
             children: (
-              <div style={{ height: "calc(100vh - 64px - 46px)", overflowY: "auto", background: "#fff" }}>
+              <div style={{ height: "calc(100vh - 64px - 46px)", overflowY: "auto", background: tokens.colorBgContainer }}>
                 <WorkflowDesigner
                   appId={appId}
                   data={working.schema}
@@ -1224,7 +1225,7 @@ function Designer({
             key: "permissions",
             label: "权限",
             children: (
-              <div style={{ height: "calc(100vh - 64px - 46px)", overflowY: "auto", background: "#fff" }}>
+              <div style={{ height: "calc(100vh - 64px - 46px)", overflowY: "auto", background: tokens.colorBgContainer }}>
                 <Permissions
                   appId={appId}
                   data={working.schema}
@@ -1239,7 +1240,7 @@ function Designer({
             key: "agents",
             label: "智能体",
             children: (
-              <div style={{ height: "calc(100vh - 64px - 46px)", overflowY: "auto", background: "#fff" }}>
+              <div style={{ height: "calc(100vh - 64px - 46px)", overflowY: "auto", background: tokens.colorBgContainer }}>
                 <AgentsTab
                   agents={normalizeAgents(working.agents)}
                   onChange={(next) => updateBundle((b) => (b.agents = next))}

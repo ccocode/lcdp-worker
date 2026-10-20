@@ -1,3 +1,4 @@
-// 共享 UI 组件（Ant Design + Tailwind 之上的平台组件）后续在此沉淀：
-// 确认卡（Agent 写操作确认）、Diff 查看器、Schema 表单控件等。
-export {};
+// @lcdp/ui：B 端设计基线共享包（第 73 步启用）。
+// 当前内容：设计令牌单一事实源（tokens.ts）。共享组件（分页表格壳 / 状态标签 /
+// 三态等）由第 73 步片二在此沉淀。
+export * from "./tokens.js";

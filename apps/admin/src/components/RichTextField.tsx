@@ -4,6 +4,7 @@ import { Editor, Toolbar } from "@wangeditor/editor-for-react";
 import type { IDomEditor, IEditorConfig } from "@wangeditor/editor";
 import "@wangeditor/editor/dist/css/style.css";
 import { API_BASE, api } from "../api";
+import { tokens } from "@lcdp/ui";
 
 /**
  * 管理台富文本编辑控件（第 58 步，与运行态 renderer 的 RichTextInput 同款
@@ -86,7 +87,7 @@ export default function RichTextField({
   return (
     <div
       style={{
-        border: "1px solid #d9d9d9",
+        border: `1px solid ${tokens.colorBorderControl}`,
         borderRadius: 6,
         width: "100%",
         // 工具栏弹层需压过 antd 常规层级（与基线令牌同口径）
@@ -97,7 +98,7 @@ export default function RichTextField({
       <Toolbar
         editor={editor}
         mode="default"
-        style={{ borderBottom: "1px solid #e8e8e8" }}
+        style={{ borderBottom: `1px solid ${tokens.colorBorder}` }}
       />
       <Editor
         defaultConfig={editorConfig}

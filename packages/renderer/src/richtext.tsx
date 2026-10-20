@@ -4,6 +4,7 @@ import { Editor, Toolbar } from "@wangeditor/editor-for-react";
 import type { IDomEditor, IEditorConfig } from "@wangeditor/editor";
 import "@wangeditor/editor/dist/css/style.css";
 import type { RuntimeAdapter } from "./adapter.js";
+import { tokens } from "@lcdp/ui";
 
 /**
  * 富文本（M10）三件套：净化、纯文本摘要、呈现视图与编辑控件。
@@ -47,7 +48,7 @@ function ensureRichTextCss() {
     ".lcdp-richtext img{max-width:100%;height:auto}",
     ".lcdp-richtext p{margin:0 0 8px}",
     ".lcdp-richtext table{border-collapse:collapse}",
-    ".lcdp-richtext td,.lcdp-richtext th{border:1px solid #d9d9d9;padding:4px 8px}",
+    `.lcdp-richtext td,.lcdp-richtext th{border:1px solid ${tokens.colorBorderControl};padding:4px 8px}`,
   ].join("");
   document.head.appendChild(el);
 }
@@ -148,7 +149,7 @@ export function RichTextInput({
   return (
     <div
       style={{
-        border: "1px solid #d9d9d9",
+        border: `1px solid ${tokens.colorBorderControl}`,
         borderRadius: 6,
         width: "100%",
         // 工具栏弹层需压过 antd 常规层级
@@ -158,7 +159,7 @@ export function RichTextInput({
       <Toolbar
         editor={editor}
         mode="default"
-        style={{ borderBottom: "1px solid #e8e8e8" }}
+        style={{ borderBottom: `1px solid ${tokens.colorBorder}` }}
       />
       <Editor
         defaultConfig={editorConfig}

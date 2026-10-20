@@ -24,6 +24,7 @@ import {
 import type { PageKey } from "../registry";
 import { asText, fmtTime } from "../helpers";
 import RichTextField from "../components/RichTextField";
+import { tokens } from "@lcdp/ui";
 import { consumeArticleEditorIntent } from "../templates/articleEditorIntent";
 
 /**
@@ -357,7 +358,7 @@ export default function ArticleEditor({
                 <img
                   src={assetOpenUrl(`/assets/${coverId}/content`)}
                   alt="封面预览"
-                  style={{ maxWidth: 260, borderRadius: 6, border: "1px solid #e4e7ec" }}
+                  style={{ maxWidth: 260, borderRadius: 6, border: `1px solid ${tokens.colorBorder}` }}
                 />
               )}
               <Space>

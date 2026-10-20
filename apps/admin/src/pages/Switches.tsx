@@ -1,3 +1,4 @@
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
@@ -14,6 +15,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
+import { tokens } from "@lcdp/ui";
 import { asText, fmtTime } from "../helpers";
 
 const POOLS = [
@@ -306,7 +308,7 @@ export default function Switches() {
             </Space>
           </div>
         </Space>
-        <div style={{ marginTop: 16, color: "#555" }}>
+        <div style={{ marginTop: 16, color: tokens.colorTextSecondary }}>
           全局默认上限：{globalBudget}；该租户当前覆写：{tenantOverride}；该租户今日已用：
           {todayTokens === null ? "—" : `${todayTokens} tokens`}。超限后新的 AI
           调用将被拒绝（quota_exceeded）并写入审计。

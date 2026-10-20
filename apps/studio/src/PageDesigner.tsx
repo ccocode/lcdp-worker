@@ -31,6 +31,7 @@ import type {
 } from "@naka1205/schema";
 import type { FragmentDef } from "./api.js";
 import { makePreviewAdapter } from "./api.js";
+import { tokens } from "@lcdp/ui";
 import "./designer.css";
 
 /**
@@ -562,15 +563,15 @@ export default function PageDesigner({
       };
     }
     if (pos === "inside") {
-      el.style.outline = "2px solid #1677ff";
+      el.style.outline = `2px solid ${tokens.colorPrimary}`;
       el.style.boxShadow = "inset 0 0 0 2px rgba(22,119,255,0.35)";
     } else if (axis === "x") {
       el.style.boxShadow =
-        pos === "before" ? "inset 3px 0 0 0 #1677ff" : "inset -3px 0 0 0 #1677ff";
+        pos === "before" ? `inset 3px 0 0 0 ${tokens.colorPrimary}` : `inset -3px 0 0 0 ${tokens.colorPrimary}`;
     } else if (pos === "before") {
-      el.style.boxShadow = "inset 0 3px 0 0 #1677ff";
+      el.style.boxShadow = `inset 0 3px 0 0 ${tokens.colorPrimary}`;
     } else {
-      el.style.boxShadow = "inset 0 -3px 0 0 #1677ff";
+      el.style.boxShadow = `inset 0 -3px 0 0 ${tokens.colorPrimary}`;
     }
   };
 
@@ -680,7 +681,7 @@ export default function PageDesigner({
         ghost.textContent = drag.source.label;
         ghost.style.cssText =
           "position:fixed;z-index:9999;pointer-events:none;padding:4px 12px;" +
-          "background:#1677ff;color:#fff;border-radius:6px;font-size:12px;opacity:0.92;" +
+          `background:${tokens.colorPrimary};color:#fff;border-radius:6px;font-size:12px;opacity:0.92;` +
           "transform:translate(-50%,-140%);box-shadow:0 4px 14px rgba(0,0,0,0.25)";
         document.body.appendChild(ghost);
         ghostRef.current = ghost;
@@ -1898,12 +1899,12 @@ export default function PageDesigner({
         <div
           style={{
             width: 224,
-            borderRight: "1px solid #f0f0f0",
+            borderRight: `1px solid ${tokens.colorBorder}`,
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
             flexShrink: 0,
-            background: "#fff",
+            background: tokens.colorBgContainer,
             userSelect: "none",
             WebkitUserSelect: "none",
           }}
@@ -1938,13 +1939,13 @@ export default function PageDesigner({
                             clickInsert(() => insertCatalogItem(item))
                           }
                           style={{
-                            border: "1px solid #e5e7eb",
+                            border: `1px solid ${tokens.colorBorder}`,
                             borderRadius: 8,
                             padding: "7px 9px",
                             cursor: "grab",
                             userSelect: "none",
                             touchAction: "none",
-                            background: "#fff",
+                            background: tokens.colorBgContainer,
                           }}
                         >
                           <div style={{ fontWeight: 600, fontSize: 13 }}>
@@ -1952,7 +1953,7 @@ export default function PageDesigner({
                           </div>
                           <div
                             style={{
-                              color: "#9ca3af",
+                              color: tokens.colorTextTertiary,
                               fontSize: 11,
                               lineHeight: 1.4,
                             }}
@@ -1978,20 +1979,20 @@ export default function PageDesigner({
                         }
                         onClick={() => clickInsert(() => insertFragment(frag))}
                         style={{
-                          border: "1px solid #e5e7eb",
+                          border: `1px solid ${tokens.colorBorder}`,
                           borderRadius: 8,
                           padding: "7px 9px",
                           cursor: "grab",
                           userSelect: "none",
                           touchAction: "none",
-                          background: "#fff",
+                          background: tokens.colorBgContainer,
                           marginBottom: 6,
                         }}
                       >
                         <div style={{ fontWeight: 600, fontSize: 13 }}>
                           {frag.name}
                         </div>
-                        <div style={{ color: "#9ca3af", fontSize: 11 }}>
+                        <div style={{ color: tokens.colorTextTertiary, fontSize: 11 }}>
                           拖拽到画布，或点击插入（生成新节点 id）
                         </div>
                       </div>
@@ -2018,7 +2019,7 @@ export default function PageDesigner({
             display: "flex",
             flexDirection: "column",
             minWidth: 0,
-            background: "#fafafa",
+            background: tokens.colorBgLayout,
           }}
         >
           <div
@@ -2027,8 +2028,8 @@ export default function PageDesigner({
               alignItems: "center",
               gap: 10,
               padding: "10px 14px",
-              borderBottom: "1px solid #f0f0f0",
-              background: "#fff",
+              borderBottom: `1px solid ${tokens.colorBorder}`,
+              background: tokens.colorBgContainer,
               flexWrap: "wrap",
             }}
           >
@@ -2100,10 +2101,10 @@ export default function PageDesigner({
             <div
               style={{
                 padding: "6px 14px",
-                background: "#fffbe6",
-                borderBottom: "1px solid #f0f0f0",
+                background: tokens.colorWarningBg,
+                borderBottom: `1px solid ${tokens.colorBorder}`,
                 fontSize: 12,
-                color: "#8c8c8c",
+                color: tokens.colorTextTertiary,
               }}
             >
               未设计（自动派生）：
@@ -2128,15 +2129,15 @@ export default function PageDesigner({
                     ? {
                         width: 390,
                         margin: "0 auto",
-                        border: "1px solid #d9d9d9",
+                        border: `1px solid ${tokens.colorBorderControl}`,
                         borderRadius: 28,
                         padding: 12,
-                        background: "#fff",
+                        background: tokens.colorBgContainer,
                         minHeight: 620,
                         boxShadow: "0 4px 18px rgba(0,0,0,0.08)",
                       }
                     : {
-                        background: "#fff",
+                        background: tokens.colorBgContainer,
                         borderRadius: 8,
                         padding: 16,
                         minHeight: 480,
@@ -2173,12 +2174,12 @@ export default function PageDesigner({
         <div
           style={{
             width: 324,
-            borderLeft: "1px solid #f0f0f0",
+            borderLeft: `1px solid ${tokens.colorBorder}`,
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
             flexShrink: 0,
-            background: "#fff",
+            background: tokens.colorBgContainer,
           }}
         >
           <Tabs

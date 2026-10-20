@@ -15,6 +15,7 @@ import {
 } from "antd";
 import type { Proposal, ProposalChange, ProposalStatus } from "./api.js";
 import { api } from "./api.js";
+import { tokens } from "@lcdp/ui";
 
 /**
  * 设计态 AI Copilot 抽屉（M6）：一句话需求 → 七步生成链路 → 提案 Diff 逐项勾选 → 应用到草稿。
@@ -479,7 +480,7 @@ export default function Copilot({
             style={{
               cursor: "pointer",
               background:
-                current?.id === item.id ? "#f0f5ff" : undefined,
+                current?.id === item.id ? tokens.colorPrimaryBg : undefined,
               padding: "8px 6px",
               borderRadius: 6,
             }}

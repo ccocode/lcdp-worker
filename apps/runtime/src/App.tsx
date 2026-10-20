@@ -22,6 +22,7 @@ import {
 import type { MenuProps } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { SchemaRenderer, cartStore } from "@lcdp/renderer";
+import { desktopTheme, mobileNavOffset, tokens } from "@lcdp/ui";
 import QRCode from "qrcode";
 import type { EntityAccess } from "@lcdp/renderer";
 import type { DataSchema, PageSchema } from "@naka1205/schema";
@@ -230,7 +231,7 @@ export default function App() {
   const previewInPath = match?.[2] ?? "/";
 
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={zhCN} theme={desktopTheme}>
       {!user ? (
         <AnonGate
           route={route}
@@ -1374,7 +1375,7 @@ function MobileShell({
     const root = document.documentElement;
     root.style.setProperty(
       "--lcdp-nav-offset",
-      "calc(56px + env(safe-area-inset-bottom, 0px))",
+      mobileNavOffset,
     );
     return () => {
       root.style.removeProperty("--lcdp-nav-offset");
@@ -3455,12 +3456,17 @@ function themeTokenOf(appConfig: {
   colorBorder?: string;
 } {
   const themeCfg = appConfig?.theme ?? {};
-  // B 端视觉基线默认值（第 49 步）：应用主题未声明时按基线令牌走，声明了以应用为准
+  // B 端视觉基线默认值（第 49 步立、现由 @lcdp/ui 令牌源统一供值，第 73 步）：
+  // 应用主题未声明时按基线令牌走，声明了以应用为准
   const token: {
     colorPrimary?: string;
     borderRadius?: number;
     colorBorder?: string;
-  } = { colorPrimary: "#1677ff", borderRadius: 6, colorBorder: "#e4e7ec" };
+  } = {
+    colorPrimary: tokens.colorPrimary,
+    borderRadius: tokens.borderRadius,
+    colorBorder: tokens.colorBorder,
+  };
   if (typeof themeCfg.colorPrimary === "string") {
     token.colorPrimary = themeCfg.colorPrimary;
   }
@@ -3888,9 +3894,15 @@ function AppView({
     <ConfigProvider
       locale={zhCN}
       theme={{
+        // 员工壳主题自成一套（应用覆盖在此生效）：不继承根 Provider 的桌面
+        // 基线全量组件令牌，保持第 73 步片一前该面的渲染口径逐值不变。
+        inherit: false,
         token,
         components: {
-          Menu: { groupTitleColor: "#8a94a6", itemBorderRadius: 6 },
+          Menu: {
+            groupTitleColor: tokens.colorTextTertiary,
+            itemBorderRadius: tokens.borderRadius,
+          },
         },
       }}
     >

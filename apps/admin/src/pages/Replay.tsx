@@ -16,6 +16,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
 import { JsonBlock, Mono, asText, fmtTime } from "../helpers";
+import { tokens } from "@lcdp/ui";
 
 type Kind = "conversations" | "proposals" | "flows";
 
@@ -30,8 +31,8 @@ function ToolCallCard({ call }: { call: Row }) {
       <Typography.Text type="secondary">放行依据（basis 原文）</Typography.Text>
       <div
         style={{
-          background: "#fffbe6",
-          border: "1px solid #ffe58f",
+          background: tokens.colorWarningBg,
+          border: `1px solid ${tokens.colorWarningBorder}`,
           borderRadius: 4,
           padding: "6px 8px",
           fontSize: 12,

@@ -14,6 +14,7 @@ import {
   message,
 } from "antd";
 import { LogoutOutlined, SafetyOutlined } from "@ant-design/icons";
+import { tokens } from "@lcdp/ui";
 import {
   api,
   consumeExpiredFlag,
@@ -102,7 +103,7 @@ function Login({ onLogin }: { onLogin: (u: UserInfo) => void }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f6f8",
+        background: tokens.colorBgLayout,
         padding: 24,
       }}
     >
@@ -388,7 +389,7 @@ export default function AppShell() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sider theme="light" width={208} style={{ borderRight: "1px solid #e4e7ec" }}>
+      <Sider theme="light" width={208} style={{ borderRight: `1px solid ${tokens.colorBorder}` }}>
         <div style={{ padding: "16px 16px 8px", fontWeight: 600, fontSize: 16 }}>
           LCDP 管理台
         </div>
@@ -402,8 +403,8 @@ export default function AppShell() {
       <Layout>
         <Header
           style={{
-            background: "#fff",
-            borderBottom: "1px solid #e4e7ec",
+            background: tokens.colorBgContainer,
+            borderBottom: `1px solid ${tokens.colorBorder}`,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -439,7 +440,7 @@ export default function AppShell() {
             </Button>
           </Space>
         </Header>
-        <Content style={{ padding: 24, background: "#f5f6f8" }}>
+        <Content style={{ padding: 24, background: tokens.colorBgLayout }}>
           {effectiveDef.needsMeta ? appPageShell(pageNode) : pageNode}
         </Content>
       </Layout>

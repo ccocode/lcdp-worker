@@ -16,6 +16,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row, type UserInfo } from "../api";
 import { asText, fmtTime } from "../helpers";
+import { tokens } from "@lcdp/ui";
 
 /** 常见角色（服务端接受任意非空字符串，下拉外也可手填） */
 const ROLE_OPTIONS = [
@@ -330,7 +331,7 @@ export default function Users({ currentUser }: { currentUser: UserInfo }) {
         cancelText="取消"
         confirmLoading={grantsBusy}
       >
-        <p style={{ color: "#888", marginTop: 0 }}>
+        <p style={{ color: tokens.colorTextTertiary, marginTop: 0 }}>
           勾选的应用将授权该用户以运营者身份登录管理台进行运营
           （会员管理、提交审核、静态重建；持客服应用授权者另含知识库）。
           平台治理与应用设计仍仅限管理员。
@@ -345,7 +346,7 @@ export default function Users({ currentUser }: { currentUser: UserInfo }) {
           }))}
         />
         {allApps.length === 0 ? (
-          <p style={{ color: "#888" }}>当前租户暂无应用</p>
+          <p style={{ color: tokens.colorTextTertiary }}>当前租户暂无应用</p>
         ) : null}
       </Modal>
     </Card>

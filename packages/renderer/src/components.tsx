@@ -19,6 +19,7 @@ import type {
   PageSchema,
 } from "@naka1205/schema";
 import { PRESENTATION_VARIANTS, resolveMobileTheme } from "@naka1205/schema";
+import { mobileDensity, mobileVars, tokens } from "@lcdp/ui";
 import {
   Alert,
   Button,
@@ -768,8 +769,8 @@ export function DataTable({ node }: NodeProps) {
                 key={String(row.id)}
                 onClick={() => openRow(row)}
                 style={{
-                  background: "#fff",
-                  border: "1px solid #e4e7ec",
+                  background: tokens.colorBgContainer,
+                  border: `1px solid ${tokens.colorBorder}`,
                   borderRadius: 12,
                   padding: "var(--lcdp-card-pad, 12px)",
                   boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
@@ -823,7 +824,7 @@ export function DataTable({ node }: NodeProps) {
                   >
                     <span
                       style={{
-                        color: "#8c8c8c",
+                        color: tokens.colorTextTertiary,
                         width: 84,
                         flexShrink: 0,
                         fontSize: "calc(12px * var(--lcdp-font-scale, 1))",
@@ -870,7 +871,7 @@ export function DataTable({ node }: NodeProps) {
               marginTop: 4,
             }}
           >
-            <span style={{ color: "#8c8c8c", fontSize: 13 }}>
+            <span style={{ color: tokens.colorTextTertiary, fontSize: 13 }}>
               共 {total} 条
             </span>
             {rows.length < total && (
@@ -1095,8 +1096,8 @@ function ChildEditor({
             <div
               key={idx}
               style={{
-                background: "#fff",
-                border: "1px solid #e4e7ec",
+                background: tokens.colorBgContainer,
+                border: `1px solid ${tokens.colorBorder}`,
                 borderRadius: 12,
                 padding: "var(--lcdp-card-pad, 12px)",
                 boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
@@ -1107,7 +1108,7 @@ function ChildEditor({
                   <div
                     style={{
                       fontSize: 13,
-                      color: "#5f6b7a",
+                      color: tokens.colorTextSecondary,
                       fontWeight: 500,
                       marginBottom: 6,
                     }}
@@ -1575,7 +1576,7 @@ export function EntityForm({ node }: NodeProps) {
   };
   const singleLabelStyle: CSSProperties = {
     fontSize: 13,
-    color: "#5f6b7a",
+    color: tokens.colorTextSecondary,
     fontWeight: 500,
   };
   const singleControlStyle: CSSProperties = {
@@ -1593,8 +1594,8 @@ export function EntityForm({ node }: NodeProps) {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    background: "#fff",
-    border: "1px solid #e4e7ec",
+    background: tokens.colorBgContainer,
+    border: `1px solid ${tokens.colorBorder}`,
     borderRadius: 12,
     padding: 10,
     marginTop: 20,
@@ -1896,7 +1897,7 @@ function ChartSingleValue({ node }: NodeProps) {
         <div
           style={{
             ...styles.empty,
-            border: "1px dashed #d9d9d9",
+            border: `1px dashed ${tokens.colorBorderControl}`,
             borderRadius: 8,
           }}
         >
@@ -2748,10 +2749,10 @@ export function SupportTranscript({ node }: NodeProps) {
         </Typography.Paragraph>
         <div
           style={{
-            background: "#f5f5f5",
+            background: tokens.colorBgLayout,
             borderRadius: 8,
             padding: "8px 12px",
-            color: "#8c8c8c",
+            color: tokens.colorTextTertiary,
             fontSize: 13,
           }}
         >
@@ -2818,8 +2819,8 @@ export function SupportTranscript({ node }: NodeProps) {
         {data.summary ? (
           <div
             style={{
-              background: "#fffbe6",
-              border: "1px solid #ffe58f",
+              background: tokens.colorWarningBg,
+              border: `1px solid ${tokens.colorWarningBorder}`,
               borderRadius: 8,
               padding: "8px 12px",
               fontSize: 13,
@@ -2843,7 +2844,7 @@ export function SupportTranscript({ node }: NodeProps) {
                   key={m.id}
                   style={{
                     alignSelf: "center",
-                    color: "#8c8c8c",
+                    color: tokens.colorTextTertiary,
                     fontSize: 12,
                     textAlign: "center",
                   }}
@@ -2876,8 +2877,8 @@ export function SupportTranscript({ node }: NodeProps) {
               >
                 <div
                   style={{
-                    background: isVisitor ? "#1677ff" : "#f5f5f5",
-                    color: isVisitor ? "#fff" : "inherit",
+                    background: isVisitor ? tokens.colorPrimary : tokens.colorBgLayout,
+                    color: isVisitor ? tokens.colorBgContainer : "inherit",
                     borderRadius: 12,
                     padding: "8px 12px",
                     fontSize: 14,
@@ -3027,10 +3028,10 @@ export function CartView({ node }: NodeProps) {
         </Typography.Paragraph>
         <div
           style={{
-            background: "#f5f5f5",
+            background: tokens.colorBgLayout,
             borderRadius: 8,
             padding: "8px 12px",
-            color: "#8c8c8c",
+            color: tokens.colorTextTertiary,
             fontSize: 13,
           }}
         >
@@ -3260,7 +3261,7 @@ export function CartView({ node }: NodeProps) {
                 合计{" "}
                 <Typography.Text
                   strong
-                  style={{ fontSize: 18, color: "#cf1322" }}
+                  style={{ fontSize: 18, color: tokens.colorDanger }}
                 >
                   {money(total)}
                 </Typography.Text>
@@ -3345,7 +3346,7 @@ export function CartView({ node }: NodeProps) {
           >
             <Typography.Text>
               合计{" "}
-              <Typography.Text strong style={{ fontSize: 18, color: "#cf1322" }}>
+              <Typography.Text strong style={{ fontSize: 18, color: tokens.colorDanger }}>
                 {money(total)}
               </Typography.Text>
             </Typography.Text>
@@ -3469,7 +3470,7 @@ function NodeViewBody({
       }
       style={
         selected
-          ? { outline: "2px solid #1677ff", outlineOffset: 1 }
+          ? { outline: `2px solid ${tokens.colorPrimary}`, outlineOffset: 1 }
           : undefined
       }
     >
@@ -3545,13 +3546,13 @@ export function SchemaRenderer({
   // 映射为 CSS 变量供 card/single 呈现与按钮热区消费；桌面端不注入、DOM 与原实现一致
   if (device === "mobile") {
     const mt = resolveMobileTheme(theme ?? {});
-    const compact = mt.density === "compact";
+    const md = mt.density === "compact" ? mobileDensity.compact : mobileDensity.comfortable;
     const vars = {
-      "--lcdp-touch-min": `${mt.touchMinPx}px`,
-      "--lcdp-font-scale": String(mt.fontScale),
-      "--lcdp-control-h": compact ? "36px" : "40px",
-      "--lcdp-card-pad": compact ? "10px" : "12px",
-      "--lcdp-row-min-h": compact ? "48px" : "56px",
+      [mobileVars.touchMin]: `${mt.touchMinPx}px`,
+      [mobileVars.fontScale]: String(mt.fontScale),
+      [mobileVars.controlH]: md.controlH,
+      [mobileVars.cardPad]: md.cardPad,
+      [mobileVars.rowMinH]: md.rowMinH,
       fontSize: 14 * mt.fontScale,
     } as CSSProperties;
     return (
