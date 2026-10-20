@@ -16,9 +16,8 @@ export function unsupported<T>(reason: string): BridgeResult<T> {
   return { supported: false, reason };
 }
 
-export function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+/** errText 单一实现已收编 @lcdp/ui（第 73 步片二），此处转出保持既有导入路径 */
+export { errText } from "@lcdp/ui";
 
 /** 壳注入的 Capacitor 全局的最小结构（只声明桥实际用到的面，不引 @capacitor 依赖）。 */
 export interface CapacitorCameraPhoto {

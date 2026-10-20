@@ -13,11 +13,11 @@ import {
   Select,
   Space,
   Spin,
-  Table,
   Tag,
   Typography,
   message,
 } from "antd";
+import { PageTable, StatusTag, showError, type StatusTone } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
@@ -37,11 +37,11 @@ import { tokens } from "@lcdp/ui";
  */
 
 /** 状态徽标色：沿用呈现层默认色板口径（待*→amber、处理中→blue、已解决→green、已关闭→gray） */
-function statusColor(status: string): string {
-  if (status.startsWith("待")) return "gold";
+function statusTone(status: string): StatusTone {
+  if (status.startsWith("待")) return "amber";
   if (status === "处理中") return "blue";
   if (status === "已解决") return "green";
-  return "default";
+  return "gray";
 }
 
 /** 会话消息角色标注：visitor=访客、assistant=助手，其余原样 */
@@ -100,7 +100,7 @@ export default function SupportTickets({
       setRows(res.rows);
       setTotal(res.total);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载工单失败");
+      showError(err, "加载工单失败");
     } finally {
       setLoading(false);
     }
@@ -162,7 +162,7 @@ export default function SupportTickets({
           }
           void load();
         } catch (err) {
-          message.error(err instanceof Error ? err.message : `${verb}失败`);
+          showError(err, `${verb}失败`);
         }
       },
     });
@@ -187,7 +187,7 @@ export default function SupportTickets({
       }
       void load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "保存失败");
+      showError(err, "保存失败");
     } finally {
       setHandling(false);
     }
@@ -226,7 +226,13 @@ export default function SupportTickets({
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (v: unknown) => <Tag color={statusColor(asText(v))}>{asText(v)}</Tag>,
+      render: (v: unknown) => (
+        <StatusTag
+          raw={asText(v)}
+          text={asText(v)}
+          tone={statusTone(asText(v))}
+        />
+      ),
     },
     {
       title: "访客",
@@ -260,16 +266,15 @@ export default function SupportTickets({
             ...statusValues.map((v) => ({ label: v, value: v })),
           ]}
         />
-        <Table
+        <PageTable
           rowKey={(r) => String(r.id)}
           loading={loading}
           columns={columns}
           dataSource={rows}
-          pagination={{
+          serverPage={{
             current: page,
             pageSize,
             total,
-            showSizeChanger: true,
             onChange: (p, s) => {
               setPage(p);
               setPageSize(s);
@@ -289,9 +294,11 @@ export default function SupportTickets({
               {(ticketMeta?.fields ?? []).map((f) => (
                 <Descriptions.Item key={f.key} label={f.label}>
                   {f.key === "status" ? (
-                    <Tag color={statusColor(asText(detail[f.key]))}>
-                      {asText(detail[f.key])}
-                    </Tag>
+                    <StatusTag
+                      raw={asText(detail[f.key])}
+                      text={asText(detail[f.key])}
+                      tone={statusTone(asText(detail[f.key]))}
+                    />
                   ) : f.type === "datetime" || f.type === "date" ? (
                     fmtTime(detail[f.key])
                   ) : f.key === "description" ? (

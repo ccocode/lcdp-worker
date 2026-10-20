@@ -22,7 +22,14 @@ import {
 import type { MenuProps } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { SchemaRenderer, cartStore } from "@lcdp/renderer";
-import { desktopTheme, mobileNavOffset, tokens } from "@lcdp/ui";
+import {
+  EmptyState,
+  LoadingState,
+  desktopTheme,
+  fmtTime,
+  mobileNavOffset,
+  tokens,
+} from "@lcdp/ui";
 import QRCode from "qrcode";
 import type { EntityAccess } from "@lcdp/renderer";
 import type { DataSchema, PageSchema } from "@naka1205/schema";
@@ -1217,12 +1224,10 @@ function CenterConsentsPage() {
       )}
       {items === null ? (
         <div style={{ textAlign: "center", padding: "12px 0" }}>
-          <Spin />
+          <LoadingState tip="" />
         </div>
       ) : items.length === 0 ? (
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          暂无授权记录。访问应用并确认授权后，记录会出现在这里。
-        </Typography.Paragraph>
+        <EmptyState description="暂无授权记录。访问应用并确认授权后，记录会出现在这里。" />
       ) : (
         <Space direction="vertical" style={{ width: "100%" }} size={8}>
           {items.map((it) => (
@@ -1239,10 +1244,7 @@ function CenterConsentsPage() {
                   <Typography.Text strong>{it.appName}</Typography.Text>
                   <br />
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    授权于{" "}
-                    {it.grantedAt
-                      ? new Date(it.grantedAt).toLocaleString()
-                      : "—"}
+                    授权于 {fmtTime(it.grantedAt)}
                   </Typography.Text>
                 </div>
                 <Button

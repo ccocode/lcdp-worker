@@ -8,11 +8,11 @@ import {
   Radio,
   Select,
   Space,
-  Table,
   Tag,
   Typography,
   message,
 } from "antd";
+import { PageTable, showError } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import { api, type FlowTaskView, type Row, type UserInfo } from "../api";
 import { asText, fmtTime } from "../helpers";
@@ -65,7 +65,7 @@ export default function FlowTasks({
       setTasks(res.tasks);
       setServerTotal(res.total);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载待办失败");
+      showError(err, "加载待办失败");
     } finally {
       setLoading(false);
     }
@@ -96,7 +96,7 @@ export default function FlowTasks({
       setComment("");
       void load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "办理失败");
+      showError(err, "办理失败");
     } finally {
       setBusy(false);
     }
@@ -107,7 +107,7 @@ export default function FlowTasks({
       await api.flow.urge(appId, t.instanceId);
       message.success("已催办");
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "催办失败");
+      showError(err, "催办失败");
     }
   };
 
@@ -151,7 +151,7 @@ export default function FlowTasks({
       setStartWorkflow(s.workflow?.title ?? null);
       setStartRecords(s.records);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载可发起记录失败");
+      showError(err, "加载可发起记录失败");
       setStartWorkflow(null);
       setStartRecords([]);
     } finally {
@@ -172,7 +172,7 @@ export default function FlowTasks({
       void loadStartable();
       void load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "发起失败");
+      showError(err, "发起失败");
     } finally {
       setStartingId(null);
     }
@@ -307,12 +307,12 @@ export default function FlowTasks({
                 </Typography.Text>
               ))}
           </Space>
-          <Table
+          <PageTable
             rowKey="id"
             loading={startLoading}
             columns={startColumns}
             dataSource={startWorkflow ? startRecords : []}
-            pagination={{ pageSize: 20, showSizeChanger: true }}
+            clientPageSize={20}
             locale={{
               emptyText: (
                 <Empty
@@ -327,12 +327,12 @@ export default function FlowTasks({
           />
         </>
       ) : (
-      <Table
+      <PageTable
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={shown}
-        pagination={{ pageSize: 20, showSizeChanger: true }}
+        clientPageSize={20}
         locale={{
           emptyText: (
             <Empty

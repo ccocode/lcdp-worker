@@ -11,10 +11,10 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Typography,
   message,
 } from "antd";
+import { PageTable, showError } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
@@ -113,7 +113,7 @@ export default function DataAdmin({
       setRows(res.rows);
       setTotal(res.total);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载数据失败");
+      showError(err, "加载数据失败");
     } finally {
       setLoading(false);
     }
@@ -234,7 +234,7 @@ export default function DataAdmin({
             });
             return;
           }
-          message.error(err instanceof Error ? err.message : "删除失败");
+          showError(err, "删除失败");
         }
       },
     });
@@ -267,7 +267,7 @@ export default function DataAdmin({
         setPage(1);
         void load();
       } catch (err) {
-        message.error(err instanceof Error ? err.message : "新建失败");
+        showError(err, "新建失败");
       } finally {
         setSaving(false);
       }
@@ -303,7 +303,7 @@ export default function DataAdmin({
       setEditing(null);
       void load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "保存失败");
+      showError(err, "保存失败");
     } finally {
       setSaving(false);
     }
@@ -366,19 +366,18 @@ export default function DataAdmin({
           读 + 新建 + 编辑 + 删除（按你的数据权限呈现动作），全程审计；敏感字段以掩码呈现，未修改不会回写；被引用的记录不能删除。
         </Typography.Text>
       </Space>
-      <Table
+      <PageTable
         rowKey={(r) => String(r.id)}
         loading={loading}
         columns={columns}
         dataSource={rows}
-        pagination={{
+        serverPage={{
           current: page,
           pageSize,
           total,
-          showSizeChanger: true,
-          onChange: (p, s) => {
+          onChange: (p, ps) => {
             setPage(p);
-            setPageSize(s);
+            setPageSize(ps);
           },
         }}
       />

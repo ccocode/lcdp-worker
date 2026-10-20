@@ -19,7 +19,15 @@ import type {
   PageSchema,
 } from "@naka1205/schema";
 import { PRESENTATION_VARIANTS, resolveMobileTheme } from "@naka1205/schema";
-import { mobileDensity, mobileVars, tokens } from "@lcdp/ui";
+import {
+  EmptyState,
+  LoadingState,
+  errText,
+  fmtAmount,
+  mobileDensity,
+  mobileVars,
+  tokens,
+} from "@lcdp/ui";
 import {
   Alert,
   Button,
@@ -195,8 +203,8 @@ function StatusDisplay({
 const NETWORK_ERROR_PATTERN =
   /failed to fetch|networkerror|load failed|network request failed|fetch failed/i;
 
-function errText(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
+function friendlyErrText(err: unknown): string {
+  const msg = errText(err);
   if (err instanceof TypeError || NETWORK_ERROR_PATTERN.test(msg)) {
     return "网络请求失败，请稍后重试";
   }
@@ -526,7 +534,7 @@ export function DataTable({ node }: NodeProps) {
       setTotal(res.total);
     } catch (err) {
       appendRef.current = false;
-      setError(errText(err));
+      setError(friendlyErrText(err));
     } finally {
       setLoading(false);
     }
@@ -651,7 +659,7 @@ export function DataTable({ node }: NodeProps) {
           ctx.adapter.notify("已删除");
           void load();
         } catch (err) {
-          ctx.adapter.notify(errText(err), "error");
+          ctx.adapter.notify(friendlyErrText(err), "error");
           throw err;
         }
       },
@@ -760,9 +768,9 @@ export function DataTable({ node }: NodeProps) {
       {cardMode ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {labelsGate || (loading && rows.length === 0) ? (
-            <div style={styles.empty}>加载中…</div>
+            <LoadingState block />
           ) : rows.length === 0 ? (
-            <div style={styles.empty}>暂无数据</div>
+            <EmptyState />
           ) : (
             rows.map((row) => (
               <div
@@ -895,7 +903,7 @@ export function DataTable({ node }: NodeProps) {
         columns={tableColumns}
         dataSource={labelsGate ? [] : rows}
         loading={loading || labelsGate}
-        locale={{ emptyText: "暂无数据" }}
+        locale={{ emptyText: <EmptyState /> }}
         pagination={{
           current: pageIdx + 1,
           pageSize,
@@ -1090,7 +1098,7 @@ function ChildEditor({
         <div style={styles.sectionTitle}>{child.label}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {rows.length === 0 && (
-            <div style={styles.empty}>暂无{child.label}</div>
+            <EmptyState description={`暂无${child.label}`} />
           )}
           {rows.map((row, idx) => (
             <div
@@ -1253,7 +1261,7 @@ export function EntityForm({ node }: NodeProps) {
           setChildOriginal(co);
         }
       } catch (err) {
-        if (alive) setError(errText(err));
+        if (alive) setError(friendlyErrText(err));
       } finally {
         if (alive) setLoading(false);
       }
@@ -1371,7 +1379,7 @@ export function EntityForm({ node }: NodeProps) {
   }, [childRows, rollupActive, rollupField, sumChildren]);
 
   if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
-  if (loading) return <div style={styles.empty}>加载中…</div>;
+  if (loading) return <LoadingState block />;
 
   const save = async () => {
     setSaving(true);
@@ -1465,7 +1473,7 @@ export function EntityForm({ node }: NodeProps) {
               savedOriginals.push({ ...cp, id: created.id });
               childStateDirty = true;
             } catch (err) {
-              failures.push(`新增行保存失败：${errText(err)}`);
+              failures.push(`新增行保存失败：${friendlyErrText(err)}`);
               savedRows.push(row);
             }
             continue;
@@ -1503,7 +1511,7 @@ export function EntityForm({ node }: NodeProps) {
             savedOriginals.push({ ...cp, id: row.id });
             childStateDirty = true;
           } catch (err) {
-            failures.push(`有行保存失败：${errText(err)}`);
+            failures.push(`有行保存失败：${friendlyErrText(err)}`);
             savedRows.push(row);
             savedOriginals.push(orig);
           }
@@ -1520,7 +1528,7 @@ export function EntityForm({ node }: NodeProps) {
             await ctx.adapter.remove(child.key, String(orig.id));
             childStateDirty = true;
           } catch (err) {
-            failures.push(`有行删除失败：${errText(err)}`);
+            failures.push(`有行删除失败：${friendlyErrText(err)}`);
             savedOriginals.push(orig);
           }
         }
@@ -1549,8 +1557,8 @@ export function EntityForm({ node }: NodeProps) {
       ctx.adapter.notify("保存成功");
       ctx.adapter.navigate(listRoute);
     } catch (err) {
-      setError(errText(err));
-      ctx.adapter.notify(errText(err), "error");
+      setError(friendlyErrText(err));
+      ctx.adapter.notify(friendlyErrText(err), "error");
     } finally {
       setSaving(false);
     }
@@ -1563,7 +1571,7 @@ export function EntityForm({ node }: NodeProps) {
       ctx.adapter.notify("已删除");
       ctx.adapter.navigate(listRoute);
     } catch (err) {
-      setError(errText(err));
+      setError(friendlyErrText(err));
     }
   };
 
@@ -1816,7 +1824,7 @@ function useAggregateValue(
         if ((err as { status?: number } | null)?.status === 403) {
           setDenied(true);
         } else {
-          setError(errText(err));
+          setError(friendlyErrText(err));
         }
       });
     return () => {
@@ -1970,7 +1978,7 @@ function GroupedChart({
         if ((err as { status?: number } | null)?.status === 403) {
           setDenied(true);
         } else {
-          setError(errText(err));
+          setError(friendlyErrText(err));
         }
       });
     return () => {
@@ -2057,9 +2065,9 @@ function GroupedChart({
       {error ? (
         <Alert type="error" message={error} />
       ) : series === null ? (
-        <div style={styles.empty}>加载中…</div>
+        <LoadingState block />
       ) : series.length === 0 ? (
-        <div style={styles.empty}>暂无数据</div>
+        <EmptyState />
       ) : (
         <div ref={chartRef} style={{ width: "100%", height: 300 }} />
       )}
@@ -2155,7 +2163,7 @@ export function ContentList({ node }: NodeProps) {
       setRows(res.rows);
       setTotal(res.total);
     } catch (err) {
-      setError(errText(err));
+      setError(friendlyErrText(err));
     } finally {
       setLoading(false);
     }
@@ -2186,9 +2194,9 @@ export function ContentList({ node }: NodeProps) {
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
       )}
       {loading && rows.length === 0 ? (
-        <div style={styles.empty}>加载中…</div>
+        <LoadingState block />
       ) : rows.length === 0 ? (
-        <div style={styles.empty}>暂无内容</div>
+        <EmptyState description="暂无内容" />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {rows.map((row) => {
@@ -2328,7 +2336,7 @@ export function Detail({ node }: NodeProps) {
         );
         if (alive) setLabels(map);
       } catch (err) {
-        if (alive) setError(errText(err));
+        if (alive) setError(friendlyErrText(err));
       } finally {
         if (alive) setLoading(false);
       }
@@ -2340,7 +2348,7 @@ export function Detail({ node }: NodeProps) {
 
   if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
   if (!id) return <Alert type="info" message="未选择记录（缺少 id 参数）" />;
-  if (loading) return <div style={styles.empty}>加载中…</div>;
+  if (loading) return <LoadingState block />;
   if (error) return <Alert type="error" message={error} />;
   if (!row) return <Alert type="warning" message="记录不存在" />;
 
@@ -2392,7 +2400,7 @@ export function Detail({ node }: NodeProps) {
       setRow(updated);
       ctx.adapter.notify("状态已更新");
     } catch (err) {
-      ctx.adapter.notify(errText(err), "error");
+      ctx.adapter.notify(friendlyErrText(err), "error");
     } finally {
       setGovBusy(false);
     }
@@ -2411,7 +2419,7 @@ export function Detail({ node }: NodeProps) {
           ctx.adapter.notify("已删除");
           ctx.adapter.navigate(listRoute ?? "/");
         } catch (err) {
-          ctx.adapter.notify(errText(err), "error");
+          ctx.adapter.notify(friendlyErrText(err), "error");
           throw err;
         }
       },
@@ -2569,7 +2577,7 @@ export function ActionButton({ node }: NodeProps) {
         ctx.adapter.navigate(payUrl);
       }
     } catch (err) {
-      ctx.adapter.notify(errText(err), "error");
+      ctx.adapter.notify(friendlyErrText(err), "error");
     }
   };
 
@@ -2593,7 +2601,7 @@ export function ActionButton({ node }: NodeProps) {
       ctx.adapter.notify("订单已取消");
       if (route) ctx.adapter.navigate(route);
     } catch (err) {
-      ctx.adapter.notify(errText(err), "error");
+      ctx.adapter.notify(friendlyErrText(err), "error");
     }
   };
 
@@ -2728,7 +2736,7 @@ export function SupportTranscript({ node }: NodeProps) {
         const transcript = await ctx.adapter.getSupportTranscript!(cid);
         if (alive) setData(transcript);
       } catch (err) {
-        if (alive) setError(errText(err));
+        if (alive) setError(friendlyErrText(err));
       } finally {
         if (alive) setLoading(false);
       }
@@ -2773,11 +2781,11 @@ export function SupportTranscript({ node }: NodeProps) {
   if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
   if (!recordId)
     return <Alert type="info" message="未选择记录（缺少 id 参数）" />;
-  if (loading) return <div style={styles.empty}>加载中…</div>;
+  if (loading) return <LoadingState block />;
   if (error) return <Alert type="error" message={error} />;
   if (noConversation)
     return <Alert type="info" message="该记录未关联客服会话" />;
-  if (!data) return <div style={styles.empty}>加载中…</div>;
+  if (!data) return <LoadingState block />;
 
   const submitFaq = async (question: string, answer: string, msgId: string) => {
     const fn = ctx.adapter.postSupportFaqDraft;
@@ -2788,7 +2796,7 @@ export function SupportTranscript({ node }: NodeProps) {
       setFaqDone((prev) => new Set(prev).add(msgId));
       ctx.adapter.notify("已提交为 FAQ 草稿，等待管理台审核");
     } catch (err) {
-      ctx.adapter.notify(errText(err), "error");
+      ctx.adapter.notify(friendlyErrText(err), "error");
     } finally {
       setFaqBusyId(null);
     }
@@ -3086,7 +3094,7 @@ export function CartView({ node }: NodeProps) {
     0,
   );
   const invalidCount = lines.length - validLines.length;
-  const money = (n: number) => `¥${n.toFixed(2)}`;
+  const money = fmtAmount;
 
   const session = ctx.adapter.memberSession?.() ?? null;
   /* 会话门只设在 checkout 变体：本地购物车是访客可达的（内容存本机、单价经
@@ -3236,7 +3244,7 @@ export function CartView({ node }: NodeProps) {
         }
       } catch (err) {
         setSubmitError(
-          CHECKOUT_ERROR_TEXT[memberErrCode(err) ?? ""] ?? errText(err),
+          CHECKOUT_ERROR_TEXT[memberErrCode(err) ?? ""] ?? friendlyErrText(err),
         );
         // 商品状态/价格可能已变化：重拉商品行让失效标示与展示价刷新
         setReloadNonce((n) => n + 1);
@@ -3248,7 +3256,7 @@ export function CartView({ node }: NodeProps) {
       <div>
         {invalidAlert}
         {lines.length === 0 ? (
-          <div style={styles.empty}>购物车是空的</div>
+          <EmptyState description="购物车是空的" />
         ) : (
           <>
             <div
@@ -3329,7 +3337,7 @@ export function CartView({ node }: NodeProps) {
     <div>
       {invalidAlert}
       {lines.length === 0 ? (
-        <div style={styles.empty}>购物车是空的</div>
+        <EmptyState description="购物车是空的" />
       ) : (
         <>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

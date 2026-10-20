@@ -6,11 +6,11 @@ import {
   Input,
   Modal,
   Space,
-  Table,
   Tag,
   Typography,
   message,
 } from "antd";
+import { PageTable, StatusTag, showError } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import { api, type MemberItem, type MemberRoleCandidate } from "../api";
 import { asText, fmtTime } from "../helpers";
@@ -52,7 +52,7 @@ export default function Members({ appId }: { appId: string }) {
       setScope(res.scope);
       setCandidates(res.roleCandidates);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载会员失败");
+      showError(err, "加载会员失败");
     } finally {
       setLoading(false);
     }
@@ -81,7 +81,7 @@ export default function Members({ appId }: { appId: string }) {
           message.success(next ? "已启用" : "已禁用");
           void load();
         } catch (err) {
-          message.error(err instanceof Error ? err.message : "操作失败");
+          showError(err, "操作失败");
         } finally {
           setBusyId(null);
         }
@@ -103,7 +103,7 @@ export default function Members({ appId }: { appId: string }) {
       setRoleTarget(null);
       void load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "角色设置失败");
+      showError(err, "角色设置失败");
     } finally {
       setRoleSaving(false);
     }
@@ -146,9 +146,9 @@ export default function Members({ appId }: { appId: string }) {
       width: 100,
       render: (v: string) =>
         v === "active" ? (
-          <Tag color="green">正常</Tag>
+          <StatusTag raw={v} text="正常" tone="green" />
         ) : (
-          <Tag color="red">已禁用</Tag>
+          <StatusTag raw={v} text="已禁用" tone="red" />
         ),
     },
     {
@@ -216,16 +216,15 @@ export default function Members({ appId }: { appId: string }) {
         />
         <Button onClick={() => void load()}>刷新</Button>
       </Space>
-      <Table
+      <PageTable
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={rows}
-        pagination={{
+        serverPage={{
           current: page,
           pageSize,
           total,
-          showSizeChanger: true,
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);

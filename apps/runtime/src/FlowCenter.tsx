@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  EmptyState,
+  LoadingState,
+  errText,
+  fmtTime,
+  showError,
+} from "@lcdp/ui";
+import {
   Alert,
   Button,
   Card,
   Descriptions,
   Drawer,
-  Empty,
   Input,
   List,
   Modal,
   Select,
   Space,
-  Spin,
   Tabs,
   Tag,
   Timeline,
@@ -47,16 +52,7 @@ export interface FlowCenterProps {
   onTodoCountChange?: (count: number) => void;
 }
 
-function fmtTime(iso?: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("zh-CN", { hour12: false });
-}
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+/* fmtTime / errText 单一实现已收编 @lcdp/ui（第 73 步片二），本文件直接引 ui 版 */
 
 /* ---------- 记录摘要：record 是经服务端整形的行对象，取标识字段 + 关键字段通用渲染 ---------- */
 
@@ -283,7 +279,7 @@ export default function FlowCenter({
     try {
       setDetail(await api.flow.instance(appId, instanceId));
     } catch (err) {
-      void message.error(errText(err));
+      showError(err);
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
@@ -313,7 +309,7 @@ export default function FlowCenter({
       setMine(null);
       await loadTodos();
     } catch (err) {
-      void message.error(errText(err));
+      showError(err);
     } finally {
       setActBusy(false);
     }
@@ -325,7 +321,7 @@ export default function FlowCenter({
       await api.flow.urge(appId, instanceId);
       void message.success("已催办，当前审批人将收到通知");
     } catch (err) {
-      void message.error(errText(err));
+      showError(err);
     } finally {
       setUrgingId(null);
     }
@@ -337,7 +333,7 @@ export default function FlowCenter({
     try {
       setStartable(await api.flow.startable(appId, entity));
     } catch (err) {
-      void message.error(errText(err));
+      showError(err);
     } finally {
       setStartableLoading(false);
     }
@@ -354,7 +350,7 @@ export default function FlowCenter({
       await loadMine();
       await loadStartable(startEntity);
     } catch (err) {
-      void message.error(errText(err));
+      showError(err);
     } finally {
       setStartingId(null);
     }
@@ -373,10 +369,10 @@ export default function FlowCenter({
   const todosPane =
     todos === null ? (
       <div style={{ padding: 40, textAlign: "center" }}>
-        <Spin tip="正在加载待办…" />
+        <LoadingState tip="正在加载待办…" />
       </div>
     ) : todos.length === 0 ? (
-      <Empty description="暂无待我审批的任务" />
+      <EmptyState description="暂无待我审批的任务" />
     ) : (
       <List
         dataSource={todos}
@@ -465,7 +461,7 @@ export default function FlowCenter({
       </Space>
       {startEntity && startableLoading && (
         <div style={{ padding: 16 }}>
-          <Spin size="small" />
+          <LoadingState size="small" tip="" />
         </div>
       )}
       {startEntity && !startableLoading && startable && !startable.workflow && (
@@ -520,10 +516,10 @@ export default function FlowCenter({
       {startPane}
       {mine === null ? (
         <div style={{ padding: 40, textAlign: "center" }}>
-          <Spin tip="正在加载我发起的流程…" />
+          <LoadingState tip="正在加载我发起的流程…" />
         </div>
       ) : mine.length === 0 ? (
-        <Empty description="我还没有发起过流程" />
+        <EmptyState description="我还没有发起过流程" />
       ) : (
         <List
           dataSource={mine}
@@ -598,10 +594,10 @@ export default function FlowCenter({
   const donePane =
     done === null ? (
       <div style={{ padding: 40, textAlign: "center" }}>
-        <Spin tip="正在加载已处理记录…" />
+        <LoadingState tip="正在加载已处理记录…" />
       </div>
     ) : done.length === 0 ? (
-      <Empty description="暂无处理记录" />
+      <EmptyState description="暂无处理记录" />
     ) : (
       <List
         dataSource={done}
@@ -648,10 +644,10 @@ export default function FlowCenter({
   const notesPane =
     notes === null ? (
       <div style={{ padding: 40, textAlign: "center" }}>
-        <Spin tip="正在加载通知…" />
+        <LoadingState tip="正在加载通知…" />
       </div>
     ) : notes.length === 0 ? (
-      <Empty description="暂无通知" />
+      <EmptyState description="暂无通知" />
     ) : (
       <List
         dataSource={notes}
@@ -701,7 +697,7 @@ export default function FlowCenter({
     >
       {detailLoading || !detail ? (
         <div style={{ padding: 40, textAlign: "center" }}>
-          <Spin tip="正在加载进度…" />
+          <LoadingState tip="正在加载进度…" />
         </div>
       ) : (
         <div>

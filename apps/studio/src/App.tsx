@@ -39,7 +39,7 @@ import Permissions from "./Permissions.js";
 import WorkflowDesigner from "./WorkflowDesigner.js";
 import Copilot from "./Copilot.js";
 import AgentsTab from "./AgentsTab.js";
-import { desktopTheme, tokens } from "@lcdp/ui";
+import { desktopTheme, errText, fmtTime, tokens } from "@lcdp/ui";
 
 /**
  * 设计台（M3 起，M4 增权限页签，M5 增流程页签）：数据模型设计器 + 页面设计器 + 流程设计器 + 权限 + 应用设置 + 发布/版本/回滚。
@@ -63,9 +63,7 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: "json", label: "JSON" },
 ];
 
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+/* errText 单一实现已收编 @lcdp/ui（第 73 步片二），本文件直接引 ui 版 */
 
 const cloneBundle = (b: BundleView): BundleView =>
   JSON.parse(JSON.stringify(b)) as BundleView;
@@ -208,7 +206,7 @@ function AppsView({
     api
       .domains()
       .then(setDomains)
-      .catch(() => {});
+      .catch((err) => void antdMessage.error(errText(err)));
   }, []);
 
   const submitCreate = async () => {
@@ -1086,7 +1084,7 @@ function Designer({
             title: "发布时间",
             dataIndex: "publishedAt",
             width: 180,
-            render: (t: string) => new Date(t).toLocaleString("zh-CN"),
+            render: (t: string) => fmtTime(t),
           },
           { title: "实体数", dataIndex: "entityCount", width: 80 },
           { title: "页面数", dataIndex: "pageCount", width: 80 },

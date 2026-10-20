@@ -6,9 +6,8 @@ import {
   Drawer,
   Input,
   Space,
-  Table,
-  message,
 } from "antd";
+import { PageTable, showError } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
 import { api, type Row } from "../api";
@@ -71,7 +70,7 @@ export default function Audit({
         setRows(res.rows);
         setTotal(res.total);
       } catch (err) {
-        message.error(err instanceof Error ? err.message : "加载审计失败");
+        showError(err, "加载审计失败");
       } finally {
         setLoading(false);
       }
@@ -173,16 +172,15 @@ export default function Audit({
         </Button>
       </Space>
 
-      <Table
+      <PageTable
         rowKey={(r) => String(r.id)}
         loading={loading}
         columns={columns}
         dataSource={rows}
-        pagination={{
+        serverPage={{
           current: page,
           pageSize,
           total,
-          showSizeChanger: true,
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);

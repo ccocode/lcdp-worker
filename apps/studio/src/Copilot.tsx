@@ -15,7 +15,7 @@ import {
 } from "antd";
 import type { Proposal, ProposalChange, ProposalStatus } from "./api.js";
 import { api } from "./api.js";
-import { tokens } from "@lcdp/ui";
+import { errText, fmtTime, tokens } from "@lcdp/ui";
 
 /**
  * 设计态 AI Copilot 抽屉（M6）：一句话需求 → 七步生成链路 → 提案 Diff 逐项勾选 → 应用到草稿。
@@ -62,9 +62,7 @@ const SECTION_TITLES: Record<ProposalChange["section"], string> = {
   pages: "页面",
 };
 
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+/* errText 单一实现已收编 @lcdp/ui（第 73 步片二），本文件直接引 ui 版 */
 
 /** 提案 log 归一化为每步一句详情（字符串或结构化条目都收，按顺序回填到前六步） */
 function logDetails(proposal: Proposal | null): (string | undefined)[] {
@@ -507,9 +505,7 @@ export default function Copilot({
                   type="secondary"
                   style={{ fontSize: 12, flexShrink: 0 }}
                 >
-                  {new Date(item.createdAt).toLocaleString("zh-CN", {
-                    hour12: false,
-                  })}
+                  {fmtTime(item.createdAt)}
                 </Typography.Text>
               </div>
               {item.summary && (

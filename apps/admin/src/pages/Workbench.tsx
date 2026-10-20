@@ -84,16 +84,21 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   >(null);
   const [auditFeed, setAuditFeed] = useState<DataRow[] | null>(null);
 
+  // 静默 catch 清零（第 73 步片二）：统计类加载失败以同 key toast 呈现，
+  // 同区块多路失败只弹一条，不刷屏。
+  const statFail = (key: string, label: string) => () =>
+    void message.error({ key, content: `${label}加载失败` });
+
   useEffect(() => {
     // W4 后平台三区块是 admin 的附加维度：有无当前应用都加载（不再只限无应用形态）
     if (!isAdmin) return;
     let alive = true;
     const set = (patch: Partial<typeof pStats>) =>
       alive && setPStats((s) => ({ ...s, ...patch }));
-    void api.tenants.list().then((r) => set({ tenants: r.length })).catch(() => {});
-    void api.apps.list().then((r) => set({ apps: r.length })).catch(() => {});
-    void api.users.list().then((r) => set({ users: r.length })).catch(() => {});
-    void api.kb.pending().then((r) => set({ kbPending: r.length })).catch(() => {});
+    void api.tenants.list().then((r) => set({ tenants: r.length })).catch(statFail("wb-pstats", "平台统计"));
+    void api.apps.list().then((r) => set({ apps: r.length })).catch(statFail("wb-pstats", "平台统计"));
+    void api.users.list().then((r) => set({ users: r.length })).catch(statFail("wb-pstats", "平台统计"));
+    void api.kb.pending().then((r) => set({ kbPending: r.length })).catch(statFail("wb-pstats", "平台统计"));
     void api.usage
       .query({ groupBy: "day", from: todayStr(), to: todayStr() })
       .then((r) => {
@@ -105,7 +110,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
         }
         set({ todayCalls: calls, todayTokens: tokens, meteringStart: r.meteringStart });
       })
-      .catch(() => {});
+      .catch(statFail("wb-usage", "今日用量"));
     void api.apps
       .list()
       .then(async (apps) => {
@@ -124,12 +129,12 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
         );
         if (alive) setHealth(rows);
       })
-      .catch(() => {});
+      .catch(statFail("wb-health", "应用健康"));
     void api.audit
       // 平台动态：只取无应用归属的平台级事件（scope=platform），各应用明细不混显
       .list({ page: 1, pageSize: 8, scope: "platform" })
       .then((r) => alive && setAuditFeed(r.rows))
-      .catch(() => {});
+      .catch(statFail("wb-audit", "平台动态"));
     return () => {
       alive = false;
     };
@@ -153,11 +158,11 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
         setTasks(res.tasks);
         setTasksTotal(res.total);
       })
-      .catch(() => {});
+      .catch(statFail("wb-tasks", "待办"));
     void api.submissions
       .list(appId, "pending")
       .then((list) => alive && setPendingSubs(list))
-      .catch(() => {});
+      .catch(statFail("wb-subs", "待审提交"));
     return () => {
       alive = false;
     };

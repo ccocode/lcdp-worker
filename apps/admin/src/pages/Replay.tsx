@@ -13,6 +13,7 @@ import {
   Typography,
   message,
 } from "antd";
+import { showError } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
 import { JsonBlock, Mono, asText, fmtTime } from "../helpers";
@@ -62,7 +63,7 @@ function ConversationDetail({ id, appId }: { id: string; appId?: string | null }
     )
       .then((d) => alive && setData(d))
       .catch((err) =>
-        message.error(err instanceof Error ? err.message : "加载会话失败"),
+        showError(err, "加载会话失败"),
       );
     return () => {
       alive = false;
@@ -149,7 +150,7 @@ function ProposalDetail({ id, appId }: { id: string; appId?: string | null }) {
     void (appId ? api.replay.proposalForApp(appId, id) : api.replay.proposal(id))
       .then((d) => alive && setP(d))
       .catch((err) =>
-        message.error(err instanceof Error ? err.message : "加载提案失败"),
+        showError(err, "加载提案失败"),
       );
     return () => {
       alive = false;
@@ -196,7 +197,7 @@ function FlowDetail({ id, appId }: { id: string; appId?: string | null }) {
     void (appId ? api.replay.flowForApp(appId, id) : api.replay.flow(id))
       .then((d) => alive && setData(d))
       .catch((err) =>
-        message.error(err instanceof Error ? err.message : "加载流程失败"),
+        showError(err, "加载流程失败"),
       );
     return () => {
       alive = false;
@@ -302,7 +303,7 @@ export default function Replay({
           );
         }
       })
-      .catch(() => {});
+      .catch((err) => showError(err, "应用列表加载失败"));
     return () => {
       alive = false;
     };
@@ -337,7 +338,7 @@ export default function Replay({
       setRows(res.rows);
       setTotal(res.total);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载回放列表失败");
+      showError(err, "加载回放列表失败");
     } finally {
       setLoading(false);
     }

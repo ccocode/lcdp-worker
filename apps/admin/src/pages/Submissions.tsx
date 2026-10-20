@@ -5,11 +5,15 @@ import {
   Modal,
   Radio,
   Space,
-  Table,
-  Tag,
   Typography,
   message,
 } from "antd";
+import {
+  PageTable,
+  StatusTag,
+  showError,
+  type StatusMetaItem,
+} from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import { api, type SubmissionItem } from "../api";
 import { JsonBlock, asText, fmtTime } from "../helpers";
@@ -20,10 +24,10 @@ import { JsonBlock, asText, fmtTime } from "../helpers";
  * entityFilter 用于领域模版的预置入口（如内容领域的留言审核）。
  */
 
-const STATUS_META: Record<string, { color: string; text: string }> = {
-  pending: { color: "processing", text: "待处理" },
-  approved: { color: "success", text: "已通过" },
-  rejected: { color: "error", text: "已驳回" },
+const STATUS_META: Record<string, StatusMetaItem> = {
+  pending: { tone: "blue", text: "待处理" },
+  approved: { tone: "green", text: "已通过" },
+  rejected: { tone: "red", text: "已驳回" },
 };
 
 function summaryOf(body: Record<string, unknown>): string {
@@ -61,7 +65,7 @@ export default function Submissions({
       );
       setRows(entityFilter ? list.filter((s) => s.entity === entityFilter) : list);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载提交失败");
+      showError(err, "加载提交失败");
     } finally {
       setLoading(false);
     }
@@ -80,7 +84,7 @@ export default function Submissions({
       setDetail(null);
       void load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "处理失败");
+      showError(err, "处理失败");
     } finally {
       setBusyId(null);
     }
@@ -107,11 +111,7 @@ export default function Submissions({
         dataIndex: "status",
         key: "status",
         width: 100,
-        render: (v: string) => (
-          <Tag color={STATUS_META[v]?.color ?? "default"}>
-            {STATUS_META[v]?.text ?? v}
-          </Tag>
-        ),
+        render: (v: string) => <StatusTag raw={v} meta={STATUS_META} />,
       },
       {
         title: "处理人",
@@ -177,12 +177,12 @@ export default function Submissions({
           <Typography.Text type="secondary">仅看表单：{entityFilter}</Typography.Text>
         )}
       </Space>
-      <Table
+      <PageTable
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={rows}
-        pagination={{ pageSize: 20, showSizeChanger: true }}
+        clientPageSize={20}
       />
       <Modal
         title={detail ? `提交详情 · ${detail.id}` : "提交详情"}

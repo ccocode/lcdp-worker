@@ -5,11 +5,10 @@ import {
   Input,
   Modal,
   Space,
-  Table,
-  Tag,
   Upload,
   message,
 } from "antd";
+import { PageTable, StatusTag, showError } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import type { UploadProps } from "antd";
 import { UploadOutlined } from "@ant-design/icons";
@@ -37,6 +36,7 @@ export default function AppAssets({ appId }: { appId: string }) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [q, setQ] = useState("");
   const [keyword, setKeyword] = useState("");
 
@@ -45,17 +45,17 @@ export default function AppAssets({ appId }: { appId: string }) {
     try {
       const res = await api.appAssets.list(appId, {
         q: keyword || undefined,
-        limit: PAGE_SIZE,
-        offset: (page - 1) * PAGE_SIZE,
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
       });
       setRows(res.rows);
       setTotal(res.total);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载资产失败");
+      showError(err, "加载资产失败");
     } finally {
       setLoading(false);
     }
-  }, [appId, keyword, page]);
+  }, [appId, keyword, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -72,7 +72,7 @@ export default function AppAssets({ appId }: { appId: string }) {
         void load();
       } catch (err) {
         const text = err instanceof Error ? err.message : "上传失败";
-        message.error(text);
+        showError(err, "上传失败");
         options.onError?.(err instanceof Error ? err : new Error(text));
       }
     },
@@ -91,7 +91,7 @@ export default function AppAssets({ appId }: { appId: string }) {
           message.success("已删除");
           void load();
         } catch (err) {
-          message.error(err instanceof Error ? err.message : "删除失败");
+          showError(err, "删除失败");
         }
       },
     });
@@ -107,12 +107,13 @@ export default function AppAssets({ appId }: { appId: string }) {
       title: "可见性",
       dataIndex: "visibility",
       width: 100,
-      render: (v) =>
-        asText(v) === "public" ? (
-          <Tag color="green">public</Tag>
-        ) : (
-          <Tag>{asText(v)}</Tag>
-        ),
+      render: (v) => (
+        <StatusTag
+          raw={asText(v)}
+          text={asText(v)}
+          tone={asText(v) === "public" ? "green" : "gray"}
+        />
+      ),
     },
     {
       title: "创建时间",
@@ -159,18 +160,21 @@ export default function AppAssets({ appId }: { appId: string }) {
         </Upload>
         <Button onClick={() => void load()}>刷新</Button>
       </Space>
-      <Table
+      <PageTable
         rowKey={(r) => r.id}
         loading={loading}
         columns={columns}
         dataSource={rows}
-        pagination={{
+        serverPage={{
           current: page,
-          pageSize: PAGE_SIZE,
+          pageSize,
           total,
-          showTotal: (t) => `共 ${t} 个资产`,
-          onChange: (p) => setPage(p),
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
         }}
+        totalText={(t) => `共 ${t} 个资产`}
       />
     </Card>
   );

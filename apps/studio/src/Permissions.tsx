@@ -14,6 +14,7 @@ import {
   Typography,
   message as antdMessage,
 } from "antd";
+import { errText, fmtTime } from "@lcdp/ui";
 import type { FormInstance } from "antd";
 import type {
   DataSchema,
@@ -120,9 +121,7 @@ export const EMPTY_MEMBER_POLICY: MemberPolicyShape = {
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+/* errText 单一实现已收编 @lcdp/ui（第 73 步片二），本文件直接引 ui 版 */
 
 function emptyRolePermission(role: string): RolePermission {
   return { role, menus: [], entityAccess: [], rowRules: [], fieldRules: [] };
@@ -1306,7 +1305,7 @@ function UsersSection({
             title: "创建时间",
             dataIndex: "createdAt",
             width: 160,
-            render: (t: string) => new Date(t).toLocaleString("zh-CN"),
+            render: (t: string) => fmtTime(t),
           },
           {
             title: "操作",
@@ -1477,7 +1476,7 @@ function SubmissionsSection({
             title: "提交时间",
             dataIndex: "createdAt",
             width: 170,
-            render: (t: string) => new Date(t).toLocaleString("zh-CN"),
+            render: (t: string) => fmtTime(t),
           },
           {
             title: "实体",

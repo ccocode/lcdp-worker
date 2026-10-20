@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Input, Space, Tag, Typography, message } from "antd";
 import { api, type SiteAppView } from "../api";
+import { errText, showError } from "@lcdp/ui";
 import { accessFormText } from "../helpers";
 
 /**
@@ -27,6 +28,7 @@ export default function DomainBindings({
   const [host, setHost] = useState("");
   const [nameEn, setNameEn] = useState("");
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -35,8 +37,10 @@ export default function DomainBindings({
       setDefaultHost(res.defaultHost);
       setHost(res.app.boundHost ?? "");
       setNameEn(res.app.nameEn ?? "");
+      setLoadError(null);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载域名失败");
+      // 失败呈现与「静态」页签（StaticStatus）统一为页内 Alert（第 73 步片二）
+      setLoadError(errText(err) || "加载域名失败");
       setSite(null);
     }
   }, [appId]);
@@ -60,7 +64,7 @@ export default function DomainBindings({
       void load();
     } catch (err) {
       // 后端口径错误（如域名已被其他应用绑定）原文呈现，不吞
-      message.error(err instanceof Error ? err.message : "保存失败");
+      showError(err, "保存失败");
     } finally {
       setSaving(false);
     }
@@ -87,6 +91,15 @@ export default function DomainBindings({
 
   return (
     <div>
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="域名信息加载失败"
+          description={`${loadError}（请刷新重试。）`}
+        />
+      )}
       <Space align="start" size={12} wrap>
         <Input
           value={host}

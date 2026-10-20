@@ -46,13 +46,8 @@ export function JsonBlock({ value }: { value: unknown }) {
   );
 }
 
-/** ISO 时间 → 本地可读文本（防御式：解析失败原样返回） */
-export function fmtTime(v: unknown): string {
-  if (typeof v !== "string" && typeof v !== "number") return "—";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return String(v);
-  return d.toLocaleString("zh-CN", { hour12: false });
-}
+/** fmtTime 单一实现已收编 @lcdp/ui（第 73 步片二），此处转出保持既有导入路径 */
+export { fmtTime } from "@lcdp/ui";
 
 /** 日期（YYYY-MM-DD）文本 */
 export function fmtDate(v: unknown): string {

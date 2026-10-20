@@ -132,14 +132,7 @@ export const styles: Record<string, CSSProperties> = {
     boxSizing: "border-box",
     background: tokens.colorBgContainer,
   },
-  error: {
-    background: tokens.colorErrorBg,
-    border: `1px solid ${tokens.colorErrorBorder}`,
-    color: tokens.colorErrorText,
-    borderRadius: tokens.borderRadius,
-    padding: "8px 12px",
-    fontSize: 14,
-    marginBottom: 12,
-  },
+  // 注：原 styles.error（错误条样式）自始无消费方，第 73 步片二删除——
+  // 错误呈现统一走 antd Alert / @lcdp/ui 的 showError。
   empty: { padding: "28px 0", textAlign: "center", color: tokens.colorTextTertiary, fontSize: 14 },
 };
