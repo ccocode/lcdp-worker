@@ -81,13 +81,19 @@ export interface SiteDirectoryItem {
 /**
  * 站点解析结果（/site/current 与 /public/site.site 同形状）：
  * mode=app 时 app 为当前作用域应用，via 决定路径前缀（path 时前缀 = /<URL 首段>）；
- * mode=redirect 为根域——引导层整页跳 defaultHost 并保留路径；
+ * mode=redirect 为整页跳转——根域跳默认域名保留全路径；第 71 步起默认域名下
+ * 首段命中主应用/已绑专属域名应用时亦回 redirect（redirectHost 为目标 host、
+ * stripFirstSeg=true 表示剥除首段、保留余下路径）；
  * mode=shell 为未托管 host 的兜底装配（目录中主应用 + 未绑应用）。
  */
 export interface SiteInfo {
   mode: "app" | "member-center" | "shell" | "redirect";
   via: "bound" | "primary" | "path" | null;
   defaultHost: string;
+  /** redirect 模式的目标 host（缺省 = defaultHost） */
+  redirectHost?: string | null;
+  /** redirect 模式是否剥除 URL 首段（段命中应用时为 true） */
+  stripFirstSeg?: boolean;
   app: {
     id: string;
     name: string;

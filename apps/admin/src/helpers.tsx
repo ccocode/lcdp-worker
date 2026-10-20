@@ -76,3 +76,25 @@ export function Mono({ children }: { children: React.ReactNode }) {
     </Typography.Text>
   );
 }
+
+/**
+ * 应用访问形态统一文案（第 71 步口径统一：应用管理列表 / 应用设置·域名 /
+ * 应用设置·主题 三处共用同一措辞，基准 = 域名页签 accessHint）：
+ * 绑专属域名 → 专属域名直达；主应用 → 默认域名根路径；其余 → 默认域名
+ * /<应用ID> 路径（带别名时附别名后缀）。
+ */
+export function accessFormText(
+  app: {
+    boundHost?: string | null;
+    isPrimary?: boolean;
+    id: string;
+    nameEn?: string | null;
+  },
+  defaultHost: string,
+): string {
+  if (app.boundHost) return `专属域名直达：https://${app.boundHost}/`;
+  if (app.isPrimary) return `默认域名根路径（主应用）：https://${defaultHost}/`;
+  return `默认域名路径：https://${defaultHost}/${app.id}${
+    app.nameEn ? `（应用别名 /${app.nameEn} 亦可达）` : ""
+  }`;
+}

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Input, Space, Tag, Typography, message } from "antd";
 import { api, type SiteAppView } from "../api";
+import { accessFormText } from "../helpers";
 
 /**
  * 域名（第 68 步口径：入口模型退役后，域名是应用的**单值属性**）：
@@ -70,15 +71,19 @@ export default function DomainBindings({
     host.trim() === (site?.boundHost ?? "") &&
     nameEn.trim() === (site?.nameEn ?? "");
 
+  // 第 71 步口径统一：访问形态文案走 helpers.accessFormText 单一来源
+  // （本页签原措辞即基准，主应用一态的句式随之与其余两处对齐）。
   const accessHint = !site
     ? null
-    : site.boundHost
-      ? `专属域名直达：https://${site.boundHost}/`
-      : site.isPrimary
-        ? `本应用是主应用：占据默认域名根路径 https://${defaultHost}/`
-        : `默认域名路径：https://${defaultHost}/${appId}${
-            site.nameEn ? `（应用别名 /${site.nameEn} 亦可达）` : ""
-          }`;
+    : accessFormText(
+        {
+          boundHost: site.boundHost,
+          isPrimary: site.isPrimary,
+          id: appId,
+          nameEn: site.nameEn,
+        },
+        defaultHost,
+      );
 
   return (
     <div>

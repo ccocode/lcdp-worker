@@ -30,7 +30,7 @@ import {
   type ThemeSlots,
   type ThemeVersionView,
 } from "../api";
-import { fmtTime } from "../helpers";
+import { accessFormText, fmtTime } from "../helpers";
 
 /**
  * 主题（第 68 步口径：入口模型退役后，主题绑定是**应用自身的属性**）：
@@ -372,13 +372,18 @@ export default function AppThemeSettings({
     },
   ];
 
+  // 第 71 步口径统一：与应用管理列表、域名页签共用 accessFormText 措辞
   const accessText = !site
-    ? "—"
-    : site.boundHost
-      ? `专属域名 ${site.boundHost}`
-      : site.isPrimary
-        ? `默认域名 ${defaultHost} 根路径（主应用）`
-        : `默认域名路径 ${defaultHost}/${appId}`;
+    ? "站点信息未加载"
+    : accessFormText(
+        {
+          boundHost: site.boundHost,
+          isPrimary: site.isPrimary,
+          id: appId,
+          nameEn: site.nameEn,
+        },
+        defaultHost,
+      );
 
   const bindingPtr = binding ? slots[binding.slot] : null;
   const bindingItems =

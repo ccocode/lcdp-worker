@@ -37,6 +37,7 @@ export default function StaticStatus({
 }) {
   const [sites, setSites] = useState<StaticSiteStatus[]>([]);
   const [site, setSite] = useState<SiteAppView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -54,17 +55,26 @@ export default function StaticStatus({
     }
   };
 
+  // 第 71 步韧性小修：两路请求独立成败（allSettled）——status 一败不再连坐
+  // 整页落入「未绑定专属域名」兜底（此前首挂载偶发即此）；status 失败置
+  // loadError 走错误提示（可刷新重试），site 失败只丢站点字段呈现。
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [st, s] = await Promise.all([
+      const [st, s] = await Promise.allSettled([
         api.staticGen.status(appId),
-        api.site.get(appId).catch(() => null),
+        api.site.get(appId),
       ]);
-      setSites(st);
-      setSite(s?.app ?? null);
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载静态状态失败");
+      if (st.status === "fulfilled") {
+        setSites(st.value);
+        setLoadError(null);
+      } else {
+        setSites([]);
+        setLoadError(
+          st.reason instanceof Error ? st.reason.message : "加载静态状态失败",
+        );
+      }
+      setSite(s.status === "fulfilled" ? (s.value?.app ?? null) : null);
     } finally {
       setLoading(false);
     }
@@ -168,7 +178,14 @@ export default function StaticStatus({
           {!isAdmin && "运行模式切换由平台管理员操作。"}
         </Descriptions.Item>
       </Descriptions>
-      {sites.length === 0 && !loading ? (
+      {loadError ? (
+        <Alert
+          type="error"
+          showIcon
+          message="静态状态加载失败"
+          description={`${loadError}（加载失败不代表本应用未绑定域名，请刷新重试。）`}
+        />
+      ) : sites.length === 0 && !loading ? (
         <Alert
           type="info"
           showIcon

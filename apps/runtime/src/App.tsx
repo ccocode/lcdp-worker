@@ -137,9 +137,20 @@ function stripSitePrefix(path: string, prefix: string): string {
   return path;
 }
 
-/** 根域跳转（第 68 步定案）：整页跳默认域名，保留路径与查询 */
-function redirectToDefaultHost(defaultHost: string): void {
-  const target = `https://${defaultHost}${window.location.pathname}${window.location.search}`;
+/**
+ * 站点跳转（第 68 步根域定案 + 第 71 步段跳转）：按解析结果整页跳——
+ * 目标 host = redirectHost ?? defaultHost；stripFirstSeg 时剥除 URL 首段
+ * （段命中主应用 → 根路径、命中已绑应用 → 其专属域名），余下路径与查询保留；
+ * 根域跳转不剥段、全路径保留（与第 68 步行为逐字等价）。
+ */
+function redirectPerSite(site: SiteInfo): void {
+  const host = site.redirectHost ?? site.defaultHost;
+  let path = window.location.pathname;
+  if (site.stripFirstSeg) {
+    const idx = path.indexOf("/", 1);
+    path = idx === -1 ? "/" : path.slice(idx);
+  }
+  const target = `https://${host}${path}${window.location.search}`;
   if (window.location.href !== target) window.location.replace(target);
 }
 
@@ -361,10 +372,10 @@ function AnonGate({
     };
   }, []);
 
-  // 根域（站点解析 mode=redirect）：整页跳默认域名，保留路径
+  // 站点解析 mode=redirect：整页跳（根域跳默认域名；段命中应用时剥段跳）
   const site = pub?.site ?? null;
   useEffect(() => {
-    if (site?.mode === "redirect") redirectToDefaultHost(site.defaultHost);
+    if (site?.mode === "redirect") redirectPerSite(site);
   }, [site]);
 
   if (!loaded || site?.mode === "redirect") {
@@ -3135,7 +3146,7 @@ function EntryView({
   }, []);
 
   useEffect(() => {
-    if (site?.mode === "redirect") redirectToDefaultHost(site.defaultHost);
+    if (site?.mode === "redirect") redirectPerSite(site);
   }, [site]);
 
   if (error) {

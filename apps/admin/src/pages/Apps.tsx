@@ -11,7 +11,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
-import { asText } from "../helpers";
+import { accessFormText, asText } from "../helpers";
 
 /**
  * 应用管理（平台页）：应用上下架 + 站点属性总览（第 68 步：入口装配模型
@@ -127,17 +127,22 @@ export default function Apps() {
     },
     {
       title: "访问形态",
-      render: (_, r) => {
-        const host = asText(r.boundHost);
-        if (host) return <Tag>{host}</Tag>;
-        if (r.isPrimary) return <Typography.Text type="secondary">默认域名根路径</Typography.Text>;
-        return (
-          <Typography.Text type="secondary">
-            默认域名 /{String(r.id)}
-            {r.nameEn ? `（别名 /${asText(r.nameEn)}）` : ""}
-          </Typography.Text>
-        );
-      },
+      // 第 71 步口径统一：走 helpers.accessFormText（三处同一措辞）。
+      // 注：此前用 asText(boundHost) 判空——null 被渲染为字符串「—」（真值），
+      // 未绑应用恒显「—」Tag，即 68.3 注记②的本体，一并修对。
+      render: (_, r) => (
+        <Typography.Text type="secondary">
+          {accessFormText(
+            {
+              boundHost: (r.boundHost as string | null) ?? null,
+              isPrimary: r.isPrimary === true,
+              id: String(r.id),
+              nameEn: (r.nameEn as string | null) ?? null,
+            },
+            "www.coode.cc.cd",
+          )}
+        </Typography.Text>
+      ),
     },
     {
       title: "状态",
