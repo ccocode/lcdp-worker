@@ -45,6 +45,14 @@ export interface AppInfo {
   skeleton?: string | null;
 }
 
+/** 样板库条目（GET /domains 的 templates；样板库型领域如 OA 建应用时勾选整束装配） */
+export interface DomainTemplateInfo {
+  key: string;
+  name: string;
+  category: string;
+  description: string;
+}
+
 /** M15 领域注册表条目（GET /domains） */
 export interface DomainInfo {
   key: string;
@@ -52,6 +60,8 @@ export interface DomainInfo {
   description: string;
   available: boolean;
   skeleton: string | null;
+  /** 样板库（仅样板库型领域有，如审批协同 OA） */
+  templates?: DomainTemplateInfo[];
 }
 
 export interface VersionInfo {
@@ -325,10 +335,15 @@ export const api = {
     return res.apps;
   },
   /** 新建应用（M10 补强）：服务端建 platform_apps 行，设计包由 GET /design 合成起始包 */
-  async createApp(id: string, name: string, domain?: string): Promise<AppInfo> {
+  async createApp(id: string, name: string, domain?: string, templates?: string[]): Promise<AppInfo> {
     const res = await apiFetch<{ app: AppInfo }>("/apps", {
       method: "POST",
-      body: JSON.stringify(domain ? { id, name, domain } : { id, name }),
+      body: JSON.stringify({
+        id,
+        name,
+        ...(domain ? { domain } : {}),
+        ...(templates && templates.length > 0 ? { templates } : {}),
+      }),
     });
     return res.app;
   },

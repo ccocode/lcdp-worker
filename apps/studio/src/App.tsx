@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   ColorPicker,
   ConfigProvider,
   Form,
@@ -184,6 +185,19 @@ function AppsView({
   /** M15 主领域选择：默认空白领域；有骨架的领域创建即落骨架草稿 */
   const [domains, setDomains] = useState<DomainInfo[]>([]);
   const [newAppDomain, setNewAppDomain] = useState("generic");
+  /** 样板库型领域（如 OA）：建应用时勾选整束装配的样板 key 列表 */
+  const [newAppTemplates, setNewAppTemplates] = useState<string[]>([]);
+
+  const selectedDomain = domains.find((d) => d.key === newAppDomain);
+  const templateGroups = useMemo(() => {
+    const groups: { category: string; items: NonNullable<DomainInfo["templates"]> }[] = [];
+    for (const t of selectedDomain?.templates ?? []) {
+      const g = groups.find((x) => x.category === t.category);
+      if (g) g.items.push(t);
+      else groups.push({ category: t.category, items: [t] });
+    }
+    return groups;
+  }, [selectedDomain]);
 
   useEffect(() => {
     api
@@ -204,6 +218,7 @@ function AppsView({
         newAppId.trim(),
         newAppName.trim(),
         newAppDomain,
+        templateGroups.length > 0 ? newAppTemplates : undefined,
       );
       setCreateOpen(false);
       onOpen(app.id);
@@ -233,6 +248,7 @@ function AppsView({
             type="primary"
             onClick={() => {
               setCreateError(null);
+              setNewAppTemplates([]);
               setCreateOpen(true);
             }}
           >
@@ -269,7 +285,10 @@ function AppsView({
           <Form.Item label="主领域（创建后不可变更；选有骨架的领域将自动生成数据模型、页面与权限草稿）">
             <Select
               value={newAppDomain}
-              onChange={(v) => setNewAppDomain(v)}
+              onChange={(v) => {
+                setNewAppDomain(v);
+                setNewAppTemplates([]);
+              }}
               options={domains.map((d) => ({
                 value: d.key,
                 disabled: !d.available,
@@ -282,6 +301,38 @@ function AppsView({
               {domains.find((d) => d.key === newAppDomain)?.description ?? ""}
             </Typography.Text>
           </Form.Item>
+          {templateGroups.length > 0 && (
+            <Form.Item label="单据样板（样板库型领域：勾选后整束装配——实体 + 审批流 + 页面 + 权限，未勾选不进应用）">
+              {templateGroups.map((g) => (
+                <div key={g.category} style={{ marginBottom: 8 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {g.category}
+                  </Typography.Text>
+                  <div>
+                    {g.items.map((t) => (
+                      <div key={t.key}>
+                        <Checkbox
+                          checked={newAppTemplates.includes(t.key)}
+                          onChange={(e) =>
+                            setNewAppTemplates((prev) =>
+                              e.target.checked
+                                ? [...prev, t.key]
+                                : prev.filter((k) => k !== t.key),
+                            )
+                          }
+                        >
+                          {t.name}
+                          <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+                            {t.description}
+                          </Typography.Text>
+                        </Checkbox>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </Form.Item>
+          )}
           {createError && <Alert type="error" message={createError} />}
         </Form>
       </Modal>
