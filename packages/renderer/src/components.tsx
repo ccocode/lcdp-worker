@@ -1629,7 +1629,7 @@ export function EntityForm({ node }: NodeProps) {
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
       )}
-      {isEdit && (
+      {isEdit && node.props?.showId === true && (
         <div style={singleMode ? singleRowStyle : styles.formRow}>
           <div style={singleMode ? singleLabelStyle : styles.label}>ID</div>
           <div style={{ paddingTop: singleMode ? 0 : 5, fontSize: 14 }}>

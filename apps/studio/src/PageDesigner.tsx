@@ -1409,6 +1409,14 @@ export default function PageDesigner({
               onChange={(v) => patchProps(node.id, { listRoute: v })}
               options={routeOptions}
             />
+            <Space size={8} style={{ marginBottom: 12, display: "flex", alignItems: "center" }}>
+              <Typography.Text type="secondary">显示 ID 行（默认隐藏）</Typography.Text>
+              <Switch
+                size="small"
+                checked={props.showId === true}
+                onChange={(v) => patchProps(node.id, { showId: v || undefined })}
+              />
+            </Space>
           </>
         )}
 
