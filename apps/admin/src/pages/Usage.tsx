@@ -73,13 +73,13 @@ export default function Usage() {
   const columns: ColumnsType<DataRow> = [
     { title: GROUP_LABELS[groupBy], dataIndex: "bucket", render: (v) => asText(v) },
     { title: "调用次数", dataIndex: "calls", render: (v) => asText(v) },
-    { title: "Prompt Tokens", dataIndex: "prompt_tokens", render: (v) => asText(v) },
+    { title: "输入 Token", dataIndex: "prompt_tokens", render: (v) => asText(v) },
     {
-      title: "Completion Tokens",
+      title: "输出 Token",
       dataIndex: "completion_tokens",
       render: (v) => asText(v),
     },
-    { title: "总 Tokens", dataIndex: "total_tokens", render: (v) => asText(v) },
+    { title: "总 Token", dataIndex: "total_tokens", render: (v) => asText(v) },
   ];
 
   return (
@@ -99,17 +99,17 @@ export default function Usage() {
         </Col>
         <Col xs={12} lg={6}>
           <Card>
-            <Statistic title="Prompt Tokens" value={totals.prompt} />
+            <Statistic title="输入 Token" value={totals.prompt} />
           </Card>
         </Col>
         <Col xs={12} lg={6}>
           <Card>
-            <Statistic title="Completion Tokens" value={totals.completion} />
+            <Statistic title="输出 Token" value={totals.completion} />
           </Card>
         </Col>
         <Col xs={12} lg={6}>
           <Card>
-            <Statistic title="总 Tokens" value={totals.total} />
+            <Statistic title="总 Token" value={totals.total} />
           </Card>
         </Col>
       </Row>

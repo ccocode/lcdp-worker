@@ -23,6 +23,7 @@ import {
   EmptyState,
   LoadingState,
   errText,
+  errorDisplayText,
   fmtAmount,
   mobileDensity,
   mobileVars,
@@ -196,19 +197,29 @@ function StatusDisplay({
 }
 
 /**
- * 共享错误文案出口：服务端业务消息（按契约是中文）原样上屏；网络/运行时级错误
- * （fetch 的 TypeError、各引擎网络失败消息）不把英文原文抛给用户，
- * 统一回落友好提示。其余错误消息维持原样，不一刀切覆盖。
+ * 共享错误文案出口：服务端业务消息（按契约是中文）原样上屏；机器码与
+ * 网络/运行时级错误经 @lcdp/ui 的 errorDisplayText 映射为友好文案
+ * （错误码表 + TypeError/网络短语识别，第 73 步片三收编），未命中回落原文。
  */
-const NETWORK_ERROR_PATTERN =
-  /failed to fetch|networkerror|load failed|network request failed|fetch failed/i;
-
 function friendlyErrText(err: unknown): string {
-  const msg = errText(err);
-  if (err instanceof TypeError || NETWORK_ERROR_PATTERN.test(msg)) {
-    return "网络请求失败，请稍后重试";
-  }
-  return msg;
+  return errorDisplayText(err, errText(err));
+}
+
+/**
+ * 数据源未绑定实体的分面呈现（第 73 步片三）：设计态（Studio 画布，
+ * ctx.design 在场）保留配置指引原文；运行态换用户语义并在控制台留痕，
+ * 不向终端用户暴露设计概念。
+ */
+function UnboundSourceAlert() {
+  const ctx = useRendererCtx();
+  const design = Boolean(ctx.design);
+  useEffect(() => {
+    if (!design) {
+      console.warn("[lcdp] 数据组件的数据源未绑定实体，运行态已降级呈现");
+    }
+  }, [design]);
+  if (design) return <Alert type="error" message="数据源未绑定实体" />;
+  return <Alert type="warning" message="内容暂不可用，请稍后再试" />;
 }
 
 /**
@@ -594,7 +605,7 @@ export function DataTable({ node }: NodeProps) {
     return () => clearTimeout(t);
   }, [pendingGateKey]);
 
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
 
   // 显示列：props.columns 指定字段 key 与顺序；未指定时取实体前 7 个字段
   const columnKeys = Array.isArray(node.props?.columns)
@@ -667,7 +678,9 @@ export function DataTable({ node }: NodeProps) {
   };
 
   const tableColumns: TableProps<Row>["columns"] = [
-    { title: "ID", dataIndex: "id", key: "__id", width: 120 },
+    ...(node.props?.showId === true
+      ? [{ title: "ID", dataIndex: "id", key: "__id", width: 120 }]
+      : []),
     ...fields.map((f) => ({
       title: f.label,
       dataIndex: f.key,
@@ -1378,7 +1391,7 @@ export function EntityForm({ node }: NodeProps) {
     );
   }, [childRows, rollupActive, rollupField, sumChildren]);
 
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
   if (loading) return <LoadingState block />;
 
   const save = async () => {
@@ -1844,7 +1857,7 @@ export function StatCard({ node }: NodeProps) {
   const suffix =
     typeof node.props?.suffix === "string" ? node.props.suffix : undefined;
   if (denied) return null;
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
   return (
     <Card>
       {error ? (
@@ -1879,6 +1892,7 @@ function chartTypeOf(node: ComponentNode): ChartType {
 
 /** 图表单值形态（无 groupBy）：沿用统计口径展示聚合数值 */
 function ChartSingleValue({ node }: NodeProps) {
+  const ctx = useRendererCtx();
   const hasAggregate = Boolean(node.binding?.view?.aggregate);
   const { entity, value, error, denied } = useAggregateValue(node, false);
   const title =
@@ -1909,7 +1923,9 @@ function ChartSingleValue({ node }: NodeProps) {
             borderRadius: 8,
           }}
         >
-          图表未配置聚合（在设计器中为图表设置聚合与分组字段）
+          {ctx.design
+            ? "图表未配置聚合（在设计器中为图表设置聚合与分组字段）"
+            : "图表内容暂不可用"}
         </div>
       )}
     </Card>
@@ -2082,7 +2098,7 @@ function GroupedChart({
 export function Chart({ node }: NodeProps) {
   const ctx = useRendererCtx();
   const entity = resolveEntity(ctx, node.binding?.source);
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
   if (node.binding?.view?.aggregate?.groupBy) {
     return <GroupedChart node={node} entity={entity} />;
   }
@@ -2175,7 +2191,7 @@ export function ContentList({ node }: NodeProps) {
     void load();
   }, [load]);
 
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
 
   const summaryOf = (row: Row): string => {
     if (!summaryField) return "";
@@ -2346,7 +2362,7 @@ export function Detail({ node }: NodeProps) {
     };
   }, [ctx.adapter, entity, id]);
 
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
   if (!id) return <Alert type="info" message="未选择记录（缺少 id 参数）" />;
   if (loading) return <LoadingState block />;
   if (error) return <Alert type="error" message={error} />;
@@ -2437,7 +2453,9 @@ export function Detail({ node }: NodeProps) {
         </Button>
       )}
       <Descriptions bordered column={1} size="middle">
-        <Descriptions.Item label="ID">{String(row.id)}</Descriptions.Item>
+        {node.props?.showId === true && (
+          <Descriptions.Item label="ID">{String(row.id)}</Descriptions.Item>
+        )}
         {visibleFields.map((f) => (
           <Descriptions.Item key={f.key} label={f.label}>
             {f.type === "richtext" ? (
@@ -2778,7 +2796,7 @@ export function SupportTranscript({ node }: NodeProps) {
       </Card>
     );
   }
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
   if (!recordId)
     return <Alert type="info" message="未选择记录（缺少 id 参数）" />;
   if (loading) return <LoadingState block />;
@@ -3048,7 +3066,7 @@ export function CartView({ node }: NodeProps) {
       </Card>
     );
   }
-  if (!entity) return <Alert type="error" message="数据源未绑定实体" />;
+  if (!entity) return <UnboundSourceAlert />;
 
   const fields = entity.fields;
   const nameField = fields.find((f) => f.key === "name") ?? fields[0];

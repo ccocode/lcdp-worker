@@ -12,7 +12,7 @@ import {
   message,
 } from "antd";
 import { api, type Row } from "../api";
-import { asText } from "../helpers";
+import { Mono, asText } from "../helpers";
 
 interface ItemState {
   key: string;
@@ -34,43 +34,43 @@ const NUMERIC_KEYS = new Set([
 ]);
 
 const KEY_LABELS: Record<string, string> = {
-  "chat.baseUrl": "对话网关地址 baseUrl",
-  "chat.apiKey": "对话网关密钥 apiKey",
-  "chat.modelStrong": "强模型 modelStrong",
-  "chat.modelFast": "快模型 modelFast",
-  "chat.timeoutMs": "超时（毫秒）timeoutMs",
-  "chat.maxRetries": "最大重试 maxRetries",
-  "embedding.baseUrl": "向量网关地址 baseUrl",
-  "embedding.apiKey": "向量网关密钥 apiKey",
-  "embedding.model": "向量模型 model",
-  "embedding.dimensions": "向量维度 dimensions",
-  "llm.tenantTokenBudget": "租户日 Token 上限 tenantTokenBudget",
-  "storage.endpoint": "对象存储端点 endpoint",
-  "storage.bucket": "桶 bucket",
-  "storage.region": "区域 region",
-  "storage.accessKeyId": "AccessKey accessKeyId",
-  "storage.secretAccessKey": "SecretKey secretAccessKey",
-  "turnstile.siteKey": "站点密钥 siteKey",
-  "turnstile.secretKey": "服务端密钥 secretKey",
-  "mail.smtpHost": "SMTP 主机 smtpHost",
-  "mail.smtpPort": "SMTP 端口 smtpPort",
-  "mail.smtpSecure": "SSL/TLS smtpSecure（true / false）",
-  "mail.smtpUser": "SMTP 账号 smtpUser",
-  "mail.smtpPass": "SMTP 授权码 smtpPass",
-  "mail.fromName": "发件人名称 fromName",
-  "mail.fromAddress": "发件地址 fromAddress（留空 = 同账号）",
-  "pay.sandboxSecret": "沙箱签名密钥 sandboxSecret",
-  "pay.alipayAppId": "支付宝应用 ID alipayAppId",
-  "pay.alipayPrivateKey": "支付宝应用私钥 alipayPrivateKey",
-  "pay.alipayPublicKey": "支付宝公钥 alipayPublicKey",
-  "pay.wechatMchId": "微信商户号 wechatMchId",
-  "pay.wechatSerialNo": "微信证书序列号 wechatSerialNo",
-  "pay.wechatApiV3Key": "微信 APIv3 密钥 wechatApiV3Key",
-  "pay.wechatPrivateKey": "微信商户私钥 wechatPrivateKey",
-  "pay.paypalClientId": "PayPal Client ID paypalClientId",
-  "pay.paypalClientSecret": "PayPal Client Secret paypalClientSecret",
-  "pay.paypalMode": "PayPal 模式 paypalMode（sandbox / live）",
-  "sso.enabledScopes": "启用 SSO 的会员域 enabledScopes（逗号分隔 scope_key，留空 = 全关）",
+  "chat.baseUrl": "对话网关地址",
+  "chat.apiKey": "对话网关密钥",
+  "chat.modelStrong": "强模型",
+  "chat.modelFast": "快模型",
+  "chat.timeoutMs": "超时（毫秒）",
+  "chat.maxRetries": "最大重试次数",
+  "embedding.baseUrl": "向量网关地址",
+  "embedding.apiKey": "向量网关密钥",
+  "embedding.model": "向量模型",
+  "embedding.dimensions": "向量维度",
+  "llm.tenantTokenBudget": "租户日 Token 上限",
+  "storage.endpoint": "对象存储端点",
+  "storage.bucket": "存储桶",
+  "storage.region": "区域",
+  "storage.accessKeyId": "AccessKey",
+  "storage.secretAccessKey": "SecretKey",
+  "turnstile.siteKey": "站点密钥",
+  "turnstile.secretKey": "服务端密钥",
+  "mail.smtpHost": "SMTP 主机",
+  "mail.smtpPort": "SMTP 端口",
+  "mail.smtpSecure": "SSL/TLS（true / false）",
+  "mail.smtpUser": "SMTP 账号",
+  "mail.smtpPass": "SMTP 授权码",
+  "mail.fromName": "发件人名称",
+  "mail.fromAddress": "发件地址（留空 = 同账号）",
+  "pay.sandboxSecret": "沙箱签名密钥",
+  "pay.alipayAppId": "支付宝应用 ID",
+  "pay.alipayPrivateKey": "支付宝应用私钥",
+  "pay.alipayPublicKey": "支付宝公钥",
+  "pay.wechatMchId": "微信商户号",
+  "pay.wechatSerialNo": "微信证书序列号",
+  "pay.wechatApiV3Key": "微信 APIv3 密钥",
+  "pay.wechatPrivateKey": "微信商户私钥",
+  "pay.paypalClientId": "PayPal Client ID",
+  "pay.paypalClientSecret": "PayPal Client Secret",
+  "pay.paypalMode": "PayPal 模式（sandbox / live）",
+  "sso.enabledScopes": "启用 SSO 的会员域（逗号分隔会员域标识，留空 = 全关）",
 };
 
 const GROUPS: {
@@ -78,14 +78,14 @@ const GROUPS: {
   prefix: string;
   channel?: "chat" | "embedding" | "storage" | "mail";
 }[] = [
-  { title: "对话网关（chat）", prefix: "chat.", channel: "chat" },
-  { title: "向量网关（embedding）", prefix: "embedding.", channel: "embedding" },
-  { title: "对象存储（storage）", prefix: "storage.", channel: "storage" },
+  { title: "对话网关", prefix: "chat.", channel: "chat" },
+  { title: "向量网关", prefix: "embedding.", channel: "embedding" },
+  { title: "对象存储", prefix: "storage.", channel: "storage" },
   { title: "客服防刷（Turnstile）", prefix: "turnstile." },
-  { title: "邮件服务（mail）", prefix: "mail.", channel: "mail" },
-  { title: "支付渠道（pay）", prefix: "pay." },
-  { title: "会员 SSO（sso）", prefix: "sso." },
-  { title: "LLM 全局（llm）", prefix: "llm." },
+  { title: "邮件服务", prefix: "mail.", channel: "mail" },
+  { title: "支付渠道", prefix: "pay." },
+  { title: "会员 SSO", prefix: "sso." },
+  { title: "LLM 全局", prefix: "llm." },
 ];
 
 function toItemState(r: Row): ItemState {
@@ -276,9 +276,9 @@ export default function ConfigPage() {
                   }}
                 >
                   <div style={{ width: 300 }}>
-                    <div>{KEY_LABELS[it.key] ?? it.key}</div>
+                    <div>{KEY_LABELS[it.key] ?? "未命名配置项"}</div>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {it.key}
+                      <Mono>{it.key}</Mono>
                       {it.scope !== "global" ? ` · 作用域 ${it.scope}` : ""}
                     </Typography.Text>
                   </div>

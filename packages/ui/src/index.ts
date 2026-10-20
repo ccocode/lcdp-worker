@@ -4,6 +4,7 @@
 export * from "./tokens.js";
 export * from "./format.js";
 export * from "./feedback.js";
+export * from "./mappings.js";
 export * from "./status.js";
 export * from "./states.js";
 export * from "./PageTable.js";

@@ -15,15 +15,16 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
+import { statusText } from "@lcdp/ui";
 import { asText } from "../helpers";
 
 function statusTag(v: unknown) {
   const s = asText(v);
-  if (s === "ready" || s === "active") return <Tag color="green">{s}</Tag>;
+  if (s === "ready" || s === "active") return <Tag color="green">{statusText(s)}</Tag>;
   if (s === "pending" || s === "pending_review")
-    return <Tag color="orange">{s}</Tag>;
-  if (s === "failed") return <Tag color="red">{s}</Tag>;
-  return <Tag>{s}</Tag>;
+    return <Tag color="orange">{statusText(s)}</Tag>;
+  if (s === "failed") return <Tag color="red">{statusText(s)}</Tag>;
+  return <Tag>{statusText(s)}</Tag>;
 }
 
 function Documents() {

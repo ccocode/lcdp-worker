@@ -422,7 +422,7 @@ export default function PageDesigner({
     }
     let route = newPageRoute.trim();
     if (!route) {
-      void antdMessage.warning("请填写路由 slug");
+      void antdMessage.warning("请填写页面路由");
       return;
     }
     if (!route.startsWith("/")) route = `/${route}`;
@@ -1021,7 +1021,7 @@ export default function PageDesigner({
               ) : (
                 <Input
                   style={{ flex: 1 }}
-                  placeholder="比较值（$param.参数名 可引用页面参数）"
+                  placeholder="比较值（可引用页面参数，写法 $param.参数名）"
                   defaultValue={f.value == null ? "" : String(f.value)}
                   key={`${node.id}-f-${i}-${f.op}-${String(f.value ?? "")}`}
                   onBlur={(ev) =>
@@ -1361,6 +1361,14 @@ export default function PageDesigner({
                 onChange={(v) => patchProps(node.id, { pageSize: v ?? undefined })}
               />
             </Space>
+            <Space size={8} style={{ marginBottom: 12, display: "flex", alignItems: "center" }}>
+              <Typography.Text type="secondary">显示 ID 列（默认隐藏）</Typography.Text>
+              <Switch
+                size="small"
+                checked={props.showId === true}
+                onChange={(v) => patchProps(node.id, { showId: v || undefined })}
+              />
+            </Space>
             <Typography.Text strong style={{ display: "block", marginBottom: 6 }}>
               卡片标题列（移动端卡片呈现）
             </Typography.Text>
@@ -1420,6 +1428,14 @@ export default function PageDesigner({
               }
               options={fieldOptions(entity)}
             />
+            <Space size={8} style={{ marginBottom: 12, display: "flex", alignItems: "center" }}>
+              <Typography.Text type="secondary">显示 ID 行（默认隐藏）</Typography.Text>
+              <Switch
+                size="small"
+                checked={props.showId === true}
+                onChange={(v) => patchProps(node.id, { showId: v || undefined })}
+              />
+            </Space>
           </>
         )}
 
@@ -1712,12 +1728,12 @@ export default function PageDesigner({
 
         {node.type === "AgentChat" && (
           <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-            运行态助手占位组件：M7 接入真实对话能力，本期仅作版面占位。
+            运行态助手组件：在运行态提供智能助手对话，此处仅作版面呈现。
           </Typography.Paragraph>
         )}
         {node.type === "Tabs" && (
           <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-            标签页容器：子组件按顺序成为标签页内容（细粒度标签配置后续里程碑补齐）。
+            标签页容器：子组件按顺序成为标签页内容。
           </Typography.Paragraph>
         )}
       </div>
@@ -2259,8 +2275,7 @@ export default function PageDesigner({
         okText="创建"
       >
         <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-          自定义页空白起步：自由组合多组件、多数据源（如工作台、看板、聚合页）。路由会作为页面地址
-          slug，建议使用英文短横线。
+          自定义页空白起步：自由组合多组件、多数据源（如工作台、看板、聚合页）。路由即页面地址的路径段，建议使用英文短横线。
         </Typography.Paragraph>
         <Space direction="vertical" size={10} style={{ display: "flex" }}>
           <Input
@@ -2269,7 +2284,7 @@ export default function PageDesigner({
             onChange={(e) => setNewPageName(e.target.value)}
           />
           <Input
-            placeholder="路由 slug（如 workbench，会自动补 / 前缀）"
+            placeholder="页面路由（如 workbench，会自动补 / 前缀）"
             value={newPageRoute}
             onChange={(e) => setNewPageRoute(e.target.value)}
           />

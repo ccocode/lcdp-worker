@@ -19,8 +19,8 @@ import { tokens } from "@lcdp/ui";
 import { asText, fmtTime } from "../helpers";
 
 const POOLS = [
-  { key: "design", label: "设计态 Agent（design）" },
-  { key: "runtime", label: "运行态 Agent（runtime）" },
+  { key: "design", label: "设计态 Agent" },
+  { key: "runtime", label: "运行态 Agent" },
 ];
 
 interface ComboRow {

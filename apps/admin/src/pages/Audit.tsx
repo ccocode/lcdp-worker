@@ -7,7 +7,7 @@ import {
   Input,
   Space,
 } from "antd";
-import { PageTable, showError } from "@lcdp/ui";
+import { PageTable, auditActionText, showError } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import type { Dayjs } from "dayjs";
 import { api, type Row } from "../api";
@@ -21,6 +21,21 @@ interface Filters {
   appId: string;
   tenantId: string;
   range: [Dayjs, Dayjs] | null;
+}
+
+/** 审计动作呈现：中文主述 + 原键降级为小号 Mono 辅助；未映射回落原键（职能面保留可检索性） */
+function ActionCell({ action }: { action: unknown }) {
+  const a = asText(action);
+  const label = auditActionText(a);
+  if (!label) return <Mono>{a}</Mono>;
+  return (
+    <span>
+      {label}{" "}
+      <span style={{ opacity: 0.55 }}>
+        <Mono>{a}</Mono>
+      </span>
+    </span>
+  );
 }
 
 const EMPTY: Filters = { action: "", actor: "", appId: "", tenantId: "", range: null };
@@ -86,7 +101,7 @@ export default function Audit({
 
   const columns: ColumnsType<Row> = [
     { title: "时间", width: 180, render: (_, r) => fmtTime(r.created_at ?? r.createdAt) },
-    { title: "动作", dataIndex: "action", render: (v) => <Mono>{asText(v)}</Mono> },
+    { title: "动作", dataIndex: "action", render: (v) => <ActionCell action={v} /> },
     { title: "操作者", dataIndex: "actor", render: (v) => asText(v) },
     {
       title: "租户",
@@ -197,7 +212,7 @@ export default function Audit({
         {detail ? (
           <div>
             <p>
-              动作：<Mono>{asText(detail.action)}</Mono>
+              动作：<ActionCell action={detail.action} />
             </p>
             <p>操作者：{asText(detail.actor)}</p>
             <p>时间：{fmtTime(detail.created_at ?? detail.createdAt)}</p>

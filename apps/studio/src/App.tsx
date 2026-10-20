@@ -267,11 +267,11 @@ function AppsView({
         destroyOnClose
       >
         <Form layout="vertical">
-          <Form.Item label="应用 id（小写字母开头，小写字母/数字/连字符，创建后不可改）" required>
+          <Form.Item label="应用 id（小写字母开头，仅小写字母与数字，创建后不可改）" required>
             <Input
               value={newAppId}
               onChange={(e) => setNewAppId(e.target.value)}
-              placeholder="如 xingqiao-cms"
+              placeholder="如 oa2"
             />
           </Form.Item>
           <Form.Item label="应用名称" required>
@@ -957,7 +957,7 @@ function Designer({
           style={{ width: 320 }}
           defaultValue={memberScope}
           key={`member-scope-${design.app.id}`}
-          placeholder="留空 = 本应用（一期单应用单域）"
+          placeholder="留空 = 本应用"
           onBlur={(e) => setMemberScope(e.target.value.trim())}
         />
       </Space>
@@ -1054,8 +1054,8 @@ function Designer({
       <Alert
         type="info"
         showIcon
-        message="当前应用经平台默认入口呈现（内部域名，面向企业内部用户）"
-        description="入口装配（把页面组装到员工入口/客户门户/公开面）与独立域名配置将在后续里程碑开放；本期的主题设置对默认入口生效。"
+        message="域名、主题与静态生成在管理台维护"
+        description="本应用的域名绑定、主题选择与静态生成设置位于管理台「应用设置」，随当前应用上下文呈现；设计台专注于数据模型、页面、流程与权限设计。"
       />
     </div>
   );

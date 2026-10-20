@@ -137,7 +137,7 @@ function instanceStatusTag(status: string) {
   if (status === "running") return <Tag color="processing">进行中</Tag>;
   if (status === "approved") return <Tag color="success">已通过</Tag>;
   if (status === "rejected") return <Tag color="error">已驳回</Tag>;
-  return <Tag>{status}</Tag>;
+  return <Tag>未知状态</Tag>;
 }
 
 function taskStatusTag(status: string) {
@@ -145,7 +145,7 @@ function taskStatusTag(status: string) {
   if (status === "approved") return <Tag color="success">已批准</Tag>;
   if (status === "rejected") return <Tag color="error">已驳回</Tag>;
   if (status === "cancelled") return <Tag>已取消</Tag>;
-  return <Tag>{status}</Tag>;
+  return <Tag>未知状态</Tag>;
 }
 
 const EVENT_META: Record<string, { label: string; color: string }> = {
@@ -155,14 +155,14 @@ const EVENT_META: Record<string, { label: string; color: string }> = {
   reject: { label: "已驳回", color: "red" },
   urge: { label: "催办", color: "orange" },
   task_action: { label: "自动动作", color: "default" },
-  webhook: { label: "Webhook", color: "default" },
+  webhook: { label: "Webhook 事件", color: "default" },
   low_stock: { label: "低库存", color: "red" },
   complete: { label: "已完成", color: "green" },
   cc: { label: "抄送", color: "purple" },
 };
 
 function eventTag(kind: string) {
-  const meta = EVENT_META[kind] ?? { label: kind, color: "default" };
+  const meta = EVENT_META[kind] ?? { label: "未知事件", color: "default" };
   return <Tag color={meta.color}>{meta.label}</Tag>;
 }
 

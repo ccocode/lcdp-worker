@@ -11,6 +11,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row, type SiteAppView, type SiteMode, type StaticSiteStatus } from "../api";
+import { showError, statusText } from "@lcdp/ui";
 import { fmtTime } from "../helpers";
 
 /**
@@ -46,10 +47,10 @@ export default function StaticStatus({
     setSwitching(true);
     try {
       await api.site.update(appId, { siteMode: mode });
-      message.success(`已切换为「${MODE_META[mode]?.text ?? mode}」（审计 app.site_update 已记录）`);
+      message.success(`已切换为「${MODE_META[mode]?.text ?? mode}」`);
       void load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "切换模式失败");
+      showError(err, "切换模式失败");
     } finally {
       setSwitching(false);
     }
@@ -123,7 +124,7 @@ export default function StaticStatus({
           "尚未生成"
         ) : (
           <span>
-            {r.lastOk ? "成功" : "失败"} · {String(r.kind ?? "")} · 页面{" "}
+            {r.lastOk ? "成功" : "失败"} · {statusText(r.kind)} · 页面{" "}
             {String(r.pages ?? 0)} / 详情 {String(r.details ?? 0)} · {fmtTime(r.at)}
           </span>
         ),
