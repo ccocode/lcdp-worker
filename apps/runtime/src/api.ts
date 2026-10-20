@@ -1860,7 +1860,23 @@ export function makePublicAdapter(
         );
         return res.row;
       } catch {
-        return null;
+        // 治理回退读（第 60 步 R2 补强）：公开守卫不可见的行（如版主已下架
+        // 的帖子）若当前有会员会话，回退会员面单条读——服务端按会员策略
+        // 与被授予角色的 read 动作执法，放行后详情页治理条可完成恢复；
+        // 无会话或仍不可读则维持 null（记录不存在口径不变）。
+        const token = hooks?.getSession?.()?.token ?? null;
+        if (!token) return null;
+        try {
+          return await memberApi.data.get(
+            appId,
+            () => token,
+            entity,
+            id,
+            hooks?.onUnauthorized,
+          );
+        } catch {
+          return null;
+        }
       }
     },
     create: async (entity, data) => {
