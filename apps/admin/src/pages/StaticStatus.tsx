@@ -10,15 +10,16 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { api, type Row, type SiteMode, type StaticSiteStatus } from "../api";
+import { api, type Row, type SiteAppView, type SiteMode, type StaticSiteStatus } from "../api";
 import { fmtTime } from "../helpers";
 
 /**
- * 静态（对象形态归正 W3：原独立页「静态状态」收进应用设置作属性页签后的
- * 内容组件）：本应用作为主应用的各入口站点模式与快照生成状态 + 手动
- * 全量重建。端点为既有 staticGen（按运营授权执法）。siteMode 切换走
- * entries.update{siteMode}：写权在服务端为 admin 分支（operator 分支
- * 只许 theme），故切换控件仅 admin 可用，运营者只读呈现。
+ * 静态（第 68 步口径：站点模式是**应用自身的属性**）：本应用的运行模式
+ * （site_mode）读写走 PUT /admin/apps/:id/site（写权 admin，operator
+ * 只读呈现，与服务端 site PUT 的 admin/operator 分支同口径）；快照生成
+ * 状态按应用读既有 staticGen 端点（第 68.1 起按应用站点字段枚举：
+ * 仅绑定了域名的应用有静态站点面，未绑定应用经默认域名路径以动态
+ * 模式提供服务、无快照）。
  */
 
 const MODE_META: Record<string, { color: string; text: string }> = {
@@ -35,27 +36,33 @@ export default function StaticStatus({
   isAdmin: boolean;
 }) {
   const [sites, setSites] = useState<StaticSiteStatus[]>([]);
+  const [site, setSite] = useState<SiteAppView | null>(null);
   const [loading, setLoading] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
-  const [switchingId, setSwitchingId] = useState<string | null>(null);
+  const [switching, setSwitching] = useState(false);
 
-  const switchMode = async (entryId: string, mode: SiteMode) => {
-    setSwitchingId(entryId);
+  const switchMode = async (mode: SiteMode) => {
+    setSwitching(true);
     try {
-      await api.entries.update(entryId, { siteMode: mode });
-      message.success(`已切换为「${MODE_META[mode]?.text ?? mode}」（审计 entry.update 已记录）`);
+      await api.site.update(appId, { siteMode: mode });
+      message.success(`已切换为「${MODE_META[mode]?.text ?? mode}」（审计 app.site_update 已记录）`);
       void load();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "切换模式失败");
     } finally {
-      setSwitchingId(null);
+      setSwitching(false);
     }
   };
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setSites(await api.staticGen.status(appId));
+      const [st, s] = await Promise.all([
+        api.staticGen.status(appId),
+        api.site.get(appId).catch(() => null),
+      ]);
+      setSites(st);
+      setSite(s?.app ?? null);
     } catch (err) {
       message.error(err instanceof Error ? err.message : "加载静态状态失败");
     } finally {
@@ -83,10 +90,7 @@ export default function StaticStatus({
 
   const hostRows: (Row & { key: string })[] = sites.flatMap((s) =>
     s.hosts.map((h) => ({
-      key: `${s.entryId}:${h.host}`,
-      entryId: s.entryId,
-      entryName: s.entryName,
-      siteMode: s.siteMode,
+      key: h.host,
       host: h.host,
       lastOk: h.lastRun ? h.lastRun.ok : null,
       kind: h.lastRun?.kind ?? null,
@@ -99,39 +103,11 @@ export default function StaticStatus({
   );
 
   const columns: ColumnsType<Row & { key: string }> = [
-    { title: "入口", dataIndex: "entryName", key: "entryName" },
     { title: "域名", dataIndex: "host", key: "host" },
-    {
-      title: "运行模式",
-      dataIndex: "siteMode",
-      key: "siteMode",
-      width: 150,
-      render: (v: string, r: Row) =>
-        isAdmin ? (
-          <Select
-            size="small"
-            value={v}
-            loading={switchingId === String(r.entryId)}
-            style={{ width: 110 }}
-            options={[
-              { label: "动态", value: "dynamic" },
-              { label: "伪静态", value: "pseudo" },
-              { label: "真静态", value: "static" },
-            ]}
-            onChange={(mode) =>
-              void switchMode(String(r.entryId), mode as SiteMode)
-            }
-          />
-        ) : (
-          <Tag color={MODE_META[v]?.color ?? "default"}>
-            {MODE_META[v]?.text ?? v}
-          </Tag>
-        ),
-    },
     {
       title: "最近生成",
       key: "lastRun",
-      width: 220,
+      width: 260,
       render: (_: unknown, r: Row) =>
         r.lastOk === null ? (
           "尚未生成"
@@ -145,13 +121,15 @@ export default function StaticStatus({
     {
       title: "快照",
       key: "snapshot",
-      width: 200,
+      width: 220,
       render: (_: unknown, r: Row) =>
         r.snapshotCount === null
           ? "—"
           : `${String(r.snapshotCount)} 份 · ${fmtTime(r.generatedAt)}`,
     },
   ];
+
+  const mode = site?.siteMode ?? sites[0]?.siteMode ?? "dynamic";
 
   return (
     <div>
@@ -161,30 +139,50 @@ export default function StaticStatus({
           全量重建快照
         </Button>
       </Space>
+      <Descriptions column={2} style={{ marginBottom: 16 }} size="small">
+        <Descriptions.Item label="绑定域名">
+          {site?.boundHost ?? "未绑定（经默认域名路径访问）"}
+        </Descriptions.Item>
+        <Descriptions.Item label="运行模式">
+          {isAdmin ? (
+            <Select
+              size="small"
+              value={mode}
+              loading={switching}
+              style={{ width: 110 }}
+              options={[
+                { label: "动态", value: "dynamic" },
+                { label: "伪静态", value: "pseudo" },
+                { label: "真静态", value: "static" },
+              ]}
+              onChange={(m) => void switchMode(m as SiteMode)}
+            />
+          ) : (
+            <Tag color={MODE_META[mode]?.color ?? "default"}>
+              {MODE_META[mode]?.text ?? mode}
+            </Tag>
+          )}
+        </Descriptions.Item>
+        <Descriptions.Item label="说明">
+          生成状态以快照清单为准；进程内最近运行记录在 api 重启后会清空。
+          {!isAdmin && "运行模式切换由平台管理员操作。"}
+        </Descriptions.Item>
+      </Descriptions>
       {sites.length === 0 && !loading ? (
         <Alert
           type="info"
           showIcon
-          message="该应用没有作为主应用绑定的入口"
-          description="静态快照按入口生成；入口装配在平台区「应用管理」中维护，本应用的域名见「域名」页签。"
+          message="本应用未绑定专属域名，暂无静态站点面"
+          description="静态快照按绑定域名生成；未绑定的应用经默认域名路径以动态模式提供服务。绑定域名见「域名」页签。"
         />
       ) : (
-        <>
-          <Descriptions column={2} style={{ marginBottom: 16 }} size="small">
-            <Descriptions.Item label="主应用入口数">{sites.length}</Descriptions.Item>
-            <Descriptions.Item label="说明">
-              生成状态以快照清单为准；进程内最近运行记录在 api 重启后会清空。
-              {!isAdmin && "运行模式切换由平台管理员操作。"}
-            </Descriptions.Item>
-          </Descriptions>
-          <Table
-            rowKey="key"
-            loading={loading}
-            columns={columns}
-            dataSource={hostRows}
-            pagination={false}
-          />
-        </>
+        <Table
+          rowKey="key"
+          loading={loading}
+          columns={columns}
+          dataSource={hostRows}
+          pagination={false}
+        />
       )}
     </div>
   );

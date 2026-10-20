@@ -132,6 +132,26 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     }
   };
 
+  /** 设为主应用（第 68 步，超管）：经应用站点属性落盘，原主应用让位 */
+  const setPrimary = (a: DataRow) => {
+    const id = String(a.id);
+    Modal.confirm({
+      title: "设为主应用",
+      content: `确认把应用 ${id} 设为主应用？主应用占据默认域名的根路径，原主应用随即让位。若该应用已绑定专属域名，服务端会拒绝（须先解绑）。`,
+      okText: "设为主应用",
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          await api.site.update(id, { isPrimary: true });
+          message.success(`已设为主应用：${id}`);
+          void loadAppCards();
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : "设置失败");
+        }
+      },
+    });
+  };
+
   const [deleteTarget, setDeleteTarget] = useState<DataRow | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -439,6 +459,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
                           {asText(a.name ?? a.id)}
                         </Typography.Text>
                         {current && <Tag color="blue">当前应用</Tag>}
+                        {a.isPrimary ? <Tag color="gold">主应用</Tag> : null}
                       </Space>
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                         {id}
@@ -458,6 +479,18 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
                       </Space>
                       {isAdmin && (
                         <div style={{ textAlign: "right" }}>
+                          {!a.isPrimary && (
+                            <Button
+                              size="small"
+                              type="link"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPrimary(a);
+                              }}
+                            >
+                              设为主应用
+                            </Button>
+                          )}
                           <Button
                             size="small"
                             danger

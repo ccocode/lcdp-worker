@@ -49,12 +49,23 @@ export interface ThemeSlots {
 export type ThemeSlotName = keyof ThemeSlots;
 
 /**
- * 入口出参 theme 归一为双槽：null/旧单指针形状/形状非法一律两槽皆 null
- * （与服务端「旧形状视为未绑定」同口径），页面层只消费归一结果。
+ * 应用站点属性（第 68 步：入口模型退役后，域名/模式/主题/主应用全是
+ * platform_apps 上的应用字段，经 GET/PUT /admin/apps/:id/site 读写）。
  */
-export function entryThemeSlots(entry: EntryView): ThemeSlots {
+export interface SiteAppView {
+  id: string;
+  name: string;
+  boundHost: string | null;
+  siteMode: SiteMode;
+  themeSlots: ThemeSlots | null;
+  isPrimary: boolean;
+  nameEn: string | null;
+}
+
+/** 站点属性 themeSlots 归一为双槽（服务端已归一，此处防御式同口径） */
+export function siteThemeSlots(app: SiteAppView | null): ThemeSlots {
   const empty: ThemeSlots = { desktop: null, mobile: null };
-  const raw = entry.theme as unknown;
+  const raw = app?.themeSlots as unknown;
   if (!raw || typeof raw !== "object") return empty;
   if (!("desktop" in raw) && !("mobile" in raw)) return empty;
   const slot = (v: unknown): ThemePointer | null =>
@@ -68,19 +79,7 @@ export function entryThemeSlots(entry: EntryView): ThemeSlots {
   return { desktop: slot(s.desktop), mobile: slot(s.mobile) };
 }
 
-export interface EntryView {
-  id: string;
-  name: string;
-  hosts: string[];
-  appIds: string[];
-  isDefault: boolean;
-  siteMode: SiteMode;
-  /** 主题绑定（M15 第⑤步双槽）：{desktop, mobile} 双槽指针，未绑定为 null */
-  theme: ThemeSlots | null;
-  config: Record<string, unknown>;
-}
-
-/** 静态生成状态（按应用查：sites 为以该应用为主应用的入口清单） */
+/** 静态生成状态（按应用查：sites 为本应用绑定域名上的站点状态清单） */
 export interface StaticSiteStatus {
   entryId: string;
   entryName: string;
@@ -608,41 +607,34 @@ export const api = {
     },
   },
 
-  entries: {
-    async list(): Promise<EntryView[]> {
-      const res = await apiFetch<{ entries: EntryView[] }>("/admin/entries");
-      return res.entries;
+  site: {
+    /** 应用站点属性读（域名/模式/主题双槽/主应用/英文名 + 平台域名常量） */
+    async get(
+      appId: string,
+    ): Promise<{ app: SiteAppView; defaultHost: string; memberCenterHost: string }> {
+      return apiFetch(`/admin/apps/${encodeURIComponent(appId)}/site`);
     },
     /**
-     * 新建入口（对象形态归正 P5，admin）：应用设置「域名」页签为无专属入口的
-     * 应用首次绑域名时用——建 appIds 恰为 [本应用] 的专属入口承载单值域名。
-     * 非 admin 403、id 冲突 409、校验同 PUT admin 分支。
+     * 应用站点属性写（第 68 步）：只传要改的字段、互不覆盖。
+     * admin 全权；operator 仅可传 themeSlots（主题双槽整体重建：单槽解绑 =
+     * 该槽置 null、null = 双槽全解绑），其余字段服务端 400。
+     * 校验口径：默认域名仅主应用可绑、设主应用前须先解绑专属域名、
+     * 域名/英文名租户内唯一——错误原文由调用方呈现。
      */
-    async create(body: { hosts: string[]; appIds: string[] }): Promise<EntryView> {
-      const res = await apiFetch<{ entry: EntryView }>("/admin/entries", {
-        method: "POST",
+    async update(
+      appId: string,
+      body: {
+        boundHost?: string | null;
+        siteMode?: SiteMode;
+        themeSlots?: ThemeSlots | null;
+        isPrimary?: boolean;
+        nameEn?: string | null;
+      },
+    ): Promise<{ ok: boolean; app: SiteAppView }> {
+      return apiFetch(`/admin/apps/${encodeURIComponent(appId)}/site`, {
+        method: "PUT",
         body: JSON.stringify(body),
       });
-      return res.entry;
-    },
-    /** siteMode 与 theme 指针同居入口 config、互不覆盖：只传要改的那一项；
-     * theme 传完整双槽对象（按槽重建，单槽解绑 = 该槽置 null）或 null 清空双槽；
-     * hosts / appIds 为入口装配（第 56 步起 admin 可写：hosts 跨入口去重、
-     * appIds 须为本租户存在的应用；operator 分支仍只许 theme） */
-    async update(
-      id: string,
-      body: {
-        siteMode?: SiteMode;
-        theme?: ThemeSlots | null;
-        hosts?: string[];
-        appIds?: string[];
-      },
-    ): Promise<EntryView> {
-      const res = await apiFetch<{ entry: EntryView }>(
-        `/admin/entries/${encodeURIComponent(id)}`,
-        { method: "PUT", body: JSON.stringify(body) },
-      );
-      return res.entry;
     },
   },
 

@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Descriptions,
   Empty,
   Input,
   Modal,
@@ -17,28 +18,29 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
-  entryThemeSlots,
+  siteThemeSlots,
   ThemeUploadError,
   THEME_SLOT_LABEL,
   versionFitsSlot,
   versionTargetLabel,
-  type EntryView,
+  type SiteAppView,
   type ThemeConfigItem,
   type ThemeItem,
   type ThemeSlotName,
+  type ThemeSlots,
   type ThemeVersionView,
 } from "../api";
 import { fmtTime } from "../helpers";
 
 /**
- * 主题（对象形态归正 W3 + 03:39 补充口径：原独立页「主题设置」收进应用
- * 设置作属性页签后的内容组件）：呈现主语 = **本应用的主题**——
- * 一个应用可以有多个主题（平台内置可选 + 本应用私有上传），列表就是
- * 该对象的集合形态属性；「设为当前」把某主题版本设为本应用的当前主题。
- * 绑定落点仍是入口的主题双槽指针（桌面槽/移动槽独立、values 按槽独立），
- * 走既有 entries.update 通道与权限口径（绑定权归入口主应用）；入口在本
- * 页签只作**绑定载体信息**呈现（当前指针一览），不作页面主语、
- * 不以入口列表组织本页签。
+ * 主题（第 68 步口径：入口模型退役后，主题绑定是**应用自身的属性**）：
+ * 呈现主语 = 本应用的主题——平台内置可选 + 本应用私有上传，列表就是
+ * 该对象的集合形态属性；「设为当前」把某主题版本写进本应用的主题双槽
+ * 指针（theme_slots，桌面槽/移动槽独立、values 按槽独立），经
+ * PUT /admin/apps/:id/site 落盘，在本应用被访问时生效（专属域名 /
+ * 主应用根路径 / 默认域名 /<id> 路径，形态见下方「当前绑定」）。
+ * 写权口径：绑定权归本应用运营方——operator 仅可写 themeSlots 且主题须
+ * builtin 或本应用私有（服务端供给执法），admin 全权。
  * 上传口径沿现状：运营者可上传本应用私有主题（admin 上传走平台内置
  * 通道、本页签不提供）。
  */
@@ -66,10 +68,10 @@ function findVersion(
     ?.versions.find((v) => v.version === version);
 }
 
-/** 绑定初值：清单 default 打底，入口该槽已绑同版本时用已存 values 覆盖 */
+/** 绑定初值：清单 default 打底，本应用该槽已绑同版本时用已存 values 覆盖 */
 function initialValues(
   themes: ThemeItem[],
-  entry: EntryView,
+  slots: ThemeSlots,
   slot: ThemeSlotName,
   themeId: string,
   version: string,
@@ -78,7 +80,7 @@ function initialValues(
   for (const item of configOf(findVersion(themes, themeId, version))) {
     if (typeof item.default === "string") out[item.key] = item.default;
   }
-  const ptr = entryThemeSlots(entry)[slot];
+  const ptr = slots[slot];
   if (ptr && ptr.id === themeId && ptr.version === version) {
     for (const [k, v] of Object.entries(ptr.values ?? {})) {
       out[k] = typeof v === "string" ? v : JSON.stringify(v);
@@ -89,10 +91,9 @@ function initialValues(
 
 const THEME_SLOTS: ThemeSlotName[] = ["desktop", "mobile"];
 
-/** 「设为当前」弹窗的编辑态：主题 × 载体入口 × 槽位 × 版本 */
+/** 「设为当前」弹窗的编辑态：主题 × 槽位 × 版本 */
 interface BindingState {
   theme: ThemeItem;
-  entryId: string;
   slot: ThemeSlotName;
   version: string;
 }
@@ -105,7 +106,8 @@ export default function AppThemeSettings({
   isAdmin: boolean;
 }) {
   const [themes, setThemes] = useState<ThemeItem[]>([]);
-  const [entries, setEntries] = useState<EntryView[]>([]);
+  const [site, setSite] = useState<SiteAppView | null>(null);
+  const [defaultHost, setDefaultHost] = useState("www.coode.cc.cd");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -121,9 +123,10 @@ export default function AppThemeSettings({
     setLoading(true);
     setError(null);
     try {
-      const [ts, es] = await Promise.all([api.themes.list(), api.entries.list()]);
+      const [ts, s] = await Promise.all([api.themes.list(), api.site.get(appId)]);
       setThemes(ts);
-      setEntries(es);
+      setSite(s.app);
+      setDefaultHost(s.defaultHost);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
@@ -135,33 +138,27 @@ export default function AppThemeSettings({
     void load();
   }, [load]);
 
-  /** 绑定载体：本应用作为主应用（appIds 首位）的入口 */
-  const myEntries = useMemo(
-    () => entries.filter((e) => e.appIds[0] === appId),
-    [entries, appId],
-  );
+  const slots = useMemo(() => siteThemeSlots(site), [site]);
+
   /** 本应用的主题（可选全集）：平台内置全部 + 本应用私有 */
   const myThemes = useMemo(
     () => themes.filter((t) => t.scope === "builtin" || t.ownerAppId === appId),
     [themes, appId],
   );
 
-  /** 某主题版本在各载体入口槽位上的当前绑定标记 */
+  /** 某主题版本在本应用双槽上的当前绑定标记 */
   const marksFor = useCallback(
     (themeId: string, version: string) => {
-      const marks: { entry: EntryView; slot: ThemeSlotName }[] = [];
-      for (const e of myEntries) {
-        const slots = entryThemeSlots(e);
-        for (const slot of THEME_SLOTS) {
-          const ptr = slots[slot];
-          if (ptr && ptr.id === themeId && ptr.version === version) {
-            marks.push({ entry: e, slot });
-          }
+      const marks: ThemeSlotName[] = [];
+      for (const slot of THEME_SLOTS) {
+        const ptr = slots[slot];
+        if (ptr && ptr.id === themeId && ptr.version === version) {
+          marks.push(slot);
         }
       }
       return marks;
     },
-    [myEntries],
+    [slots],
   );
 
   const onUploadFile = useCallback(
@@ -188,40 +185,37 @@ export default function AppThemeSettings({
     [appId, load],
   );
 
-  /** 弹窗内切换 主题/入口/槽位/版本 后，同步 values 编辑初值 */
+  /** 弹窗内切换 主题/槽位/版本 后，同步 values 编辑初值 */
   const syncBindingValues = useCallback(
     (b: BindingState) => {
-      const entry = myEntries.find((e) => e.id === b.entryId);
-      if (!entry || !b.version) {
+      if (!b.version) {
         setBVals({});
         setBValsJson("{}");
         return;
       }
-      setBVals(initialValues(themes, entry, b.slot, b.theme.id, b.version));
-      const ptr = entryThemeSlots(entry)[b.slot];
+      setBVals(initialValues(themes, slots, b.slot, b.theme.id, b.version));
+      const ptr = slots[b.slot];
       setBValsJson(
         ptr && ptr.id === b.theme.id && ptr.version === b.version
           ? JSON.stringify(ptr.values ?? {}, null, 2)
           : "{}",
       );
     },
-    [myEntries, themes],
+    [slots, themes],
   );
 
   const openBinding = useCallback(
     (theme: ThemeItem) => {
-      const entry = myEntries[0];
-      if (!entry) return;
       const slot: ThemeSlotName = "desktop";
       const version =
         theme.versions.find((v) => versionFitsSlot(v, slot))?.version ??
         theme.versions[0]?.version ??
         "";
-      const b: BindingState = { theme, entryId: entry.id, slot, version };
+      const b: BindingState = { theme, slot, version };
       setBinding(b);
       syncBindingValues(b);
     },
-    [myEntries, syncBindingValues],
+    [syncBindingValues],
   );
 
   const patchBinding = useCallback(
@@ -247,8 +241,6 @@ export default function AppThemeSettings({
 
   const saveBinding = useCallback(async () => {
     if (!binding || !binding.version) return;
-    const entry = myEntries.find((e) => e.id === binding.entryId);
-    if (!entry) return;
     const { theme, slot, version } = binding;
     const items = configOf(findVersion(themes, theme.id, version));
     let values: Record<string, unknown>;
@@ -269,14 +261,14 @@ export default function AppThemeSettings({
     }
     setBSaving(true);
     try {
-      // 双槽整体重建：只改本槽，另一槽保持入口现值（服务端按槽复核供给）
-      const next = {
-        ...entryThemeSlots(entry),
+      // 双槽整体重建：只改本槽，另一槽保持本应用现值（服务端按槽复核供给）
+      const next: ThemeSlots = {
+        ...slots,
         [slot]: { id: theme.id, version, values },
       };
-      await api.entries.update(entry.id, { theme: next });
+      await api.site.update(appId, { themeSlots: next });
       message.success(
-        `已设为当前：入口「${entry.name}」${THEME_SLOT_LABEL[slot]} = ${theme.id}@${version}`,
+        `已设为当前：本应用${THEME_SLOT_LABEL[slot]} = ${theme.id}@${version}`,
       );
       await load();
       setBinding(null);
@@ -285,19 +277,15 @@ export default function AppThemeSettings({
     } finally {
       setBSaving(false);
     }
-  }, [binding, bVals, bValsJson, themes, myEntries, load]);
+  }, [binding, bVals, bValsJson, themes, slots, appId, load]);
 
   const unbindCurrent = useCallback(async () => {
     if (!binding) return;
-    const entry = myEntries.find((e) => e.id === binding.entryId);
-    if (!entry) return;
     setBSaving(true);
     try {
-      const next = { ...entryThemeSlots(entry), [binding.slot]: null };
-      await api.entries.update(entry.id, { theme: next });
-      message.success(
-        `入口「${entry.name}」${THEME_SLOT_LABEL[binding.slot]}已解绑主题`,
-      );
+      const next: ThemeSlots = { ...slots, [binding.slot]: null };
+      await api.site.update(appId, { themeSlots: next });
+      message.success(`本应用${THEME_SLOT_LABEL[binding.slot]}已解绑主题`);
       await load();
       setBinding(null);
     } catch (err) {
@@ -305,7 +293,7 @@ export default function AppThemeSettings({
     } finally {
       setBSaving(false);
     }
-  }, [binding, myEntries, load]);
+  }, [binding, slots, appId, load]);
 
   const versionDetail = (t: ThemeItem) => (
     <Space direction="vertical" size={4}>
@@ -360,12 +348,7 @@ export default function AppThemeSettings({
                 {v.version}（{v.fileCount} 文件 / {fmtBytes(v.totalBytes)} ·{" "}
                 {versionTargetLabel(v)}）
                 {marks.length > 0
-                  ? ` · 当前：${marks
-                      .map(
-                        (m) =>
-                          `${THEME_SLOT_LABEL[m.slot]}${myEntries.length > 1 ? `（${m.entry.name}）` : ""}`,
-                      )
-                      .join("、")}`
+                  ? ` · 当前：${marks.map((s) => THEME_SLOT_LABEL[s]).join("、")}`
                   : ""}
               </Tag>
             );
@@ -380,7 +363,7 @@ export default function AppThemeSettings({
         <Button
           type="primary"
           size="small"
-          disabled={myEntries.length === 0 || t.versions.length === 0}
+          disabled={t.versions.length === 0}
           onClick={() => openBinding(t)}
         >
           设为当前
@@ -389,39 +372,15 @@ export default function AppThemeSettings({
     },
   ];
 
-  /** 载体信息行：入口只是绑定落点，只读呈现其双槽当前指针 */
-  const carrierColumns: ColumnsType<EntryView> = [
-    { title: "入口", dataIndex: "name", width: 220 },
-    {
-      title: "域名",
-      render: (_, e) => (e.hosts.length ? e.hosts.join("、") : "（任意域名）"),
-    },
-    ...THEME_SLOTS.map(
-      (slot) =>
-        ({
-          title: `${THEME_SLOT_LABEL[slot]}当前`,
-          width: 220,
-          render: (_: unknown, e: EntryView) => {
-            const ptr = entryThemeSlots(e)[slot];
-            return ptr ? (
-              <Tag color="processing">
-                {ptr.id}@{ptr.version}
-              </Tag>
-            ) : (
-              <Typography.Text type="secondary">未绑定</Typography.Text>
-            );
-          },
-        }) as ColumnsType<EntryView>[number],
-    ),
-  ];
+  const accessText = !site
+    ? "—"
+    : site.boundHost
+      ? `专属域名 ${site.boundHost}`
+      : site.isPrimary
+        ? `默认域名 ${defaultHost} 根路径（主应用）`
+        : `默认域名路径 ${defaultHost}/${appId}`;
 
-  const bindingEntry = binding
-    ? myEntries.find((e) => e.id === binding.entryId)
-    : undefined;
-  const bindingPtr =
-    binding && bindingEntry
-      ? entryThemeSlots(bindingEntry)[binding.slot]
-      : null;
+  const bindingPtr = binding ? slots[binding.slot] : null;
   const bindingItems =
     binding && binding.version
       ? configOf(findVersion(themes, binding.theme.id, binding.version))
@@ -440,7 +399,7 @@ export default function AppThemeSettings({
           showIcon
           style={{ marginBottom: 16 }}
           message="可选主题 = 平台内置主题全部 + 本应用私有主题；「设为当前」即把某主题版本设为本应用的当前主题"
-          description="绑定按入口生效、绑定权归入口的主应用（即当前应用）：呈现上主题指针落在入口的桌面槽/移动槽（版本按 target 进对应槽、两槽各自独立的配置值），绑定、解绑、回滚（改绑旧版本）都只是切换指针，即时生效，与入口的运行模式互不影响。入口在本页签仅作绑定载体（见下方信息），主题列表才是本应用的属性主体。"
+          description="绑定保存在本应用的主题双槽上（桌面槽/移动槽独立、版本按 target 进对应槽、两槽各自独立的配置值），在本应用被访问时生效；绑定、解绑、回滚（改绑旧版本）都只是切换指针，即时生效，与站点的运行模式互不影响。绑定权归本应用运营方（仅可绑内置或本应用私有主题）与平台管理员。"
         />
         {!isAdmin && (
           <Space size={8} style={{ marginBottom: 16 }}>
@@ -482,14 +441,6 @@ export default function AppThemeSettings({
             }
           />
         )}
-        {myEntries.length === 0 && !loading && (
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="本应用不是任何入口的主应用，主题可浏览但「设为当前」不可用，绑定请由 admin 或主应用运营方操作"
-          />
-        )}
         {myThemes.length === 0 ? (
           <Empty description="暂无可选主题（平台内置与本应用私有均为空）" />
         ) : (
@@ -504,20 +455,26 @@ export default function AppThemeSettings({
         )}
       </Card>
 
-      <Card title="绑定载体（入口）信息">
-        {myEntries.length === 0 ? (
-          <Empty description="本应用不是任何入口的主应用" />
-        ) : (
-          <Table
-            rowKey="id"
-            loading={loading}
-            columns={carrierColumns}
-            dataSource={myEntries}
-            pagination={false}
-          />
-        )}
+      <Card title="当前绑定">
+        <Descriptions column={2} size="small">
+          <Descriptions.Item label="生效面">{accessText}</Descriptions.Item>
+          <Descriptions.Item label="主应用">
+            {site?.isPrimary ? <Tag color="gold">主应用</Tag> : "否"}
+          </Descriptions.Item>
+          {THEME_SLOTS.map((slot) => (
+            <Descriptions.Item key={slot} label={`${THEME_SLOT_LABEL[slot]}当前`}>
+              {slots[slot] ? (
+                <Tag color="processing">
+                  {slots[slot]!.id}@{slots[slot]!.version}
+                </Tag>
+              ) : (
+                <Typography.Text type="secondary">未绑定</Typography.Text>
+              )}
+            </Descriptions.Item>
+          ))}
+        </Descriptions>
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          入口若同时挂有其他应用，主题呈现对同入口的全部应用一致；入口装配本身在平台区「应用管理」中维护。
+          主题只作用于本应用自身被访问时的呈现；其他应用各自维护自己的主题绑定。
         </Typography.Paragraph>
       </Card>
 
@@ -533,17 +490,6 @@ export default function AppThemeSettings({
       >
         {binding && (
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
-            <Space size={8}>
-              <Typography.Text style={{ width: 72, display: "inline-block" }}>
-                绑定入口
-              </Typography.Text>
-              <Select
-                style={{ width: 320 }}
-                value={binding.entryId}
-                options={myEntries.map((e) => ({ value: e.id, label: e.name }))}
-                onChange={(v) => patchBinding({ entryId: v })}
-              />
-            </Space>
             <Space size={8}>
               <Typography.Text style={{ width: 72, display: "inline-block" }}>
                 槽位

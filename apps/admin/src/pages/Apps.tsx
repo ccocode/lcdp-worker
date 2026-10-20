@@ -2,9 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   Button,
   Card,
-  Form,
   Modal,
-  Select,
   Space,
   Switch,
   Table,
@@ -13,24 +11,21 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { api, type EntryView, type Row } from "../api";
+import { api, type Row } from "../api";
 import { asText } from "../helpers";
 
 /**
- * 应用管理（平台页）：应用上下架 + 入口装配编辑（第 57 步，Sites 页解散
- * 后的平台视角承接）。装配写走 PUT /admin/entries/:id（第 56 步 admin
- * 分支：hosts/appIds 可写，审计 entry.update）；应用区「域名绑定」页是
- * 同一端点的单应用视角（写权同为 admin-only）。
+ * 应用管理（平台页）：应用上下架 + 站点属性总览（第 68 步：入口装配模型
+ * 退役后，域名/主应用都是应用自身字段）——列表直接呈现各应用的绑定
+ * 域名与访问形态（专属域名 / 主应用根路径 / 默认域名 /<id> 路径），
+ * 并提供「设为主应用」（超管，经 PUT /admin/apps/:id/site 落盘；
+ * 目标应用绑有专属域名时服务端拒绝、须先在该应用设置里解绑）。
+ * 单应用的域名/英文名维护在应用区「应用设置 · 域名」页签。
  */
 export default function Apps() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [entries, setEntries] = useState<EntryView[]>([]);
-  const [entriesLoading, setEntriesLoading] = useState(false);
-  const [editing, setEditing] = useState<EntryView | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm<{ hosts: string[]; appIds: string[] }>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -43,21 +38,9 @@ export default function Apps() {
     }
   }, []);
 
-  const loadEntries = useCallback(async () => {
-    setEntriesLoading(true);
-    try {
-      setEntries(await api.entries.list());
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : "加载入口装配失败");
-    } finally {
-      setEntriesLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void load();
-    void loadEntries();
-  }, [load, loadEntries]);
+  }, [load]);
 
   const toggle = (row: Row, next: boolean) => {
     const id = String(row.id);
@@ -85,27 +68,27 @@ export default function Apps() {
     });
   };
 
-  const openAssembly = (entry: EntryView) => {
-    setEditing(entry);
-    form.setFieldsValue({ hosts: entry.hosts, appIds: entry.appIds });
-  };
-
-  const saveAssembly = async () => {
-    if (!editing) return;
-    const values = await form.validateFields();
-    const hosts = [...new Set(values.hosts.map((h) => h.trim()).filter(Boolean))];
-    setSaving(true);
-    try {
-      await api.entries.update(editing.id, { hosts, appIds: values.appIds });
-      message.success("装配已保存（审计 entry.update 已记录）");
-      setEditing(null);
-      void loadEntries();
-    } catch (err) {
-      // 后端口径错误（域名已被其他入口占用 / 应用不属于本租户等）原文呈现
-      message.error(err instanceof Error ? err.message : "保存装配失败");
-    } finally {
-      setSaving(false);
-    }
+  const setPrimary = (row: Row) => {
+    const id = String(row.id);
+    Modal.confirm({
+      title: "设为主应用",
+      content: `确认把应用 ${id} 设为主应用？主应用占据默认域名的根路径，原主应用随即让位。若该应用已绑定专属域名，服务端会拒绝（须先解绑）。操作会写入审计。`,
+      okText: "设为主应用",
+      cancelText: "取消",
+      onOk: async () => {
+        setBusyId(id);
+        try {
+          await api.site.update(id, { isPrimary: true });
+          message.success(`已设为主应用：${id}`);
+          void load();
+        } catch (err) {
+          // 后端口径错误（已绑专属域名须先解绑等）原文呈现
+          message.error(err instanceof Error ? err.message : "设置失败");
+        } finally {
+          setBusyId(null);
+        }
+      },
+    });
   };
 
   const columns: ColumnsType<Row> = [
@@ -117,6 +100,37 @@ export default function Apps() {
       render: (_, r) => {
         const v = r.current_version ?? r.currentVersion;
         return v === null || v === undefined ? "未发布" : `v${asText(v)}`;
+      },
+    },
+    {
+      title: "主应用",
+      width: 150,
+      render: (_, r) =>
+        r.isPrimary ? (
+          <Tag color="gold">主应用</Tag>
+        ) : (
+          <Button
+            size="small"
+            type="link"
+            loading={busyId === String(r.id)}
+            onClick={() => setPrimary(r)}
+          >
+            设为主应用
+          </Button>
+        ),
+    },
+    {
+      title: "访问形态",
+      render: (_, r) => {
+        const host = asText(r.boundHost);
+        if (host) return <Tag>{host}</Tag>;
+        if (r.isPrimary) return <Typography.Text type="secondary">默认域名根路径</Typography.Text>;
+        return (
+          <Typography.Text type="secondary">
+            默认域名 /{String(r.id)}
+            {r.nameEn ? `（别名 /${asText(r.nameEn)}）` : ""}
+          </Typography.Text>
+        );
       },
     },
     {
@@ -143,45 +157,6 @@ export default function Apps() {
     },
   ];
 
-  const entryColumns: ColumnsType<EntryView> = [
-    { title: "入口", dataIndex: "name", width: 180 },
-    {
-      title: "域名",
-      dataIndex: "hosts",
-      render: (hosts: string[]) => (
-        <Space size={[4, 4]} wrap>
-          {hosts.map((h) => (
-            <Tag key={h}>{h}</Tag>
-          ))}
-        </Space>
-      ),
-    },
-    {
-      title: "绑定应用（首位 = 主应用）",
-      dataIndex: "appIds",
-      render: (appIds: string[]) => (
-        <Space size={[4, 4]} wrap>
-          {appIds.map((id, i) => (
-            <Tag key={id} color={i === 0 ? "blue" : undefined}>
-              {id}
-              {i === 0 ? " · 主" : ""}
-            </Tag>
-          ))}
-        </Space>
-      ),
-    },
-    {
-      title: "操作",
-      key: "actions",
-      width: 110,
-      render: (_: unknown, e: EntryView) => (
-        <Button size="small" type="link" onClick={() => openAssembly(e)}>
-          编辑装配
-        </Button>
-      ),
-    },
-  ];
-
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
       <Card title="应用管理">
@@ -192,62 +167,12 @@ export default function Apps() {
           dataSource={rows}
           pagination={false}
         />
+        <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
+          域名是应用的单值属性：绑定、解绑与英文名在应用区「应用设置 ·
+          域名」页签维护；默认域名仅主应用可绑定，未绑定的应用经默认域名
+          /&lt;应用ID&gt; 路径访问。
+        </Typography.Paragraph>
       </Card>
-      <Card
-        title="入口装配"
-        extra={
-          <Typography.Text type="secondary">
-            入口与应用的装配在此统一维护；单应用视角见应用区「域名绑定」
-          </Typography.Text>
-        }
-      >
-        <Table
-          rowKey="id"
-          loading={entriesLoading}
-          columns={entryColumns}
-          dataSource={entries}
-          pagination={false}
-        />
-      </Card>
-      <Modal
-        title={editing ? `编辑装配 · ${editing.name}` : "编辑装配"}
-        open={editing !== null}
-        onCancel={() => setEditing(null)}
-        onOk={() => void saveAssembly()}
-        confirmLoading={saving}
-        okText="保存"
-        cancelText="取消"
-        width={560}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="hosts"
-            label="域名（回车分隔多个；不可与其他入口重复）"
-            rules={[{ required: true, message: "至少填写一个域名" }]}
-          >
-            <Select
-              mode="tags"
-              tokenSeparators={[",", " "]}
-              placeholder="如 www.example.com"
-              open={false}
-            />
-          </Form.Item>
-          <Form.Item
-            name="appIds"
-            label="绑定应用（顺序首位为主应用；仅限本租户应用）"
-            rules={[{ required: true, message: "至少绑定一个应用" }]}
-          >
-            <Select
-              mode="multiple"
-              placeholder="选择应用"
-              options={rows.map((r) => ({
-                value: String(r.id),
-                label: `${asText(r.name ?? r.id)}（${String(r.id)}）`,
-              }))}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
     </Space>
   );
 }

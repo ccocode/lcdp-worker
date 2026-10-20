@@ -1,19 +1,18 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Input, Space, Typography, message } from "antd";
-import { api, type EntryView } from "../api";
+import { Alert, Button, Input, Space, Tag, Typography, message } from "antd";
+import { api, type SiteAppView } from "../api";
 
 /**
- * 域名（对象形态归正 W3 终版口径，用户 2026-10-20 03:42 定案）：
- * 域名是应用的**单值属性**——本页签就是应用设置里的一个域名输入框，
- * 不是入口列表。值的读写落点 = 该应用的专属入口（entries 中 appIds
- * 恰为 [本应用] 的那条）的 hosts 首项：
- * - 有专属入口 → 读 hosts[0]（存量若有多项只显首项，保存收敛为单值）；
- * - 无专属入口 → 未绑定（空值），admin 保存时经 POST /admin/entries
- *   新建专属入口承载；
- * - 员工默认入口（多应用装配）只是运行外壳兜底，不算任何应用的绑定，
- *   不出现在本页签。
- * 写权 admin-only、后端错误原文呈现；operator 只读（disabled 输入框 +
- * 注记）。
+ * 域名（第 68 步口径：入口模型退役后，域名是应用的**单值属性**）：
+ * 本页签读写 platform_apps 的站点字段（GET/PUT /admin/apps/:id/site）——
+ * bound_host（绑定域名，空 = 未绑定）与 name_en（默认域名路径的英文别名）。
+ * 访问形态由字段推导、只读呈现：
+ * - 绑专属域名 → 该域名直达本应用；
+ * - 主应用 → 占据默认域名根路径；
+ * - 其余 → 默认域名 /<应用ID> 路径（英文名/中文名亦可作路径段，别名只作
+ *   手输便利、平台生成的链接一律用 ID）。
+ * 写权：域名/英文名 admin-only（服务端同口径），operator 只读呈现；
+ * 校验错误（域名占用、默认域名仅主应用可绑等）原文呈现。
  */
 export default function DomainBindings({
   appId,
@@ -22,23 +21,22 @@ export default function DomainBindings({
   appId: string;
   isAdmin: boolean;
 }) {
-  /** 本应用的专属入口（appIds 恰为 [appId]）；undefined = 加载中，null = 无 */
-  const [exclusive, setExclusive] = useState<EntryView | null | undefined>(
-    undefined,
-  );
+  const [site, setSite] = useState<SiteAppView | null | undefined>(undefined);
+  const [defaultHost, setDefaultHost] = useState("www.coode.cc.cd");
   const [host, setHost] = useState("");
+  const [nameEn, setNameEn] = useState("");
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const all = await api.entries.list();
-      const found =
-        all.find((e) => e.appIds.length === 1 && e.appIds[0] === appId) ?? null;
-      setExclusive(found);
-      setHost(found?.hosts[0] ?? "");
+      const res = await api.site.get(appId);
+      setSite(res.app);
+      setDefaultHost(res.defaultHost);
+      setHost(res.app.boundHost ?? "");
+      setNameEn(res.app.nameEn ?? "");
     } catch (err) {
       message.error(err instanceof Error ? err.message : "加载域名失败");
-      setExclusive(null);
+      setSite(null);
     }
   }, [appId]);
 
@@ -47,27 +45,40 @@ export default function DomainBindings({
   }, [load]);
 
   const save = async () => {
-    const v = host.trim();
     setSaving(true);
     try {
-      if (exclusive) {
-        await api.entries.update(exclusive.id, { hosts: v ? [v] : [] });
-        message.success(v ? "域名已保存" : "域名已解绑（清空）");
-      } else if (v) {
-        await api.entries.create({ hosts: [v], appIds: [appId] });
-        message.success("域名已绑定");
-      }
+      const res = await api.site.update(appId, {
+        boundHost: host.trim() ? host.trim() : null,
+        nameEn: nameEn.trim() ? nameEn.trim() : null,
+      });
+      message.success(
+        res.app.boundHost
+          ? `域名已保存：${res.app.boundHost}`
+          : "域名已解绑（清空）",
+      );
       void load();
     } catch (err) {
-      // 后端口径错误（如域名已被其他入口占用）原文呈现，不吞
-      message.error(err instanceof Error ? err.message : "保存域名失败");
+      // 后端口径错误（如域名已被其他应用绑定）原文呈现，不吞
+      message.error(err instanceof Error ? err.message : "保存失败");
     } finally {
       setSaving(false);
     }
   };
 
   const unchanged =
-    exclusive !== undefined && host.trim() === (exclusive?.hosts[0] ?? "");
+    site !== undefined &&
+    host.trim() === (site?.boundHost ?? "") &&
+    nameEn.trim() === (site?.nameEn ?? "");
+
+  const accessHint = !site
+    ? null
+    : site.boundHost
+      ? `专属域名直达：https://${site.boundHost}/`
+      : site.isPrimary
+        ? `本应用是主应用：占据默认域名根路径 https://${defaultHost}/`
+        : `默认域名路径：https://${defaultHost}/${appId}${
+            site.nameEn ? `（英文名别名 /${site.nameEn} 亦可达）` : ""
+          }`;
 
   return (
     <div>
@@ -75,34 +86,49 @@ export default function DomainBindings({
         <Input
           value={host}
           onChange={(e) => setHost(e.target.value)}
-          disabled={!isAdmin || exclusive === undefined}
+          disabled={!isAdmin || site === undefined}
           placeholder="未绑定域名"
           style={{ width: 360 }}
           addonBefore="域名"
+        />
+        <Input
+          value={nameEn}
+          onChange={(e) => setNameEn(e.target.value)}
+          disabled={!isAdmin || site === undefined}
+          placeholder="未设置（可选）"
+          style={{ width: 300 }}
+          addonBefore="英文名"
         />
         {isAdmin && (
           <Button
             type="primary"
             loading={saving}
-            disabled={exclusive === undefined || unchanged}
+            disabled={site === undefined || unchanged}
             onClick={() => void save()}
           >
             保存
           </Button>
         )}
+        {site?.isPrimary && <Tag color="gold">主应用</Tag>}
       </Space>
       {!isAdmin && (
         <Alert
           type="info"
           showIcon
           style={{ marginTop: 16 }}
-          message="域名由平台管理员在应用设置中维护"
+          message="域名与英文名由平台管理员在应用设置中维护"
         />
       )}
       <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-        域名是本应用的单值属性；员工默认入口（多应用装配）为运行外壳兜底，不算本应用的绑定。
-        {(exclusive?.hosts.length ?? 0) > 1 &&
-          "（注：本应用专属入口现存多个域名，此处只显首项，下次保存将收敛为单值。）"}
+        域名是本应用的单值属性（清空即解绑）；默认域名（{defaultHost}
+        ）仅主应用可绑定，未绑定的应用一律经默认域名 /&lt;应用ID&gt;
+        路径访问，英文名只是该路径的手输别名。
+        {accessHint && (
+          <>
+            <br />
+            当前访问形态：{accessHint}
+          </>
+        )}
       </Typography.Paragraph>
     </div>
   );
