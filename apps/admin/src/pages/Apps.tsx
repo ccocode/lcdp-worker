@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  Button,
   Card,
   Modal,
   Space,
@@ -18,9 +17,10 @@ import { asText } from "../helpers";
  * 应用管理（平台页）：应用上下架 + 站点属性总览（第 68 步：入口装配模型
  * 退役后，域名/主应用都是应用自身字段）——列表直接呈现各应用的绑定
  * 域名与访问形态（专属域名 / 主应用根路径 / 默认域名 /<id> 路径），
- * 并提供「设为主应用」（超管，经 PUT /admin/apps/:id/site 落盘；
- * 目标应用绑有专属域名时服务端拒绝、须先在该应用设置里解绑）。
- * 单应用的域名/英文名维护在应用区「应用设置 · 域名」页签。
+ * 主应用以「是/否」开关呈现（拨开经确认后 PUT /admin/apps/:id/site 落盘；
+ * 当前主应用不可关闭——主应用只能改设、不能取消；目标应用绑有专属域名
+ * 时服务端拒绝、须先在该应用设置里解绑）。
+ * 单应用的域名/应用别名维护在应用区「应用设置 · 域名」页签。
  */
 export default function Apps() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -92,6 +92,12 @@ export default function Apps() {
   };
 
   const columns: ColumnsType<Row> = [
+    {
+      title: "编号",
+      dataIndex: "appNo",
+      width: 70,
+      render: (v) => (v === null || v === undefined ? "—" : asText(v)),
+    },
     { title: "应用 ID", dataIndex: "id", render: (v) => asText(v) },
     { title: "租户", dataIndex: "tenant_id", render: (v, r) => asText(v ?? r.tenantId) },
     { title: "场景", dataIndex: "scenario", render: (v) => asText(v) },
@@ -104,20 +110,20 @@ export default function Apps() {
     },
     {
       title: "主应用",
-      width: 150,
-      render: (_, r) =>
-        r.isPrimary ? (
-          <Tag color="gold">主应用</Tag>
-        ) : (
-          <Button
-            size="small"
-            type="link"
-            loading={busyId === String(r.id)}
-            onClick={() => setPrimary(r)}
-          >
-            设为主应用
-          </Button>
-        ),
+      width: 110,
+      render: (_, r) => (
+        <Switch
+          checked={!!r.isPrimary}
+          // 当前主应用不可关（只能改设到别的应用）；改设走确认弹窗
+          disabled={!!r.isPrimary}
+          loading={busyId === String(r.id)}
+          checkedChildren="是"
+          unCheckedChildren="否"
+          onChange={(next) => {
+            if (next) setPrimary(r);
+          }}
+        />
+      ),
     },
     {
       title: "访问形态",
@@ -168,7 +174,7 @@ export default function Apps() {
           pagination={false}
         />
         <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          域名是应用的单值属性：绑定、解绑与英文名在应用区「应用设置 ·
+          域名是应用的单值属性：绑定、解绑与应用别名在应用区「应用设置 ·
           域名」页签维护；默认域名仅主应用可绑定，未绑定的应用经默认域名
           /&lt;应用ID&gt; 路径访问。
         </Typography.Paragraph>

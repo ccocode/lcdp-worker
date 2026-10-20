@@ -608,7 +608,7 @@ export const api = {
   },
 
   site: {
-    /** 应用站点属性读（域名/模式/主题双槽/主应用/英文名 + 平台域名常量） */
+    /** 应用站点属性读（域名/模式/主题双槽/主应用/应用别名 + 平台域名常量） */
     async get(
       appId: string,
     ): Promise<{ app: SiteAppView; defaultHost: string; memberCenterHost: string }> {
@@ -619,7 +619,7 @@ export const api = {
      * admin 全权；operator 仅可传 themeSlots（主题双槽整体重建：单槽解绑 =
      * 该槽置 null、null = 双槽全解绑），其余字段服务端 400。
      * 校验口径：默认域名仅主应用可绑、设主应用前须先解绑专属域名、
-     * 域名/英文名租户内唯一——错误原文由调用方呈现。
+     * 域名/应用别名租户内唯一——错误原文由调用方呈现。
      */
     async update(
       appId: string,
