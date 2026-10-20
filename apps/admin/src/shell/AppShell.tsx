@@ -246,9 +246,12 @@ export default function AppShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grants, user]);
 
-  // 当前应用的领域元数据（领域菜单与模版页共用一份，切换应用即重拉）
+  // 当前应用的领域元数据（领域菜单与模版页共用一份，切换应用即重拉）。
+  // 第 65 步补 user 维度：meta 是按调用者数据权限裁剪的（actions/字段/菜单）——
+  // 同一标签内换人登录（登出→换号）而 appId 不变时，旧人的权限形状不得残留，
+  // 否则新登录者看到的是上一人的按钮与菜单（服务端执法不受影响、纯呈现错形）。
   useEffect(() => {
-    if (!appId) {
+    if (!appId || !user) {
       setAppMeta(null);
       setMetaState("idle");
       return;
@@ -270,7 +273,7 @@ export default function AppShell() {
     return () => {
       cancelled = true;
     };
-  }, [appId]);
+  }, [appId, user]);
 
   // 会话内归位：切换应用上下文后，若当前页不在新上下文的可见页集内，把 URL
   // 与 page 状态真正归位到落点页（工作台）。可见集与落点页与渲染口径同一套
