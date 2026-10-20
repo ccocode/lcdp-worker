@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Button, Radio, Space, message } from "antd";
 import { api, type AdminDataMeta, type Row } from "../api";
 import type { PageKey } from "../registry";
@@ -43,12 +43,63 @@ export default function ContentArticles({
   const canCreate = articleActions.includes("create");
   const canUpdate = articleActions.includes("update");
 
+  // 第 65 步发起面（动作执行面定案：管理侧兜底补齐）：挂载时取一次可发起清单，
+  // 行在清单内才渲染「发起审核」；执法在服务端（startable 已按权限/状态裁剪）。
+  const [startableIds, setStartableIds] = useState<Set<string>>(new Set());
+  const [flowTitle, setFlowTitle] = useState<string | null>(null);
+  const refreshStartable = async () => {
+    try {
+      const s = await api.flow.startable(appId, articleEntity);
+      setFlowTitle(s.workflow?.title ?? null);
+      setStartableIds(new Set(s.records.map((r) => String(r.id))));
+    } catch {
+      setStartableIds(new Set());
+      setFlowTitle(null);
+    }
+  };
+  useEffect(() => {
+    void refreshStartable();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, articleEntity]);
+  const [startingId, setStartingId] = useState<string | null>(null);
+  const startReview = async (row: Row, reload: () => void) => {
+    setStartingId(String(row.id));
+    try {
+      await api.flow.start(appId, articleEntity, String(row.id));
+      message.success(`已发起${flowTitle ? `「${flowTitle}」` : "审核流程"}（审批人在「流程待办」中办理）`);
+      reload();
+      void refreshStartable();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "发起失败");
+    } finally {
+      setStartingId(null);
+    }
+  };
+
   const setStatus = async (row: Row, to: string, reload: () => void) => {
     setBusyId(String(row.id));
     try {
-      await api.adminData.update(appId, articleEntity, String(row.id), { status: to });
-      message.success(`已改为「${to}」（审计已记录）`);
+      // 第 65 步：以服务端回读的实际落库状态为准出提示——status 在调用者
+      // 字段只读集内时会被服务端静默剔除（strippedFields 回带），旧逻辑只看
+      // HTTP 成功就报「已改为」是假成功（第 62 步注记②）。
+      const { row: updated, strippedFields } = await api.adminData.update(
+        appId,
+        articleEntity,
+        String(row.id),
+        { status: to },
+      );
+      const actual = String(updated?.status ?? "");
+      if (actual === to) {
+        message.success(`已改为「${to}」（审计已记录）`);
+      } else if (strippedFields.includes("status")) {
+        message.warning(
+          `状态未变更（仍为「${actual}」）：「状态」不在你的可写字段内，请走流程审批或联系有权限的角色`,
+        );
+      } else {
+        message.warning(`状态未变更（仍为「${actual}」），请刷新后核对`);
+      }
       reload();
+      void refreshStartable();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "状态变更失败");
     } finally {
@@ -132,6 +183,17 @@ export default function ContentArticles({
                 {a.label}
               </Button>
             ))}
+            {/* 第 65 步：发起审核（流程发起面）——记录在服务端可发起清单内才渲染 */}
+            {startableIds.has(String(row.id)) && (
+              <Button
+                size="small"
+                type="link"
+                loading={startingId === String(row.id)}
+                onClick={() => void startReview(row, reload)}
+              >
+                发起审核
+              </Button>
+            )}
           </>
         )}
       />

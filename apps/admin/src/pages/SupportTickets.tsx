@@ -148,8 +148,16 @@ export default function SupportTickets({
       cancelText: "取消",
       onOk: async () => {
         try {
-          await api.adminData.update(appId, ticketKey, String(row.id), { status: to });
-          message.success(`已${verb}（操作已记入审计）`);
+          // 第 65 步：以回读实际状态为准播报，字段被权限剔除时不再报假成功
+          const { row: updated, strippedFields } = await api.adminData.update(appId, ticketKey, String(row.id), { status: to });
+          const actual = String(updated?.status ?? "");
+          if (actual === to) {
+            message.success(`已${verb}（操作已记入审计）`);
+          } else if (strippedFields.includes("status")) {
+            message.warning(`状态未变更（仍为「${actual}」）：「状态」不在你的可写字段内`);
+          } else {
+            message.warning(`状态未变更（仍为「${actual}」），请刷新后核对`);
+          }
           void load();
         } catch (err) {
           message.error(err instanceof Error ? err.message : `${verb}失败`);
@@ -162,12 +170,19 @@ export default function SupportTickets({
     if (!detail) return;
     setHandling(true);
     try {
-      const updated = await api.adminData.update(appId, ticketKey, String(detail.id), {
+      const { row: updated, strippedFields } = await api.adminData.update(appId, ticketKey, String(detail.id), {
         status: handleStatus,
         summary: handleSummary,
       });
       setDetail(updated);
-      message.success("已保存处理结果（操作已记入审计）");
+      if (strippedFields.length) {
+        const names: Record<string, string> = { status: "状态", summary: "处理摘要" };
+        message.warning(
+          `已保存其余内容；以下字段不在你的可写范围内，未保存：${strippedFields.map((k) => names[k] ?? k).join("、")}`,
+        );
+      } else {
+        message.success("已保存处理结果（操作已记入审计）");
+      }
       void load();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "保存失败");

@@ -130,9 +130,18 @@ export default function CommerceOrders({
       cancelText: "取消",
       onOk: async () => {
         try {
-          await api.adminData.update(appId, orderKey, String(row.id), { status: to });
-          message.success(`已${verb}（操作已记入审计）`);
-          setDetail((d) => (d && String(d.id) === String(row.id) ? { ...d, status: to } : d));
+          // 第 65 步：以回读实际状态为准播报，字段被权限剔除时不再报假成功
+          const { row: updated, strippedFields } = await api.adminData.update(appId, orderKey, String(row.id), { status: to });
+          const actual = String(updated?.status ?? "");
+          if (actual === to) {
+            message.success(`已${verb}（操作已记入审计）`);
+            setDetail((d) => (d && String(d.id) === String(row.id) ? { ...d, status: to } : d));
+          } else if (strippedFields.includes("status")) {
+            message.warning(`状态未变更（仍为「${actual}」）：「状态」不在你的可写字段内`);
+            setDetail((d) => (d && String(d.id) === String(row.id) ? updated : d));
+          } else {
+            message.warning(`状态未变更（仍为「${actual}」），请刷新后核对`);
+          }
           void load();
         } catch (err) {
           message.error(err instanceof Error ? err.message : `${verb}失败`);

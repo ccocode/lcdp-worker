@@ -180,12 +180,22 @@ export default function ArticleEditor({
       else if (articleId) body.cover = null;
 
       let id = articleId;
+      let stripped: string[] = [];
       if (id) {
-        await api.adminData.update(appId, articleKey, id, body);
+        const res = await api.adminData.update(appId, articleKey, id, body);
+        stripped = res.strippedFields;
       } else {
-        const row = await api.adminData.create(appId, articleKey, body);
-        id = String(row.id);
+        const res = await api.adminData.create(appId, articleKey, body);
+        id = String(res.row.id);
+        stripped = res.strippedFields;
         setArticleId(id);
+      }
+      // 第 65 步：被字段权限剔除的字段如实提示（随后的回读刷新也会以落库值显形）
+      if (stripped.length) {
+        const labels = stripped.map(
+          (k) => articleMeta?.fields.find((f) => f.key === k)?.label ?? k,
+        );
+        message.warning(`以下字段不在你的可写范围内，未保存：${labels.join("、")}`);
       }
 
       // 标签对账（本体保存成功后）：补建缺失关联、删除多余关联

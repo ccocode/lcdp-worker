@@ -254,8 +254,15 @@ export default function DataAdmin({
       }
       setSaving(true);
       try {
-        await api.adminData.create(appId, entityKey, body);
-        message.success("已新建（操作已记入审计）");
+        const { strippedFields } = await api.adminData.create(appId, entityKey, body);
+        if (strippedFields.length) {
+          const names = strippedFields.map(
+            (k) => entity.fields.find((f) => f.key === k)?.label ?? k,
+          );
+          message.warning(`已新建；以下字段不在你的可写范围内，未保存：${names.join("、")}`);
+        } else {
+          message.success("已新建（操作已记入审计）");
+        }
         setCreating(false);
         setPage(1);
         void load();
@@ -284,8 +291,15 @@ export default function DataAdmin({
     }
     setSaving(true);
     try {
-      await api.adminData.update(appId, entityKey, String(editing.id), changed);
-      message.success("已保存（操作已记入审计）");
+      const { strippedFields } = await api.adminData.update(appId, entityKey, String(editing.id), changed);
+      if (strippedFields.length) {
+        const names = strippedFields.map(
+          (k) => entity.fields.find((f) => f.key === k)?.label ?? k,
+        );
+        message.warning(`已保存其余修改；以下字段不在你的可写范围内，未保存：${names.join("、")}`);
+      } else {
+        message.success("已保存（操作已记入审计）");
+      }
       setEditing(null);
       void load();
     } catch (err) {

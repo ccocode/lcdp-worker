@@ -1209,24 +1209,26 @@ export const api = {
       entity: string,
       id: string,
       fields: Record<string, unknown>,
-    ): Promise<Row> {
-      const res = await apiFetch<{ row: Row }>(
+    ): Promise<{ row: Row; strippedFields: string[] }> {
+      const res = await apiFetch<{ row: Row; strippedFields?: string[] }>(
         `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`,
         { method: "PUT", body: JSON.stringify(fields) },
       );
-      return res.row;
+      // 第 65 步：strippedFields = 被字段权限静默剔除的请求键（服务端回带）；
+      // 调用方据此如实提示，不再报假成功
+      return { row: res.row, strippedFields: res.strippedFields ?? [] };
     },
     /** 新建一行（第 56 步）：字段须在已发布 Schema 内、必填/enum/ref 由服务端校验 */
     async create(
       appId: string,
       entity: string,
       fields: Record<string, unknown>,
-    ): Promise<Row> {
-      const res = await apiFetch<{ row: Row }>(
+    ): Promise<{ row: Row; strippedFields: string[] }> {
+      const res = await apiFetch<{ row: Row; strippedFields?: string[] }>(
         `/admin/apps/${encodeURIComponent(appId)}/data/${encodeURIComponent(entity)}`,
         { method: "POST", body: JSON.stringify(fields) },
       );
-      return res.row;
+      return { row: res.row, strippedFields: res.strippedFields ?? [] };
     },
     /**
      * 删除一行（第 56 步）：被其他记录引用时服务端回 409，
@@ -1291,6 +1293,34 @@ export const api = {
         `/apps/${encodeURIComponent(appId)}/flow/instances/${encodeURIComponent(instanceId)}/urge`,
         { method: "POST", body: JSON.stringify({}) },
       );
+    },
+    /**
+     * 可发起清单（第 65 步，管理侧兜底发起面）：复用员工面端点，
+     * 执法 = 已发布 permissions（read 权 + 行级范围 + 状态为初始值 + 无在跑实例）；
+     * 实体未配置流程时 workflow 为 null。运营授权不赋予发起资格，服务端为准。
+     */
+    async startable(
+      appId: string,
+      entity: string,
+    ): Promise<{ workflow: { id: string; title: string } | null; records: Row[] }> {
+      const res = await apiFetch<{
+        workflow: { id: string; title: string } | null;
+        records: Row[];
+      }>(
+        `/apps/${encodeURIComponent(appId)}/flow/startable/${encodeURIComponent(entity)}`,
+      );
+      return {
+        workflow: res.workflow ?? null,
+        records: Array.isArray(res.records) ? res.records : [],
+      };
+    },
+    /** 发起流程：成功回流程实例；记录不在可发起范围时服务端报错 */
+    async start(appId: string, entity: string, recordId: string): Promise<Row> {
+      const res = await apiFetch<{ instance: Row }>(
+        `/apps/${encodeURIComponent(appId)}/flow/${encodeURIComponent(entity)}/${encodeURIComponent(recordId)}/start`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      return res.instance;
     },
   },
 

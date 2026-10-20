@@ -52,10 +52,18 @@ const pages: PageDef[] = [
                 type="link"
                 onClick={async () => {
                   try {
-                    await api.adminData.update(ctx.appId!, productKey, String(row.id), {
+                    // 第 65 步：以回读实际状态为准播报，字段被权限剔除时不再报假成功
+                    const { row: updated, strippedFields } = await api.adminData.update(ctx.appId!, productKey, String(row.id), {
                       status: target,
                     });
-                    message.success(`已改为「${target}」（审计已记录）`);
+                    const actual = String(updated?.status ?? "");
+                    if (actual === target) {
+                      message.success(`已改为「${target}」（审计已记录）`);
+                    } else if (strippedFields.includes("status")) {
+                      message.warning(`状态未变更（仍为「${actual}」）：「状态」不在你的可写字段内`);
+                    } else {
+                      message.warning(`状态未变更（仍为「${actual}」），请刷新后核对`);
+                    }
                     reload();
                   } catch (err) {
                     message.error(err instanceof Error ? err.message : "状态变更失败");
