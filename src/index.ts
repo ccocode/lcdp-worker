@@ -99,13 +99,9 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.get("/health", (c) => c.json({ ok: true, service: "edge-api", env: c.env.ENVIRONMENT }));
 
-/** 降级白名单：仅 GET 的「打开层」读路径（入口/站点解析 + 应用快照） */
+/** 降级白名单：仅 GET 的「打开层」读路径（站点解析 + 应用快照） */
 function isDegradable(pathname: string): boolean {
-  if (
-    pathname === "/entry/current" ||
-    pathname === "/public/entry" ||
-    pathname === "/site/current"
-  )
+  if (pathname === "/public/site" || pathname === "/site/current")
     return true;
   return /^\/apps\/[^/]+\/snapshot$/.test(pathname);
 }

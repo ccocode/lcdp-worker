@@ -2,7 +2,7 @@
  * LCDP Runtime 边缘分发（Pages 高级模式 _worker.js）。
  *
  * 判定序（自上而下，任一层未命中/异常都落回下一层，最终回落 SPA）：
- * 1. 主题层（M14 线二 + M15 第⑤步双槽）：入口绑定了主题（/public/entry 的
+ * 1. 主题层（M14 线二 + M15 第⑤步双槽）：站点绑定了主题（/public/site 的
  *    entry.theme 双槽指针 { desktop, mobile }）时，按槽位判定选槽后查 R2
  *    绑定 STATIC_R2（桶 lcdp-assets，键 themes/<id>/<version>/<path>）；
  *    命中直出（应答头 x-lcdp-theme: <id>@<version>，index.html 注入
@@ -22,7 +22,7 @@
  *      与 api 侧 staticgen 同规则），命中回快照 HTML（x-lcdp-static: hit）；
  *      未命中一律回落 SPA。
  *
- * 入口配置（siteMode + theme）经网关读 /public/entry?host=&seg=，用 Cache API
+ * 站点配置（siteMode + theme）经网关读 /public/site?host=&seg=，用 Cache API
  * 缓存 60 秒；任何异常一律 fail-open 透传——宁可不分发，不可打挂站点。
  * seg = URL 首段（第 68 步站点模型）：默认域名下首段定位应用（路径作用域应用
  * 的 siteMode/theme 与主应用不同），配置按 (host, seg) 分开缓存；绑定域名与
@@ -214,7 +214,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
     let themeSlots = { desktop: null, mobile: null };
     try {
       const res = await fetch(
-        `${API_BASE}/public/entry?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(seg ?? "")}`,
+        `${API_BASE}/public/site?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(seg ?? "")}`,
         { headers: { accept: "application/json" } },
       );
       if (res.ok) {

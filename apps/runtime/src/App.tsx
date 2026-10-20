@@ -29,13 +29,12 @@ import type {
   AppInfo,
   AssistantContext,
   CenterSession,
-  EntryResult,
   MemberAdapterHooks,
   MemberAuthResult,
   MemberPolicy,
   MemberSession,
   MemberSsoInfo,
-  PublicEntryResult,
+  PublicSiteResult,
   SiteInfo,
   Snapshot,
   SsoConsentItem,
@@ -337,14 +336,14 @@ function AnonGate({
   device: Device;
   onLoggedIn: (user: UserInfo) => void;
 }) {
-  const [pub, setPub] = useState<PublicEntryResult | null>(null);
+  const [pub, setPub] = useState<PublicSiteResult | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     let alive = true;
     api
-      .publicEntry(
+      .publicSite(
         window.location.host,
         decodedSeg(window.location.pathname),
       )
@@ -2704,12 +2703,12 @@ function PublicShell({
   memberSso,
   basePrefix = "",
 }: {
-  primary: NonNullable<PublicEntryResult["primary"]>;
+  primary: NonNullable<PublicSiteResult["primary"]>;
   inPath: string;
   params: Record<string, string>;
   device: Device;
   onLogin: () => void;
-  /** 会员 SSO 开关（/public/entry 下发）：enabled 时会员登录入口改走会员中心授权流 */
+  /** 会员 SSO 开关（/public/site 下发）：enabled 时会员登录入口改走会员中心授权流 */
   memberSso?: MemberSsoInfo | null;
   /** 站点路径前缀（路径作用域时为 /<应用段>，其余为空）：站内链接统一拼回 */
   basePrefix?: string;
@@ -3098,10 +3097,9 @@ function PublicShell({
 }
 
 /**
- * 站点视图（第 68 步新引导）：按域名 + 首段路径经 /site/current 解析作用域——
+ * 站点视图（第 68 步引导）：按域名 + 首段路径经 /site/current 解析作用域——
  * 应用作用域单应用装配（路径作用域带 /<应用段> 前缀）；shell 兜底装配 =
  * 主应用 + 未绑应用；根域整页跳默认域名；会员中心域渲染内置中心页组。
- * /site/current 不可用时回落旧 /entry/current 垫片（行为与退役前等价）。
  * 跨应用聚合（待办计数）经 aggregateApps 走站点目录全量，与装配集分离。
  */
 function EntryView({
@@ -3118,7 +3116,6 @@ function EntryView({
   device: Device;
 }) {
   const [site, setSite] = useState<SiteInfo | null>(null);
-  const [legacy, setLegacy] = useState<EntryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -3128,17 +3125,9 @@ function EntryView({
       .then((r) => {
         if (alive) setSite(r.site);
       })
-      .catch(() => {
-        // 新引导不可用（旧版 api 过渡期）→ 回落旧入口解析，不整页报错
-        api
-          .entry(window.location.host)
-          .then((r) => {
-            if (alive) setLegacy(r);
-          })
-          .catch((err) => {
-            if (alive)
-              setError(err instanceof Error ? err.message : String(err));
-          });
+      .catch((err) => {
+        if (alive)
+          setError(err instanceof Error ? err.message : String(err));
       });
     return () => {
       alive = false;
@@ -3155,32 +3144,6 @@ function EntryView({
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
         <Button onClick={onLogout}>退出登录</Button>
       </div>
-    );
-  }
-  if (legacy) {
-    if (legacy.apps.length === 0) {
-      return (
-        <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
-          <Alert
-            type="info"
-            message="当前入口尚未装配应用（先完成平台初始化）"
-            style={{ marginBottom: 12 }}
-          />
-          <Button onClick={onLogout}>退出登录</Button>
-        </div>
-      );
-    }
-    return (
-      <AppView
-        apps={legacy.apps}
-        inPath={inPath}
-        params={params}
-        user={user}
-        onLogout={onLogout}
-        device={device}
-        preview={false}
-        entryName={legacy.entry?.name ?? null}
-      />
     );
   }
   if (!site || site.mode === "redirect") {
