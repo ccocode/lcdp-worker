@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -13,7 +13,13 @@ import {
   Typography,
   message,
 } from "antd";
-import { DatabaseOutlined, LogoutOutlined, SafetyOutlined } from "@ant-design/icons";
+import {
+  DatabaseOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  SafetyOutlined,
+} from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
@@ -36,6 +42,7 @@ import {
   pathWithApp,
   pathWithData,
   resolvePath,
+  type MenuGroup,
   type PageContext,
   type PageKey,
 } from "../registry";
@@ -168,6 +175,47 @@ export default function AppShell() {
     entityFromSearch(),
   );
   const [openKeys, setOpenKeys] = useState<string[]>([]);
+  // ---- 侧栏整栏收起（第 77 步）：状态存 localStorage，刷新/重进保持 ----
+  const [siderCollapsed, setSiderCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("lcdp.admin.siderCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  /** 用户手动收起过的菜单节点：自动展开规则不与用户抢状态（第 77 步） */
+  const userClosedRef = useRef<Set<string>>(new Set());
+  /**
+   * 整栏折叠切换后的防污染时间窗截止点：rc-menu 在 inlineCollapsed 切换
+   * 提交后会回放一次 openKeys 清零（2026-10-19 运行态实证，污染事件在
+   * 展开提交后到达、按「折叠态」判定的守卫挡不住），窗内 onOpenChange 不落 state。
+   */
+  const openGuardUntilRef = useRef(0);
+  const toggleSider = useCallback(() => {
+    openGuardUntilRef.current = Date.now() + 400;
+    setSiderCollapsed((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem("lcdp.admin.siderCollapsed", next ? "1" : "0");
+      } catch {
+        /* 存储不可用时仅本次会话生效 */
+      }
+      return next;
+    });
+  }, []);
+  /** 菜单展开变化：防污染窗内直接丢弃；其余记录用户手动收起集后落 state */
+  const onMenuOpenChange = useCallback(
+    (keys: string[]) => {
+      if (Date.now() < openGuardUntilRef.current) return;
+      setOpenKeys((prev) => {
+        for (const k of prev)
+          if (!keys.includes(k)) userClosedRef.current.add(k);
+        for (const k of keys) userClosedRef.current.delete(k);
+        return keys;
+      });
+    },
+    [],
+  );
   /** 应用行清单（仅作当前应用信息富化；切换器与归位口径走 grants/me） */
   const [appsRows, setAppsRows] = useState<Row[]>([]);
   const [appMeta, setAppMeta] = useState<AdminDataMeta | null>(null);
@@ -349,14 +397,31 @@ export default function AppShell() {
     }
   }, [user, grants, page, metaState, appMeta, appId, dataEntity]);
 
-  // 进入数据页时自动展开数据维护子菜单（用户仍可手动收起）
+  // 自动展开（第 77 步，含第 76 步数据组规则）：当前页所在分组只「追加展开」，
+  // 不收起用户已展开的其他组；用户手动收起过的节点不强行再展开。
+  // 顶层单项页（工作台/应用设置）无组可展。meta 在途时分组可能不全，
+  // 判不到组就跳过，meta 就绪后本 effect 会再跑一次。
   useEffect(() => {
+    if (!user || !grants) return;
+    let key: string | null = null;
     if (page === "data") {
-      setOpenKeys((ks) =>
-        ks.includes("data-submenu") ? ks : [...ks, "data-submenu"],
+      key = "data-submenu";
+    } else {
+      const { platformGroups, appGroups } = contextVisibility({
+        isAdmin: user.role === "admin",
+        grants,
+        appId,
+        appMeta,
+      });
+      const g = [...appGroups, ...platformGroups].find((grp) =>
+        grp.items.some((d) => d.key === page),
       );
+      if (g) key = `sec:${g.label}`;
     }
-  }, [page]);
+    if (!key || userClosedRef.current.has(key)) return;
+    const k = key;
+    setOpenKeys((ks) => (ks.includes(k) ? ks : [...ks, k]));
+  }, [user, grants, appId, appMeta, page]);
 
   const switchApp = useCallback(
     (id: string) => {
@@ -395,24 +460,33 @@ export default function AppShell() {
   const effectivePage: PageKey = visibleKeys.has(page) ? page : fallbackPage;
   const effectiveDef = DEF_BY_KEY.get(effectivePage)!;
 
-  /** 左侧菜单 = 平台分组 + 应用分组（分区只写功能名，当前应用看顶栏切换器） */
-  const menuItems: MenuProps["items"] = [...platformGroups, ...appGroups].map(
-    (g) => ({
-      type: "group" as const,
-      key: `group:${g.label}`,
-      label: g.label,
-      children: g.items.map((d) => ({
-        key: d.key,
-        label: d.label,
-        icon: d.icon,
-      })),
-    }),
-  );
-  // 数据维护展开组（第 76 步）：可展开子菜单插在「应用设置」分组之前
-  // （即模版段/运营管理之后，与 APP_SECTION_ORDER 的分区顺序一致）；
+  /**
+   * 左侧菜单（第 77 步重组）：工作台顶层单项 → 当前应用段（模版组 → 运营管理
+   * → 数据维护子菜单 → 应用设置单项）→ 分隔 +「平台管理」总标题 → 平台段三组。
+   * 分组一律渲染为可折叠 submenu 节点（key = sec:<分组名>，图标取组内首项），
+   * 与数据维护子菜单共用 openKeys 一套折叠机制；菜单项集合与可见性口径
+   * 仍由 contextVisibility 决定，本处只定顺序与形态。
+   */
+  type MenuItem = NonNullable<MenuProps["items"]>[number];
+  const toSubmenu = (g: MenuGroup): MenuItem => ({
+    type: "submenu" as const,
+    key: `sec:${g.label}`,
+    label: g.label,
+    icon: g.items[0]?.icon,
+    children: g.items.map((d) => ({
+      key: d.key,
+      label: d.label,
+      icon: d.icon,
+    })),
+  });
+  const menuItems: MenuItem[] = [];
+  const wbDef = DEF_BY_KEY.get("workbench")!;
+  menuItems.push({ key: wbDef.key, label: wbDef.label, icon: wbDef.icon });
+  for (const g of appGroups) menuItems.push(toSubmenu(g));
+  // 数据维护展开组（第 76 步）：位于运营管理之后、应用设置单项之前；
   // 组为空（实体全被模版覆盖）时整组不出现。
   if (dataMenu && dataMenu.entities.length > 0) {
-    const submenu = {
+    menuItems.push({
       type: "submenu" as const,
       key: "data-submenu",
       label: "数据维护",
@@ -421,12 +495,23 @@ export default function AppShell() {
         key: `data:${e.key}`,
         label: e.label,
       })),
-    };
-    const idx = menuItems.findIndex(
-      (g) => g && "label" in g && g.label === "应用设置",
-    );
-    if (idx >= 0) menuItems.splice(idx, 0, submenu);
-    else menuItems.push(submenu);
+    });
+  }
+  if (appId && visibleKeys.has("appsettings")) {
+    const sDef = DEF_BY_KEY.get("appsettings")!;
+    menuItems.push({ key: sDef.key, label: sDef.label, icon: sDef.icon });
+  }
+  // 平台段沉底：除工作台外无任何可见项（如运营者且无 kb 例外）时，
+  // 分界与总标题整段不出现，不留空组/孤标题。
+  if (platformGroups.length > 0) {
+    menuItems.push({ type: "divider" as const, key: "platform-divider" });
+    menuItems.push({
+      type: "group" as const,
+      key: "platform-caption",
+      label: "平台管理",
+      children: [],
+    });
+    for (const g of platformGroups) menuItems.push(toSubmenu(g));
   }
 
   /** 应用区页面统一占位：元数据未就绪时不渲染具体页 */
@@ -466,31 +551,79 @@ export default function AppShell() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Sider theme="light" width={208} style={{ borderRight: `1px solid ${tokens.colorBorder}` }}>
-        <div style={{ padding: "16px 16px 8px", fontWeight: 600, fontSize: 16 }}>
-          LCDP 管理台
+      <Sider
+        theme="light"
+        width={208}
+        collapsedWidth={64}
+        collapsed={siderCollapsed}
+        trigger={null}
+        style={{
+          borderRight: `1px solid ${tokens.colorBorder}`,
+          position: "sticky",
+          top: 0,
+          height: "100vh",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <div
+            style={{
+              padding: "16px 16px 8px",
+              fontWeight: 600,
+              fontSize: 16,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+            }}
+          >
+            {siderCollapsed ? "L" : "LCDP 管理台"}
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+            <Menu
+              mode="inline"
+              inlineCollapsed={siderCollapsed}
+              selectedKeys={
+                effectivePage === "data" && dataEntity
+                  ? [`data:${dataEntity}`]
+                  : [effectivePage]
+              }
+              openKeys={openKeys}
+              onOpenChange={onMenuOpenChange}
+              items={menuItems}
+              onClick={(e) => {
+                if (e.key.startsWith("data:")) goData(e.key.slice("data:".length));
+                else go(e.key as PageKey);
+              }}
+            />
+          </div>
+          <div
+            onClick={toggleSider}
+            style={{
+              borderTop: `1px solid ${tokens.colorBorder}`,
+              padding: "10px 16px",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              color: tokens.colorTextSecondary,
+              fontSize: 13,
+            }}
+          >
+            {siderCollapsed ? (
+              <MenuUnfoldOutlined />
+            ) : (
+              <>
+                <MenuFoldOutlined /> 收起侧栏
+              </>
+            )}
+          </div>
         </div>
-        <Menu
-          mode="inline"
-          selectedKeys={
-            effectivePage === "data" && dataEntity
-              ? [`data:${dataEntity}`]
-              : [effectivePage]
-          }
-          openKeys={openKeys}
-          onOpenChange={setOpenKeys}
-          items={menuItems}
-          onClick={(e) => {
-            if (e.key.startsWith("data:")) goData(e.key.slice("data:".length));
-            else go(e.key as PageKey);
-          }}
-        />
       </Sider>
       <Layout>
         <Header
           style={{
             background: tokens.colorBgContainer,
             borderBottom: `1px solid ${tokens.colorBorder}`,
+            position: "sticky",
+            top: 0,
+            zIndex: 10,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",

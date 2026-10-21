@@ -115,6 +115,12 @@ export interface PageDef {
   /** 左侧菜单分组（只写功能名；当前应用由顶栏切换器呈现） */
   section: string;
   /**
+   * 菜单顶层单项（第 77 步）：不进任何分组、直接作菜单根项呈现
+   * （工作台、应用设置——单项集合不设组节点，分组只留给 ≥2 项的集合）。
+   * 只影响菜单呈现分组，visibleKeys 与可见性谓词不因此改变。
+   */
+  topLevel?: boolean;
+  /**
    * 运营者例外可见（平台段默认仅 admin）：目前仅知识库——
    * 对可运营集（含推导来源）含 supplier-service 的运营者可见。
    */
@@ -165,7 +171,9 @@ const PLATFORM_DEFS: PageDef[] = [
     label: "工作台",
     icon: <DashboardOutlined />,
     segment: "platform",
+    // 第 77 步：提为菜单顶层单项（原「总览」单项组解散），section 仅占位
     section: "总览",
+    topLevel: true,
     render: (ctx) => <Workbench ctx={ctx} />,
   },
   {
@@ -189,7 +197,8 @@ const PLATFORM_DEFS: PageDef[] = [
     label: "应用管理",
     icon: <AppstoreOutlined />,
     segment: "platform",
-    section: "应用与资产",
+    // 第 77 步：原「应用与资产」「内容与知识」「运营保障」三组合并为「平台运营」
+    section: "平台运营",
     render: () => <Apps />,
   },
   {
@@ -197,7 +206,7 @@ const PLATFORM_DEFS: PageDef[] = [
     label: "知识库",
     icon: <BookOutlined />,
     segment: "platform",
-    section: "内容与知识",
+    section: "平台运营",
     operatorException: "kb",
     render: () => <Kb />,
   },
@@ -206,7 +215,7 @@ const PLATFORM_DEFS: PageDef[] = [
     label: "成本看板",
     icon: <DollarOutlined />,
     segment: "platform",
-    section: "运营保障",
+    section: "平台运营",
     render: () => <Usage />,
   },
   {
@@ -214,7 +223,7 @@ const PLATFORM_DEFS: PageDef[] = [
     label: "熔断与配额",
     icon: <StopOutlined />,
     segment: "platform",
-    section: "运营保障",
+    section: "平台运营",
     render: () => <Switches />,
   },
   {
@@ -222,7 +231,7 @@ const PLATFORM_DEFS: PageDef[] = [
     label: "系统配置",
     icon: <SettingOutlined />,
     segment: "platform",
-    section: "运营保障",
+    section: "平台运营",
     render: () => <ConfigPage />,
   },
   {
@@ -333,7 +342,9 @@ const APP_DEFS: PageDef[] = [
     label: "应用设置",
     icon: <SettingOutlined />,
     segment: "app",
+    // 第 77 步：提为菜单顶层单项（与工作台同式），section 仅占位
     section: "应用设置",
+    topLevel: true,
     render: (ctx) => (
       <AppSettings
         key={ctx.appId!}
@@ -356,6 +367,9 @@ export const PAGE_DEFS: PageDef[] = [
 export const DEF_BY_KEY: Map<PageKey, PageDef> = new Map(
   PAGE_DEFS.map((d) => [d.key, d]),
 );
+
+/** 平台段分区呈现顺序（第 77 步归并后三组） */
+const PLATFORM_SECTION_ORDER: string[] = ["组织与权限", "平台运营", "审计追溯"];
 
 /** 应用区分区呈现顺序（对象形态归正：模版段 → 运营管理 → 数据维护 → 应用设置） */
 const APP_SECTION_ORDER: string[] = [
@@ -435,13 +449,18 @@ export function contextVisibility(args: {
       : [];
   // 菜单分组排除 menuHidden 页（如文章编辑页）：只隐藏菜单入口，
   // visibleKeys 仍保留该页——归位 effect 与 go() 依赖它判定可达性。
+  // 第 77 步：topLevel 页（工作台/应用设置）同样不进分组，由外壳作菜单
+  // 根项单独渲染；平台段按 PLATFORM_SECTION_ORDER 显式排序。
   const platformGroups = groupBySection(
-    platformVisible.filter((d) => !d.menuHidden),
+    platformVisible.filter((d) => !d.menuHidden && !d.topLevel),
+    PLATFORM_SECTION_ORDER,
   );
   // 「数据维护」分组自 appGroups 摘出：展开组由外壳按 dataMenu 单独渲染
   // 为可展开子菜单（第 76 步），data 页 def 本身只负责页面本体。
   const appGroups = groupBySection(
-    [...appVisible, ...templateVisible].filter((d) => !d.menuHidden),
+    [...appVisible, ...templateVisible].filter(
+      (d) => !d.menuHidden && !d.topLevel,
+    ),
     APP_SECTION_ORDER,
   ).filter((g) => g.label !== "数据维护");
   const visibleKeys = new Set<PageKey>([
