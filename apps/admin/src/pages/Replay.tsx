@@ -433,9 +433,6 @@ export default function Replay({
               setDetailId(null);
             }}
           />
-          <Typography.Text type="secondary">
-            回放明细按应用归属，平台层不混显：选定应用后只取该应用的会话、提案与流程。
-          </Typography.Text>
         </Space>
       )}
       <Table

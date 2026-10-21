@@ -137,17 +137,11 @@ export default function DomainBindings({
           message="域名与应用别名由平台管理员在应用设置中维护"
         />
       )}
-      <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-        域名是本应用的单值属性（清空即解绑）；默认域名（{defaultHost}
-        ）仅主应用可绑定，未绑定的应用一律经默认域名 /&lt;应用ID&gt;
-        路径访问，应用别名只是该路径的手输别名。
-        {accessHint && (
-          <>
-            <br />
-            当前访问形态：{accessHint}
-          </>
-        )}
-      </Typography.Paragraph>
+      {accessHint && (
+        <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
+          当前访问形态：{accessHint}
+        </Typography.Paragraph>
+      )}
     </div>
   );
 }

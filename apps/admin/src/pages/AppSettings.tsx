@@ -274,12 +274,6 @@ export default function AppSettings({
           { key: "grants", label: "授权名单", children: grantsTab },
         ]}
       />
-      <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-        本页各页签即本应用的属性维护面（域名 / 主题 / 静态为本应用的属性，授权名单只读）；
-        授权的发放与回收在平台区「用户与角色」，应用启停与主应用设置在平台区「应用管理」，
-        访问形态说明见「域名」页签，设计与发布在 Studio；
-        领域在创建应用时确定、不可变更，名单内容随领域角色与已发布权限自动变化。
-      </Typography.Paragraph>
     </Card>
   );
 }

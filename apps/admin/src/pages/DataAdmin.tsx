@@ -358,14 +358,6 @@ export default function DataAdmin({
 
   const body = (
     <>
-      {!lockEntity && !embedded && (
-        <Typography.Paragraph
-          type="secondary"
-          style={{ marginBottom: 12, fontSize: 12 }}
-        >
-          保底维护工具：按实体元数据呈现；业务办理请用领域模版与运营页
-        </Typography.Paragraph>
-      )}
       <Space style={{ marginBottom: 16 }} wrap>
         {!lockEntity && (
           <Select
@@ -394,11 +386,6 @@ export default function DataAdmin({
           >
             新建{entity.label}
           </Button>
-        )}
-        {!embedded && (
-          <Typography.Text type="secondary">
-            读 + 新建 + 编辑 + 删除（按你的数据权限呈现动作），全程审计；敏感字段以掩码呈现，未修改不会回写；被引用的记录不能删除。
-          </Typography.Text>
         )}
       </Space>
       <PageTable
@@ -438,6 +425,11 @@ export default function DataAdmin({
       >
         {(editing || creating) && entity && (
           <Form form={form} layout="vertical">
+            {editing && entity.fields.some((f) => f.sensitive) && (
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                敏感字段以掩码呈现，未修改不会回写。
+              </Typography.Paragraph>
+            )}
             {entity.fields
               .filter((f) => !creating || !SYSTEM_COLS.includes(f.key))
               .filter((f) => f.key !== presetField)

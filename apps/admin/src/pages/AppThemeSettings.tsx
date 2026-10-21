@@ -460,13 +460,6 @@ export default function AppThemeSettings({
             description="主题的上传与绑定属于应用管理事项，请由本应用管理员（运营授权）或平台管理员操作。"
           />
         )}
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message={`可选主题 = 本应用私有主题 + 「${domainLabel(appDomain)}」领域的共享主题；按桌面 / 移动分组呈现，每组只有一个启用主题`}
-          description="共享主题由平台管理员提供，同一领域的应用都可选用；没有共享主题的领域只能使用本应用私有主题。绑定、解绑或改绑旧版本后都立即生效，桌面与移动分别使用各自的主题、互不影响。只有本应用运营方与平台管理员可以绑定主题，且不能选用其他应用的私有主题或其他领域的共享主题。"
-        />
         <Space size={8} wrap style={{ marginBottom: 16 }}>
           <input
             ref={fileRef}
@@ -594,9 +587,7 @@ export default function AppThemeSettings({
             </Descriptions.Item>
           ))}
         </Descriptions>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          主题只作用于本应用自身被访问时的呈现；其他应用各自维护自己的主题绑定。
-        </Typography.Paragraph>
+
       </Card>
 
       <Modal

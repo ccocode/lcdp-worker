@@ -3,7 +3,6 @@ import { Button, Card, Form, Input, Modal, Table, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
 import { asText, fmtTime } from "../helpers";
-import { tokens } from "@lcdp/ui";
 
 export default function Tenants() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -104,10 +103,6 @@ export default function Tenants() {
         dataSource={rows}
         pagination={false}
       />
-      <div style={{ marginTop: 12, color: tokens.colorTextTertiary, fontSize: 12 }}>
-        说明：default 为系统默认租户，不可删除。
-      </div>
-
       <Modal
         title="新建租户"
         open={createOpen}

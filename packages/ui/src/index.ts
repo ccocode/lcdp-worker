@@ -8,3 +8,4 @@ export * from "./mappings.js";
 export * from "./status.js";
 export * from "./states.js";
 export * from "./PageTable.js";
+export * from "./PageHelp.js";

@@ -21,7 +21,8 @@ import {
   SafetyOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
-import { tokens } from "@lcdp/ui";
+import { PageHelp, tokens } from "@lcdp/ui";
+import { HELP } from "../help";
 import {
   api,
   consumeExpiredFlag,
@@ -666,6 +667,7 @@ export default function AppShell() {
         >
           <Space>
             <Typography.Text strong>{effectiveDef.label}</Typography.Text>
+            {HELP[effectivePage] && <PageHelp entry={HELP[effectivePage]!} />}
             <Select
               allowClear={isAdmin}
               placeholder="选择应用"

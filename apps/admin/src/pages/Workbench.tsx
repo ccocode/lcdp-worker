@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Alert,
   Button,
   Card,
   Col,
@@ -329,7 +328,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
           </Col>
         </Row>
         <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-          用量统计起点：{pStats.meteringStart ?? "—"}（自该日起开始计量，此前消耗不补录、不折算金额）。
+          用量统计起点：{pStats.meteringStart ?? "—"}
         </Typography.Paragraph>
       </>
     ),
@@ -457,14 +456,6 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
           ? `工作台 · ${appMeta?.app.name ?? ctx.currentApp?.name ?? appId}`
           : "工作台 · 平台总览"}
       </Typography.Title>
-      {!appForm && isAdmin && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="先选一个应用：用顶栏的应用切换器选择应用，工作台将呈现该应用的对象形态；下方为平台维度数据。"
-        />
-      )}
       {appForm &&
         APP_LAYOUT.map((key) => (
           <React.Fragment key={key}>{blocks[key]()}</React.Fragment>

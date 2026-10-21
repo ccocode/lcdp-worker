@@ -10,7 +10,6 @@ import {
   Switch,
   Table,
   Tag,
-  Typography,
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -272,9 +271,6 @@ export default function Switches() {
           dataSource={combos}
           pagination={false}
         />
-        <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          熔断后 api 在调用 Agent 的咽喉点直接拒绝并返回 agent_disabled，同时写入审计；恢复即重新启用。
-        </Typography.Paragraph>
       </Card>
 
       <Card title="租户日 Token 上限（配额）">
@@ -310,8 +306,7 @@ export default function Switches() {
         </Space>
         <div style={{ marginTop: 16, color: tokens.colorTextSecondary }}>
           全局默认上限：{globalBudget}；该租户当前覆写：{tenantOverride}；该租户今日已用：
-          {todayTokens === null ? "—" : `${todayTokens} tokens`}。超限后新的 AI
-          调用将被拒绝（quota_exceeded）并写入审计。
+          {todayTokens === null ? "—" : `${todayTokens} tokens`}。
         </div>
       </Card>
     </div>

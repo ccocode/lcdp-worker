@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Alert, Tabs } from "antd";
+import { Tabs } from "antd";
 import Audit from "./Audit";
 import Replay from "./Replay";
 
@@ -29,22 +29,6 @@ export default function AuditCenter({
   const [tab, setTab] = useState<string>(initialTab === "replay" ? "replay" : "audit");
   return (
     <div>
-      {scope === "platform" ? (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="仅平台级事件（无应用归属）；各应用的审计请进入该应用查看"
-        />
-      ) : (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="本应用审计"
-          description="仅本应用的审计事件与回放明细；其他应用的明细请切换到该应用查看。"
-        />
-      )}
       <Tabs
         activeKey={tab}
         onChange={setTab}

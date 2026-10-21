@@ -191,7 +191,6 @@ export default function StaticStatus({
           type="info"
           showIcon
           message="本应用未绑定专属域名，暂无静态页面"
-          description="绑定专属域名后，系统会为本应用生成静态页面；未绑定的应用通过默认域名正常提供服务。域名绑定见「域名」页签。"
         />
       ) : (
         <Table

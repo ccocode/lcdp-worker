@@ -5,7 +5,6 @@ import {
   Space,
   Switch,
   Table,
-  Typography,
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -180,11 +179,6 @@ export default function Apps() {
           dataSource={rows}
           pagination={false}
         />
-        <Typography.Paragraph type="secondary" style={{ marginTop: 12 }}>
-          域名是应用的单值属性：绑定、解绑与应用别名在应用区「应用设置 ·
-          域名」页签维护；默认域名仅主应用可绑定，未绑定的应用经默认域名
-          /&lt;应用ID&gt; 路径访问。
-        </Typography.Paragraph>
       </Card>
     </Space>
   );
