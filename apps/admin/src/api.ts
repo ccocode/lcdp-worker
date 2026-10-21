@@ -725,6 +725,20 @@ export const api = {
       return res.themes;
     },
     /**
+     * 主题预览签发（第 83 步片五，路线 A）：为指定主题版本在本应用
+     * 签发短时效（30 分钟）预览地址，新标签打开即以该主题渲染、
+     * 不改当前绑定。预览是查看动作，领域角色（只读档）同样可用。
+     */
+    async preview(
+      appId: string,
+      body: { themeId: string; version: string; slot: ThemeSlotName },
+    ): Promise<{ url: string; expiresAt: string }> {
+      return apiFetch(`/admin/apps/${encodeURIComponent(appId)}/themes/preview`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    /**
      * multipart 上传主题包 zip：校验失败抛 ThemeUploadError（带逐项 problems）。
      * 归属二选一（第 74 步起服务端必填）：appId → 应用私有通道（服务端按该
      * 应用的运营授权执法，落 scope=app / owner=appId）；domainKey → 领域

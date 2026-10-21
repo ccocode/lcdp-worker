@@ -141,6 +141,8 @@ export default function AppThemeSettings({
   const [bVals, setBVals] = useState<Record<string, string>>({});
   const [bValsJson, setBValsJson] = useState("{}");
   const [bSaving, setBSaving] = useState(false);
+  /** 正在签发预览的主题版本（`${themeId}@${version}`），仅按钮 loading 态用 */
+  const [previewing, setPreviewing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -231,6 +233,38 @@ export default function AppThemeSettings({
       }
     },
     [appId, load, uploadDomain],
+  );
+
+  /**
+   * 预览（第 83 步片五）：向服务端签发短时效预览地址后新标签打开，
+   * 以该主题版本渲染本应用、不改当前绑定。预览是查看动作，只读档
+   * （领域角色）同样可点。先同步开空标签再回填地址，避免异步签发
+   * 被浏览器弹窗拦截。
+   */
+  const onPreview = useCallback(
+    async (theme: ThemeItem, slot: ThemeSlotName, version: string) => {
+      const key = `${theme.id}@${version}`;
+      setPreviewing(key);
+      const win = window.open("", "_blank");
+      try {
+        const res = await api.themes.preview(appId, {
+          themeId: theme.id,
+          version,
+          slot,
+        });
+        if (win) {
+          win.location.href = res.url;
+        } else {
+          message.warning("新标签被浏览器拦截，请允许弹窗后重试");
+        }
+      } catch (err) {
+        win?.close();
+        message.error(err instanceof Error ? err.message : "预览打开失败");
+      } finally {
+        setPreviewing(null);
+      }
+    },
+    [appId],
   );
 
   /** 弹窗内切换 主题/槽位/版本 后，同步 values 编辑初值 */
@@ -410,16 +444,32 @@ export default function AppThemeSettings({
     },
     {
       title: "操作",
-      width: 130,
+      width: 170,
       render: (_, t) => (
-        <Button
-          type="primary"
-          size="small"
-          disabled={readOnly || !t.versions.some((v) => versionFitsSlot(v, slot))}
-          onClick={() => openBinding(t, slot)}
-        >
-          设为当前
-        </Button>
+        <Space direction="vertical" size={2}>
+          <Button
+            type="primary"
+            size="small"
+            disabled={readOnly || !t.versions.some((v) => versionFitsSlot(v, slot))}
+            onClick={() => openBinding(t, slot)}
+          >
+            设为当前
+          </Button>
+          {t.versions
+            .filter((v) => versionFitsSlot(v, slot))
+            .map((v) => (
+              <Button
+                key={v.version}
+                type="link"
+                size="small"
+                style={{ padding: 0, height: "auto" }}
+                loading={previewing === `${t.id}@${v.version}`}
+                onClick={() => void onPreview(t, slot, v.version)}
+              >
+                预览 {v.version}
+              </Button>
+            ))}
+        </Space>
       ),
     },
   ];

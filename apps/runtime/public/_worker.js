@@ -2,6 +2,12 @@
  * LCDP Runtime 边缘分发（Pages 高级模式 _worker.js）。
  *
  * 判定序（自上而下，任一层未命中/异常都落回下一层，最终回落 SPA）：
+ * 0. 预览前置（第 83 步片五，路线 A）：请求带 lcdp_preview 令牌
+ *    （参数或 lcdp-preview Cookie）且 api 校验端点确认其作用域的
+ *    应用与本站点一致时，以令牌指针强制对应槽渲染主题（跳过快照
+ *    层、routes 不限、响应 no-store 并注入预览角标）；参数值为
+ *    off 时清除固化 Cookie 回正常分发。任何不适用一律落回下序，
+ *    无令牌时本层不存在、以下判定逐字不变。
  * 1. 主题层（M14 线二 + M15 第⑤步双槽）：站点绑定了主题（/public/site 的
  *    entry.theme 双槽指针 { desktop, mobile }）时，按槽位判定选槽后查 R2
  *    绑定 STATIC_R2（桶 lcdp-assets，键 themes/<id>/<version>/<path>）；
@@ -183,7 +189,12 @@ function cachedSlotTheme(raw) {
  * 缓存信封只认新形状，旧单 theme 信封按「未绑定」读（siteMode 仍沿用）。
  */
 async function loadEntryConfig(host, seg, ctx, env) {
-  const fallback = { siteMode: "dynamic", themeSlots: { desktop: null, mobile: null } };
+  const emptyMeta = { entryId: null, entryName: null, appId: null };
+  const fallback = {
+    siteMode: "dynamic",
+    themeSlots: { desktop: null, mobile: null },
+    appMeta: emptyMeta,
+  };
   try {
     const cache = caches.default;
     const cacheKey = new Request(
@@ -197,6 +208,10 @@ async function loadEntryConfig(host, seg, ctx, env) {
           data.themeSlots && typeof data.themeSlots === "object"
             ? data.themeSlots
             : {};
+        // appMeta 为第 83 步片五预览校验追加字段：旧信封无此字段时
+        // 按空读（预览自动忽略，60 秒缓存过期后自愈），分发不受影响。
+        const meta =
+          data.appMeta && typeof data.appMeta === "object" ? data.appMeta : {};
         return {
           siteMode:
             data.siteMode === "pseudo" || data.siteMode === "static"
@@ -206,12 +221,18 @@ async function loadEntryConfig(host, seg, ctx, env) {
             desktop: cachedSlotTheme(slots.desktop),
             mobile: cachedSlotTheme(slots.mobile),
           },
+          appMeta: {
+            entryId: meta.entryId ?? null,
+            entryName: meta.entryName ?? null,
+            appId: meta.appId ?? null,
+          },
         };
       }
       return fallback;
     }
     let siteMode = "dynamic";
     let themeSlots = { desktop: null, mobile: null };
+    let appMeta = emptyMeta;
     try {
       const res = await fetch(
         `${API_BASE}/public/site?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(seg ?? "")}`,
@@ -226,6 +247,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
           entryName: data?.entry?.name ?? null,
           appId: data?.primary?.appId ?? data?.apps?.[0]?.id ?? null,
         };
+        appMeta = meta;
         const rawSlots = themeSlotsOf(data?.entry?.theme);
         themeSlots = {
           desktop: await resolveSlotTheme(env, rawSlots.desktop, meta),
@@ -235,14 +257,14 @@ async function loadEntryConfig(host, seg, ctx, env) {
     } catch {
       // 网关/源站不可达 → dynamic + 未绑定（fail-open）
     }
-    const resp = new Response(JSON.stringify({ siteMode, themeSlots }), {
+    const resp = new Response(JSON.stringify({ siteMode, themeSlots, appMeta }), {
       headers: {
         "content-type": "application/json",
         "cache-control": "public, max-age=60",
       },
     });
     ctx.waitUntil(cache.put(cacheKey, resp));
-    return { siteMode, themeSlots };
+    return { siteMode, themeSlots, appMeta };
   } catch {
     return fallback;
   }
@@ -283,7 +305,7 @@ function themeContentType(path) {
  * { host, entryId, entryName, appId, themeId, version, config, apiBase }。
  * JSON 做 <>& 转义防 `</script>` 突破；注入点为 <head> 之后（无 head 则置于文首）。
  */
-function injectThemeContext(html, theme, host) {
+function injectThemeContext(html, theme, host, opts = {}) {
   const payload = {
     host,
     entryId: theme.entryId,
@@ -293,6 +315,9 @@ function injectThemeContext(html, theme, host) {
     version: theme.version,
     config: theme.config ?? {},
     apiBase: API_BASE,
+    // 预览模式（第 83 步片五）：仅预览应答追加 preview: true，
+    // 正常分发不带此键（行为逐字不变）
+    ...(opts.preview ? { preview: true } : {}),
   };
   const json = JSON.stringify(payload)
     .replace(/</g, "\\u003c")
@@ -322,6 +347,19 @@ function injectViewCheck(html) {
   return html + VIEW_CHECK_SCRIPT;
 }
 
+/**
+ * 预览角标（第 83 步片五）：固定定位小条，明示当前为未生效的预览
+ * 效果，并给出退出预览入口（?lcdp_preview=off 清除固化 cookie 回
+ * 正常分发）。仅预览模式的 index 应答注入，置于 </body> 之前。
+ */
+const PREVIEW_BADGE = `<div style="position:fixed;left:12px;bottom:12px;z-index:2147483647;background:rgba(17,24,39,.92);color:#f9fafb;font:13px/1.5 -apple-system,'Segoe UI',sans-serif;padding:6px 12px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.35)">预览效果 · 未生效 <a href="?lcdp_preview=off" style="color:#93c5fd;margin-left:8px">退出预览</a></div>`;
+
+function injectPreviewBadge(html) {
+  const i = html.toLowerCase().indexOf("</body>");
+  if (i >= 0) return html.slice(0, i) + PREVIEW_BADGE + html.slice(i);
+  return html + PREVIEW_BADGE;
+}
+
 /** 路径归一（与主题内路由同口径：去尾斜杠、空即根） */
 function normalizeRoutePath(pathname) {
   return pathname.replace(/\/+$/, "") || "/";
@@ -340,6 +378,10 @@ function themeRouteMatches(routes, pathname) {
  *   但主题声明了 routes 时，仅清单内路径回退，清单外返回 null（修法 D）；
  * - 文件型路径未命中、或主题 index.html 本身缺失 → null。
  * opts.viewCheck 为真且本次由 index 应答时，追加移动槽自检脚本（第⑤步）。
+ * opts.preview 为真时（第 83 步片五预览模式）：routes 限制不适用
+ * （主题自理路径全开）；全部应答改 no-store 并加 x-lcdp-theme-preview
+ * 头；index 应答的 __LCDP__ 追加 preview: true 并注入预览角标。
+ * 正常分发不传 preview，行为逐字不变。
  */
 async function serveTheme(env, theme, url, method, opts = {}) {
   const prefix = `themes/${theme.id}/${theme.version}/`;
@@ -349,6 +391,10 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     headers.set("content-type", themeContentType(path));
     headers.set("x-lcdp-theme", `${theme.id}@${theme.version}`);
     headers.set("cache-control", "public, max-age=60, s-maxage=300");
+    if (opts.preview) {
+      headers.set("x-lcdp-theme-preview", `${theme.id}@${theme.version}`);
+      headers.set("cache-control", "no-store");
+    }
     if (method === "HEAD" || !obj.body) {
       if (obj.httpEtag) headers.set("etag", obj.httpEtag);
       return new Response(null, { headers });
@@ -356,8 +402,11 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     if (isIndex) {
       // 注入后的正文与原 etag 不再对应，不回 etag
       const html = await obj.text();
-      let out = injectThemeContext(html, theme, url.host);
+      let out = injectThemeContext(html, theme, url.host, {
+        preview: !!opts.preview,
+      });
       if (opts.viewCheck) out = injectViewCheck(out);
+      if (opts.preview) out = injectPreviewBadge(out);
       return new Response(out, { headers });
     }
     if (obj.httpEtag) headers.set("etag", obj.httpEtag);
@@ -371,7 +420,9 @@ async function serveTheme(env, theme, url, method, opts = {}) {
   }
   if (!rel || isPagePath(url.pathname)) {
     // 修法 D：声明了 routes 的主题只接管清单内路径，清单外落回快照/SPA
+    //（预览模式不适用此限制：预览要看主题在任意路径下的效果）
     if (
+      !opts.preview &&
       Array.isArray(theme.routes) &&
       theme.routes.length > 0 &&
       !themeRouteMatches(theme.routes, url.pathname)
@@ -418,6 +469,121 @@ function requestedSlot(url, request) {
     }
   }
   return { slot: "desktop", source: "default" };
+}
+
+// ------------------------------------------------- 主题预览（第 83 步片五，路线 A）
+
+/**
+ * 预览模式是主题层之前的一个可选前置：请求带令牌（query 参数
+ * lcdp_preview 优先，其次同名 cookie 固化）时，先向 api 校验端点
+ * 换取指针覆盖——仅当校验返回的应用与本站点配置解析出的应用
+ * 一致时生效：以返回指针覆盖对应槽并强制该槽（不读 view 参数/
+ * cookie 选槽）、跳过快照层、routes 限制不适用，主题文件直出与
+ * index 回退同主题层既有逻辑。校验失败 / 应用不一致 / 主题文件
+ * 缺失等任何不适用情形一律返回 null 落回正常分发（fail-open），
+ * 无令牌时本层整体不触发、正常分发路径逐字不变。
+ * 参数触发成功时在最终响应上 Set-Cookie 固化令牌（30 分钟），
+ * 使主题子资源请求续用预览；参数值为 off 时由 fetch 入口清除
+ * cookie 并回正常分发。
+ */
+const PREVIEW_COOKIE_MAX_AGE = 1800; // 30 分钟，与令牌有效期同长
+
+function appendSetCookie(res, cookie) {
+  try {
+    const headers = new Headers(res.headers);
+    headers.append("set-cookie", cookie);
+    return new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers,
+    });
+  } catch {
+    return res;
+  }
+}
+
+function withPreviewCookie(res, token) {
+  return appendSetCookie(
+    res,
+    `lcdp-preview=${token}; Path=/; Max-Age=${PREVIEW_COOKIE_MAX_AGE}; SameSite=Lax`,
+  );
+}
+
+function withClearedPreviewCookie(res) {
+  return appendSetCookie(res, "lcdp-preview=; Path=/; Max-Age=0; SameSite=Lax");
+}
+
+/** 令牌来源：query 参数（参数优先）→ lcdp-preview Cookie；皆无返回 null */
+function previewTokenOf(url, request) {
+  const p = url.searchParams.get("lcdp_preview");
+  if (p !== null) return { token: p, fromParam: true };
+  const header = request.headers.get("cookie") || "";
+  for (const part of header.split(";")) {
+    const t = part.trim();
+    if (t.startsWith("lcdp-preview=")) {
+      const v = t.slice("lcdp-preview=".length);
+      if (v) return { token: v, fromParam: false };
+    }
+  }
+  return null;
+}
+
+/**
+ * 预览分发：命中返回 Response，未命中/不适用返回 null（调用方落回
+ * 正常分发）。仅 GET/HEAD 且 R2 绑定存在时尝试，与主题层同条件。
+ */
+async function tryThemePreview(request, env, ctx, url) {
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return null;
+  if (!env.STATIC_R2) return null;
+  const found = previewTokenOf(url, request);
+  if (!found || !found.token || found.token === "off") return null;
+  // 校验：向 api 换取作用域（响应 no-store，不缓存校验结果）
+  let valid = null;
+  try {
+    const res = await fetch(
+      `${API_BASE}/public/theme-preview/validate?token=${encodeURIComponent(found.token)}`,
+      { headers: { accept: "application/json" } },
+    );
+    if (res.ok) valid = await res.json().catch(() => null);
+  } catch {
+    return null;
+  }
+  if (
+    !valid ||
+    typeof valid.appId !== "string" ||
+    typeof valid.themeId !== "string" ||
+    !valid.themeId ||
+    typeof valid.version !== "string" ||
+    !valid.version ||
+    (valid.slot !== "desktop" && valid.slot !== "mobile")
+  ) {
+    return null;
+  }
+  // 站点配置走既有路径（60 秒缓存）：本站点解析出的应用须与
+  // 令牌作用域一致，否则忽略预览（防跨应用串用令牌）
+  const rawSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
+  let seg = rawSeg;
+  try {
+    seg = decodeURIComponent(rawSeg);
+  } catch {
+    seg = rawSeg;
+  }
+  const entryCfg = await loadEntryConfig(url.host, seg, ctx, env);
+  if (!entryCfg.appMeta || entryCfg.appMeta.appId !== valid.appId) {
+    return null;
+  }
+  // 以返回指针解析主题（config 合并走 resolveSlotTheme 既有逻辑，
+  // values 恒空——预览看主题本身效果，不带绑定配置值）
+  const theme = await resolveSlotTheme(
+    env,
+    { id: valid.themeId, version: valid.version, values: {} },
+    entryCfg.appMeta,
+  );
+  if (!theme) return null;
+  const themed = await serveTheme(env, theme, url, method, { preview: true });
+  if (!themed) return null;
+  return found.fromParam ? withPreviewCookie(themed, found.token) : themed;
 }
 
 /** 在最终响应上固化槽位 Cookie（参数逃生在主题/快照/SPA 任一层应答都要落下） */
@@ -558,13 +724,30 @@ export default {
     // view 参数选槽须在最终响应上落 Cookie 固化（含落回快照/SPA 的响应，
     // P3 口径）；非法值忽略。dispatch 本体异常已在内层 fail-open，
     // 此处再兜一层保证挂 Cookie 失败不影响应答。
-    let param = null;
+    let url = null;
     try {
-      param = viewParamOf(new URL(request.url));
+      url = new URL(request.url);
     } catch {
-      param = null;
+      url = null;
     }
-    const res = await dispatch(request, env, ctx);
+    const param = url ? viewParamOf(url) : null;
+    // 主题预览（第 83 步片五）：off = 退出预览——正常分发并清除
+    // 固化 cookie；带令牌时先试预览分发，不适用/异常一律落回
+    // 正常分发。无预览参数时流程与原先逐字一致。
+    if (url && url.searchParams.get("lcdp_preview") === "off") {
+      const res = await dispatch(request, env, ctx);
+      const withView = param ? withViewCookie(res, param) : res;
+      return withClearedPreviewCookie(withView);
+    }
+    let res = null;
+    if (url) {
+      try {
+        res = await tryThemePreview(request, env, ctx, url);
+      } catch {
+        res = null;
+      }
+    }
+    if (!res) res = await dispatch(request, env, ctx);
     return param ? withViewCookie(res, param) : res;
   },
 };
