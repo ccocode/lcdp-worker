@@ -1179,7 +1179,7 @@ export const api = {
 
   usage: {
     async query(params: {
-      groupBy: "day" | "app" | "channel" | "model";
+      groupBy: "day" | "app" | "channel" | "model" | "pool";
       from?: string;
       to?: string;
       tenantId?: string;

@@ -6,6 +6,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Segmented,
   Space,
   Switch,
   Table,
@@ -42,8 +43,9 @@ export default function Switches() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [reasonDraft, setReasonDraft] = useState<Record<string, string>>({});
 
-  // 配额覆写
+  // 配额覆写（quotaPool 为空 = 全部服务共用租户设置；选定服务时写该服务的专属设置）
   const [quotaTenant, setQuotaTenant] = useState("default");
+  const [quotaPool, setQuotaPool] = useState("");
   const [quotaValue, setQuotaValue] = useState<number | null>(null);
   const [globalBudget, setGlobalBudget] = useState<string>("—");
   const [tenantOverride, setTenantOverride] = useState<string>("—");
@@ -122,41 +124,70 @@ export default function Switches() {
     }
   };
 
-  // 配额：读全局默认与该租户覆写（走配置接口），并查当日用量对照
+  // 当前配额作用域：全部服务 = tenant:<id>；选定服务 = tenant:<id>:<服务>
+  const quotaScope = quotaPool
+    ? `tenant:${quotaTenant}:${quotaPool}`
+    : `tenant:${quotaTenant}`;
+  const quotaPoolLabel = quotaPool
+    ? (POOLS.find((p) => p.key === quotaPool)?.label ?? quotaPool)
+    : "";
+
+  // 配额：读全局默认、租户覆写与该服务的专属设置（走配置接口），并查当日用量对照
   const loadQuota = useCallback(async () => {
     try {
       const items = await api.config.get();
-      const g = items.find(
-        (i) => asText(i.key) === "llm.tenantTokenBudget" && asText(i.scope) === "global",
-      );
+      const budgetAt = (scope: string) =>
+        items.find(
+          (i) => asText(i.key) === "llm.tenantTokenBudget" && asText(i.scope) === scope,
+        );
+      const g = budgetAt("global");
       setGlobalBudget(g ? asText(g.value) : "—");
-      const t = items.find(
-        (i) =>
-          asText(i.key) === "llm.tenantTokenBudget" &&
-          asText(i.scope) === `tenant:${quotaTenant}`,
-      );
-      setTenantOverride(t ? asText(t.value) : "未覆写（用全局默认）");
-      setHasOverride(!!t);
+      const t = budgetAt(`tenant:${quotaTenant}`);
+      if (!quotaPool) {
+        setTenantOverride(t ? asText(t.value) : "未覆写（用全局默认）");
+        setHasOverride(!!t);
+      } else {
+        const p = budgetAt(quotaScope);
+        // 无专属设置时明示沿用哪一层的全部服务设置
+        const inherited = t ? asText(t.value) : g ? asText(g.value) : "不限额";
+        setTenantOverride(
+          p ? asText(p.value) : `未单独设置（沿用全部服务设置：${inherited}）`,
+        );
+        setHasOverride(!!p);
+      }
     } catch {
       setGlobalBudget("—");
       setTenantOverride("—");
       setHasOverride(false);
     }
     try {
-      const res = await api.usage.query({
-        groupBy: "day",
-        from: todayStr(),
-        to: todayStr(),
-        tenantId: quotaTenant,
-      });
-      let sum = 0;
-      for (const r of res.rows)
-        sum += typeof r.total_tokens === "number" ? r.total_tokens : 0;
-      setTodayTokens(sum);
+      if (quotaPool) {
+        const res = await api.usage.query({
+          groupBy: "pool",
+          from: todayStr(),
+          to: todayStr(),
+          tenantId: quotaTenant,
+        });
+        const row = res.rows.find((r) => asText(r.bucket) === quotaPool);
+        setTodayTokens(
+          row && typeof row.total_tokens === "number" ? row.total_tokens : 0,
+        );
+      } else {
+        const res = await api.usage.query({
+          groupBy: "day",
+          from: todayStr(),
+          to: todayStr(),
+          tenantId: quotaTenant,
+        });
+        let sum = 0;
+        for (const r of res.rows)
+          sum += typeof r.total_tokens === "number" ? r.total_tokens : 0;
+        setTodayTokens(sum);
+      }
     } catch {
       setTodayTokens(null);
     }
-  }, [quotaTenant]);
+  }, [quotaTenant, quotaPool, quotaScope]);
 
   useEffect(() => {
     void loadQuota();
@@ -171,23 +202,32 @@ export default function Switches() {
       await api.config.put([
         {
           key: "llm.tenantTokenBudget",
-          scope: `tenant:${quotaTenant}`,
+          scope: quotaScope,
           value: quotaValue,
         },
       ]);
-      message.success(`已设置租户 ${quotaTenant} 的日 Token 上限为 ${quotaValue}`);
+      message.success(
+        quotaPool
+          ? `已设置租户 ${quotaTenant}「${quotaPoolLabel}」的日 Token 上限为 ${quotaValue}`
+          : `已设置租户 ${quotaTenant} 的日 Token 上限为 ${quotaValue}`,
+      );
       void loadQuota();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "保存失败");
     }
   };
 
-  // 清除覆写 = PUT value:null，api 侧删 platform_config 覆写行、回落全局默认（审计记 (clear)）
+  // 清除 = PUT value:null，api 侧删 platform_config 对应行（审计记 (clear)）：
+  // 清全部服务设置回落全局默认；清某服务的专属设置则回落全部服务设置
   const clearQuota = () => {
     Modal.confirm({
-      title: `清除租户 ${quotaTenant} 的配额覆写？`,
-      content: "清除后该租户回落全局默认上限（全局默认为空则不限额）。",
-      okText: "清除覆写",
+      title: quotaPool
+        ? `清除租户 ${quotaTenant}「${quotaPoolLabel}」的专属上限？`
+        : `清除租户 ${quotaTenant} 的配额覆写？`,
+      content: quotaPool
+        ? "清除后该服务沿用全部服务设置。"
+        : "清除后该租户回落全局默认上限（全局默认为空则不限额）。",
+      okText: quotaPool ? "清除专属设置" : "清除覆写",
       okButtonProps: { danger: true },
       cancelText: "取消",
       onOk: async () => {
@@ -195,11 +235,15 @@ export default function Switches() {
           await api.config.put([
             {
               key: "llm.tenantTokenBudget",
-              scope: `tenant:${quotaTenant}`,
+              scope: quotaScope,
               value: null,
             },
           ]);
-          message.success(`已清除租户 ${quotaTenant} 的配额覆写`);
+          message.success(
+            quotaPool
+              ? `已清除租户 ${quotaTenant}「${quotaPoolLabel}」的专属上限`
+              : `已清除租户 ${quotaTenant} 的配额覆写`,
+          );
           setQuotaValue(null);
           void loadQuota();
         } catch (err) {
@@ -284,6 +328,17 @@ export default function Switches() {
             />
           </div>
           <div>
+            <div style={{ marginBottom: 4 }}>服务</div>
+            <Segmented
+              value={quotaPool}
+              onChange={(v) => setQuotaPool(String(v))}
+              options={[
+                { label: "全部服务", value: "" },
+                ...POOLS.map((p) => ({ label: p.label, value: p.key })),
+              ]}
+            />
+          </div>
+          <div>
             <div style={{ marginBottom: 4 }}>日上限（tokens）</div>
             <InputNumber
               style={{ width: 200 }}
@@ -296,16 +351,19 @@ export default function Switches() {
           <div style={{ paddingTop: 22 }}>
             <Space>
               <Button type="primary" onClick={() => void saveQuota()}>
-                保存覆写
+                {quotaPool ? "保存专属设置" : "保存覆写"}
               </Button>
               <Button danger disabled={!hasOverride} onClick={clearQuota}>
-                清除覆写
+                {quotaPool ? "清除专属设置" : "清除覆写"}
               </Button>
             </Space>
           </div>
         </Space>
         <div style={{ marginTop: 16, color: tokens.colorTextSecondary }}>
-          全局默认上限：{globalBudget}；该租户当前覆写：{tenantOverride}；该租户今日已用：
+          全局默认上限：{globalBudget}；
+          {quotaPool
+            ? `「${quotaPoolLabel}」当前设置：${tenantOverride}；该服务今日已用：`
+            : `该租户当前覆写：${tenantOverride}；该租户今日已用：`}
           {todayTokens === null ? "—" : `${todayTokens} tokens`}。
         </div>
       </Card>

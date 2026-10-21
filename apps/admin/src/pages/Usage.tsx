@@ -19,13 +19,21 @@ import { asText } from "../helpers";
 
 const { RangePicker } = DatePicker;
 
-type GroupBy = "day" | "app" | "channel" | "model";
+type GroupBy = "day" | "app" | "channel" | "model" | "pool";
 
 const GROUP_LABELS: Record<GroupBy, string> = {
   day: "按日",
   app: "按应用",
   channel: "按通道",
   model: "按模型",
+  pool: "按服务",
+};
+
+/** 按服务分组时 bucket 是服务标识，翻成功能名上屏；其余值给通用呈现 */
+const POOL_LABELS: Record<string, string> = {
+  design: "设计助手",
+  runtime: "应用助手",
+  setup: "系统初始化",
 };
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
@@ -71,7 +79,12 @@ export default function Usage() {
   );
 
   const columns: ColumnsType<DataRow> = [
-    { title: GROUP_LABELS[groupBy], dataIndex: "bucket", render: (v) => asText(v) },
+    {
+      title: groupBy === "pool" ? "服务" : GROUP_LABELS[groupBy],
+      dataIndex: "bucket",
+      render: (v) =>
+        groupBy === "pool" ? (POOL_LABELS[asText(v)] ?? asText(v)) : asText(v),
+    },
     { title: "调用次数", dataIndex: "calls", render: (v) => asText(v) },
     { title: "输入 Token", dataIndex: "prompt_tokens", render: (v) => asText(v) },
     {
