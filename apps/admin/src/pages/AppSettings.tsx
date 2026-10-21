@@ -1,5 +1,18 @@
 import React, { useEffect, useState } from "react";
-import { Alert, Card, Descriptions, Table, Tabs, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Descriptions,
+  Input,
+  Space,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message,
+} from "antd";
+import { showError } from "@lcdp/ui";
 import { api, type AdminDataMeta, type AppOperator, type Row } from "../api";
 import { domainHealth } from "../domainHealth";
 import { asText } from "../helpers";
@@ -31,6 +44,36 @@ export default function AppSettings({
   const [tab, setTab] = useState<string>(settingsTabSeed ?? "basic");
   const [operators, setOperators] = useState<AppOperator[] | null>(null);
 
+  // 第 80 步：应用改名（管理员专属，经站点接口落库 + 审计；本地覆盖值
+  // 让保存后立即呈现新名，外壳应用列表下次加载时同步）
+  const [nameEditing, setNameEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameOverride, setNameOverride] = useState<string | null>(null);
+  useEffect(() => {
+    setNameOverride(null);
+    setNameEditing(false);
+  }, [appId]);
+  const displayName = nameOverride ?? asText(app?.name);
+  const saveName = async () => {
+    const v = nameDraft.trim();
+    if (!v) {
+      message.warning("应用名称不能为空");
+      return;
+    }
+    setNameSaving(true);
+    try {
+      const res = await api.site.update(appId, { name: v });
+      setNameOverride(res.app.name);
+      setNameEditing(false);
+      message.success(`应用名称已改为「${res.app.name}」`);
+    } catch (err) {
+      showError(err, "改名失败");
+    } finally {
+      setNameSaving(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     api
@@ -51,7 +94,48 @@ export default function AppSettings({
     <div>
       <Descriptions column={2} bordered size="small">
         <Descriptions.Item label="应用 ID">{asText(app?.id)}</Descriptions.Item>
-        <Descriptions.Item label="名称">{asText(app?.name)}</Descriptions.Item>
+        <Descriptions.Item label="名称">
+          {nameEditing ? (
+            <Space size={6}>
+              <Input
+                size="small"
+                style={{ width: 220 }}
+                value={nameDraft}
+                maxLength={60}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onPressEnter={() => void saveName()}
+              />
+              <Button
+                size="small"
+                type="primary"
+                loading={nameSaving}
+                onClick={() => void saveName()}
+              >
+                保存
+              </Button>
+              <Button size="small" onClick={() => setNameEditing(false)}>
+                取消
+              </Button>
+            </Space>
+          ) : (
+            <Space size={8}>
+              {displayName}
+              {isAdmin && (
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0 }}
+                  onClick={() => {
+                    setNameDraft(displayName);
+                    setNameEditing(true);
+                  }}
+                >
+                  改名
+                </Button>
+              )}
+            </Space>
+          )}
+        </Descriptions.Item>
         <Descriptions.Item label="场景">{asText(app?.scenario)}</Descriptions.Item>
         <Descriptions.Item label="状态">
           {app?.status === "active" ? (

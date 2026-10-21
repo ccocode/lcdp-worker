@@ -638,6 +638,8 @@ export const api = {
         themeSlots?: ThemeSlots | null;
         isPrimary?: boolean;
         nameEn?: string | null;
+        /** 应用显示名改名（第 80 步，仅 admin；operator 传此字段服务端 400） */
+        name?: string;
       },
     ): Promise<{ ok: boolean; app: SiteAppView }> {
       return apiFetch(`/admin/apps/${encodeURIComponent(appId)}/site`, {

@@ -125,13 +125,13 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
     >
       <Card style={{ width: 360 }}>
         <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
-          LCDP Studio · 设计台
+          设计台
         </Typography.Title>
         <Typography.Paragraph
           type="secondary"
           style={{ fontSize: 13, marginBottom: 20 }}
         >
-          以管理员账号登录，设计数据模型与页面并发布到运行态
+          以管理员账号登录，设计数据模型与页面并发布上线
         </Typography.Paragraph>
         {error && (
           <Alert type="error" message={error} style={{ marginBottom: 16 }} />
@@ -278,7 +278,7 @@ function AppsView({
             <Input
               value={newAppName}
               onChange={(e) => setNewAppName(e.target.value)}
-              placeholder="如 星桥科技官网 CMS"
+              placeholder="如 星桥科技官网"
             />
           </Form.Item>
           <Form.Item label="主领域（创建后不可变更；选择带预置模型的领域将自动生成数据模型、页面与权限草稿）">

@@ -118,7 +118,7 @@ function Login({ onLogin }: { onLogin: (u: UserInfo) => void }) {
         padding: 24,
       }}
     >
-      <Card style={{ width: 380 }} title="LCDP 平台管理台">
+      <Card style={{ width: 380 }} title="平台管理">
         <Typography.Paragraph type="secondary">
           <SafetyOutlined /> 平台管理员与获授权的应用运营者可登录
         </Typography.Paragraph>
@@ -608,7 +608,7 @@ export default function AppShell() {
               overflow: "hidden",
             }}
           >
-            {siderCollapsed ? "L" : "LCDP 管理台"}
+            {siderCollapsed ? "平" : "平台管理"}
           </div>
           <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
             <Menu

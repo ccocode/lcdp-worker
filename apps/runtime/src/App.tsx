@@ -303,7 +303,7 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
     >
       <Card style={{ width: 360 }}>
         <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
-          LCDP Runtime · 运行态
+          员工登录
         </Typography.Title>
         <Typography.Paragraph
           type="secondary"
@@ -394,6 +394,11 @@ function AnonGate({
     );
   }
   const primary = pub?.primary ?? null;
+  // 第 80 步：匿名面标题跟随解析出的应用（会员中心由 MemberCenterApp 自设）
+  useEffect(() => {
+    if (pub?.entry?.kind === "member-center") return;
+    if (primary?.name) document.title = primary.name;
+  }, [pub, primary]);
   /** 匿名面客服咨询窗：逐个装配应用探测 support/config，首个 enabled 挂载（M12） */
   const anonSupport = (
     <SupportAutoMount appIds={(pub?.apps ?? []).map((a) => a.id)} />
@@ -594,6 +599,10 @@ function centerPath(
  * aud='member-center'、与各应用会话互不通用。
  */
 function MemberCenterApp({ route }: { route: Route }) {
+  // 第 80 步：会员中心标题固定为功能名
+  useEffect(() => {
+    document.title = "会员中心";
+  }, []);
   const appId = route.params.app ?? "";
   const redirectUri = route.params.redirect_uri ?? "";
   const state = route.params.state;
@@ -3686,6 +3695,10 @@ function AppView({
   const activeLoaded =
     loaded.find((l) => l.app.id === (currentOwned?.appId ?? activeAppId)) ??
     primary;
+  // 第 80 步：浏览器标题跟随当前应用（切换应用/页面归属变化时同步）
+  useEffect(() => {
+    document.title = activeLoaded.snapshot.app.name;
+  }, [activeLoaded]);
   /**
    * 展示菜单按当前应用作用域（2026-10-19 定调：菜单须根据应用本身获取，
    * 不能只按角色裁剪）：每个装配应用各自组装一份菜单，展示只取当前应用那份；
