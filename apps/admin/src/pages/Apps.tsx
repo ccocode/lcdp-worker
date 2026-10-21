@@ -5,22 +5,32 @@ import {
   Space,
   Switch,
   Table,
-  Tag,
   Typography,
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
-import { accessFormText, asText } from "../helpers";
+import { asText } from "../helpers";
+
+/** 领域 key → 展示名（与 AppThemeSettings 的 DOMAIN_LABEL 同步） */
+const DOMAIN_LABEL: Record<string, string> = {
+  content: "内容",
+  commerce: "商城",
+  forum: "论坛",
+  support: "客服",
+  oa: "审批协同",
+  generic: "空白",
+};
 
 /**
- * 应用管理（平台页）：应用上下架 + 站点属性总览（第 68 步：入口装配模型
- * 退役后，域名/主应用都是应用自身字段）——列表直接呈现各应用的绑定
- * 域名与访问形态（专属域名 / 主应用根路径 / 默认域名 /<id> 路径），
- * 主应用以「是/否」开关呈现（拨开经确认后 PUT /admin/apps/:id/site 落盘；
- * 当前主应用不可关闭——主应用只能改设、不能取消；目标应用绑有专属域名
- * 时服务端拒绝、须先在该应用设置里解绑）。
- * 单应用的域名/应用别名维护在应用区「应用设置 · 域名」页签。
+ * 应用管理（平台页）：应用总览 + 启用/停用（第 68 步：入口装配模型
+ * 退役后，域名/主应用都是应用自身字段；第 75 步列表优化：加应用名称与
+ * 领域模型列、去掉访问形态列、状态即开关——拨动经确认后落盘，停用后
+ * 运行态全拒绝 403 app_disabled）。主应用以「是/否」开关呈现（拨开经
+ * 确认后 PUT /admin/apps/:id/site 落盘；当前主应用不可关闭——主应用
+ * 只能改设、不能取消；目标应用绑有专属域名时服务端拒绝、须先在该
+ * 应用设置里解绑）。单应用的域名/应用别名维护在应用区「应用设置 ·
+ * 域名」页签。
  */
 export default function Apps() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -46,18 +56,18 @@ export default function Apps() {
     const id = String(row.id);
     const status = next ? "active" : "disabled";
     Modal.confirm({
-      title: next ? "恢复应用（上架）" : "下架应用",
+      title: next ? "启用应用" : "停用应用",
       content: next
-        ? `确认恢复应用 ${id}？运行态将重新可访问。`
-        : `确认下架应用 ${id}？下架后运行态入口、数据、流程、助手与公开页将全部拒绝访问（403 app_disabled）；设计态与管理台不受影响。操作会写入审计。`,
-      okText: next ? "恢复" : "下架",
+        ? `确认启用应用 ${id}？运行态将重新可访问。`
+        : `确认停用应用 ${id}？停用后运行态入口、数据、流程、助手与公开页将全部拒绝访问（403 app_disabled）；设计态与管理台不受影响。操作会写入审计。`,
+      okText: next ? "启用" : "停用",
       okButtonProps: next ? {} : { danger: true },
       cancelText: "取消",
       onOk: async () => {
         setBusyId(id);
         try {
           await api.apps.setStatus(id, status);
-          message.success(next ? "已恢复上架" : "已下架");
+          message.success(next ? "已启用" : "已停用");
           void load();
         } catch (err) {
           message.error(err instanceof Error ? err.message : "操作失败");
@@ -99,10 +109,25 @@ export default function Apps() {
       render: (v) => (v === null || v === undefined ? "—" : asText(v)),
     },
     { title: "应用 ID", dataIndex: "id", render: (v) => asText(v) },
+    {
+      title: "应用名称",
+      dataIndex: "name",
+      render: (v) => asText(v) || "—",
+    },
+    {
+      title: "领域模型",
+      dataIndex: "domain",
+      render: (v) => {
+        const key = asText(v);
+        if (!key) return "—";
+        const label = DOMAIN_LABEL[key];
+        return label ? `${label}（${key}）` : key;
+      },
+    },
     { title: "租户", dataIndex: "tenant_id", render: (v, r) => asText(v ?? r.tenantId) },
     { title: "场景", dataIndex: "scenario", render: (v) => asText(v) },
     {
-      title: "当前发布版本",
+      title: "当前版本",
       render: (_, r) => {
         const v = r.current_version ?? r.currentVersion;
         return v === null || v === undefined ? "未发布" : `v${asText(v)}`;
@@ -126,42 +151,14 @@ export default function Apps() {
       ),
     },
     {
-      title: "访问形态",
-      // 第 71 步口径统一：走 helpers.accessFormText（三处同一措辞）。
-      // 注：此前用 asText(boundHost) 判空——null 被渲染为字符串「—」（真值），
-      // 未绑应用恒显「—」Tag，即 68.3 注记②的本体，一并修对。
-      render: (_, r) => (
-        <Typography.Text type="secondary">
-          {accessFormText(
-            {
-              boundHost: (r.boundHost as string | null) ?? null,
-              isPrimary: r.isPrimary === true,
-              id: String(r.id),
-              nameEn: (r.nameEn as string | null) ?? null,
-            },
-            "www.coode.cc.cd",
-          )}
-        </Typography.Text>
-      ),
-    },
-    {
       title: "状态",
-      render: (_, r) =>
-        asText(r.status ?? "active") === "disabled" ? (
-          <Tag color="red">已下架</Tag>
-        ) : (
-          <Tag color="green">上架中</Tag>
-        ),
-    },
-    {
-      title: "上下架",
-      width: 120,
+      width: 110,
       render: (_, r) => (
         <Switch
           checked={asText(r.status ?? "active") !== "disabled"}
           loading={busyId === String(r.id)}
-          checkedChildren="上架"
-          unCheckedChildren="下架"
+          checkedChildren="启用"
+          unCheckedChildren="停用"
           onChange={(next) => toggle(r, next)}
         />
       ),
