@@ -18,11 +18,13 @@ import {
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  RobotOutlined,
   SafetyOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { PageHelp, tokens } from "@lcdp/ui";
 import { HELP } from "../help";
+import AssistantDrawer from "../components/AssistantDrawer";
 import {
   api,
   consumeExpiredFlag,
@@ -166,6 +168,8 @@ export default function AppShell() {
     return resolvePath();
   });
   const [page, setPage] = useState<PageKey>(route0.page);
+  /** 管理台助手抽屉开合（第 83 步片四）：上下文跟随当前应用 */
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [auditTabSeed, setAuditTabSeed] = useState<string | null>(route0.auditTab);
   const [settingsTabSeed, setSettingsTabSeed] = useState<string | null>(
     route0.settingsTab,
@@ -690,6 +694,12 @@ export default function AppShell() {
             <Typography.Text type="secondary">
               {isAdmin ? "当前管理员" : "当前运营者"}：{user.username}（{user.role}）
             </Typography.Text>
+            <Button
+              icon={<RobotOutlined />}
+              onClick={() => setAssistantOpen(true)}
+            >
+              助手
+            </Button>
             <Button icon={<LogoutOutlined />} onClick={logout}>
               退出
             </Button>
@@ -699,6 +709,16 @@ export default function AppShell() {
           {effectiveDef.needsMeta ? appPageShell(pageNode) : pageNode}
         </Content>
       </Layout>
+      <AssistantDrawer
+        open={assistantOpen}
+        onClose={() => setAssistantOpen(false)}
+        appId={appId}
+        appName={
+          currentApp && typeof currentApp.name === "string"
+            ? currentApp.name
+            : null
+        }
+      />
     </Layout>
   );
 }

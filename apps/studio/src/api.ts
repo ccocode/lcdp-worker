@@ -102,6 +102,12 @@ export interface AgentsConfig {
     /** 写操作策略：本期唯一值 confirm（任何写先经用户确认卡片） */
     writePolicy: "confirm";
   };
+  /**
+   * 管理台运行面调整的存在标记（第 83 步片二，服务端读侧附带）：
+   * { 面孔键（staff/visitor/ops）: 最近调整时间 ISO }，只有存在性
+   * 与时间、没有内容；仅供页签顶部提示，不参与编辑与保存。
+   */
+  overridesPresent?: Record<string, string> | null;
 }
 
 /** agents 段缺失时的客户端默认值（与服务端默认口径一致） */
@@ -121,8 +127,16 @@ export function defaultAgentsConfig(): AgentsConfig {
 export function normalizeAgents(input: AgentsConfig | null | undefined): AgentsConfig {
   const d = defaultAgentsConfig().assistant;
   const a = input?.assistant;
-  if (!a) return defaultAgentsConfig();
+  // 运行面调整标记只透传（存在性提示用），不进编辑字段
+  const present =
+    input?.overridesPresent &&
+    typeof input.overridesPresent === "object" &&
+    Object.keys(input.overridesPresent).length > 0
+      ? { overridesPresent: input.overridesPresent }
+      : {};
+  if (!a) return { ...defaultAgentsConfig(), ...present };
   return {
+    ...present,
     assistant: {
       name: typeof a.name === "string" && a.name ? a.name : d.name,
       persona: typeof a.persona === "string" ? a.persona : d.persona,

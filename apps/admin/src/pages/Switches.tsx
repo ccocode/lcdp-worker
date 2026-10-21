@@ -18,8 +18,8 @@ import { tokens } from "@lcdp/ui";
 import { asText, fmtTime } from "../helpers";
 
 const POOLS = [
-  { key: "design", label: "设计态 Agent" },
-  { key: "runtime", label: "运行态 Agent" },
+  { key: "design", label: "设计助手" },
+  { key: "runtime", label: "应用助手" },
 ];
 
 interface ComboRow {
@@ -113,7 +113,7 @@ export default function Switches() {
         disabled: !next,
         reason: reasonDraft[key] ?? row.reason ?? "",
       });
-      message.success(next ? "已启用该 Agent 池" : "已熔断停用该 Agent 池");
+      message.success(next ? "已启用该服务" : "已熔断停用该服务");
       void load();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "切换失败");
@@ -213,7 +213,7 @@ export default function Switches() {
     { title: "租户", dataIndex: "tenantId" },
     { title: "应用", dataIndex: "appId" },
     {
-      title: "Agent 池",
+      title: "服务",
       dataIndex: "pool",
       render: (v: string) => POOLS.find((p) => p.key === v)?.label ?? v,
     },
@@ -263,7 +263,7 @@ export default function Switches() {
 
   return (
     <div>
-      <Card title="熔断开关（租户 × 应用 × Agent 池）" style={{ marginBottom: 16 }}>
+      <Card title="熔断开关（租户 × 应用 × 服务）" style={{ marginBottom: 16 }}>
         <Table
           rowKey={(r) => `${r.tenantId}:${r.appId}:${r.pool}`}
           loading={loading}

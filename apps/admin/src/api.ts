@@ -407,6 +407,69 @@ export interface GrantsMe {
   isAdmin: boolean;
   apps: GrantApp[];
 }
+
+/** 管理台助手待确认动作（第 83 步片三 ops 面：生效类写操作先提案后确认） */
+export interface AdminAssistantPendingAction {
+  /** platformAction / adminDataCreate / adminDataUpdate / flowAct / themeBind / staticRebuild 等 */
+  kind: string;
+  /** 产出该动作的工具名 */
+  tool?: string;
+  summary: string;
+  fields?: { label: string; value: string }[];
+  /** 已处理（确认或取消）后为对象，含决定与结果说明；未处理为 null */
+  handled?: { decision: string; at: string; outcome?: string } | null;
+}
+
+/** 管理台助手消息（会话详情形状，与员工面同构） */
+export interface AdminAssistantMessage {
+  id: string;
+  /** user / assistant / system */
+  role: string;
+  text: string;
+  citations?: { docTitle: string; snippet: string }[] | null;
+  pendingAction?: AdminAssistantPendingAction | null;
+  /** generating / done / failed */
+  status: string;
+  createdAt: string | null;
+}
+
+/** 管理台助手会话头（列表与详情共用） */
+export interface AdminAssistantConversation {
+  id: string;
+  title: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+/** 管理台助手确认结果：executed 表示已确定性执行，message 为执行结果说明 */
+export interface AdminAssistantConfirmResult {
+  ok: boolean;
+  executed: boolean;
+  message?: string;
+  resultMessage?: AdminAssistantMessage;
+}
+
+/** 助手面孔键（运行面调整用）：员工助手 / 访客客服 / 运营助手 */
+export type AgentFaceKey = "staff" | "visitor" | "ops";
+
+/**
+ * 运行面调整字段（第 83 步片二）：只许人设、启停、知识范围三项；
+ * 空对象提交 = 清除该面孔的全部调整、回到已发布设置。
+ */
+export interface AgentOverrideFields {
+  systemPrompt?: string;
+  enabled?: boolean;
+  knowledgeScope?: string;
+}
+
+/** 运行面调整行（GET /admin/apps/:appId/agents/overrides 的行形状） */
+export interface AgentOverrideRow {
+  face: AgentFaceKey;
+  fields: AgentOverrideFields;
+  updatedBy: string | null;
+  /** ISO 时间 */
+  updatedAt: string;
+}
 export interface UserGrant {
   appId: string;
   role: string;
@@ -1410,6 +1473,130 @@ export const api = {
         `/admin/apps/${encodeURIComponent(appId)}/submissions/${encodeURIComponent(id)}/reject`,
         { method: "POST", body: JSON.stringify({}) },
       );
+    },
+  },
+
+  /**
+   * 管理台助手（第 83 步片三/片四）：回合制异步——chat 只受理并返回
+   * 会话与消息 id，助手回复经 conversation 详情轮询取回（generating →
+   * done/failed）；写操作以待确认动作挂在助手消息上，confirm 后由
+   * 服务端确定性执行。平台组仅平台管理员可用；app 组按应用档位执法。
+   */
+  assistant: {
+    async chat(body: {
+      conversationId?: string;
+      text: string;
+      context?: unknown;
+    }): Promise<{ conversationId: string; messageId: string }> {
+      return apiFetch("/admin/assistant/chat", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    async conversations(): Promise<AdminAssistantConversation[]> {
+      const res = await apiFetch<{
+        conversations: AdminAssistantConversation[];
+      }>("/admin/assistant/conversations");
+      return Array.isArray(res.conversations) ? res.conversations : [];
+    },
+    async conversation(
+      cid: string,
+    ): Promise<{
+      conversation: AdminAssistantConversation;
+      messages: AdminAssistantMessage[];
+    }> {
+      const res = await apiFetch<{
+        conversation: AdminAssistantConversation;
+        messages: AdminAssistantMessage[];
+      }>(`/admin/assistant/conversations/${encodeURIComponent(cid)}`);
+      return {
+        conversation: res.conversation,
+        messages: Array.isArray(res.messages) ? res.messages : [],
+      };
+    },
+    async confirm(
+      messageId: string,
+      decision: "confirm" | "cancel",
+    ): Promise<AdminAssistantConfirmResult> {
+      return apiFetch(
+        `/admin/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
+        { method: "POST", body: JSON.stringify({ decision }) },
+      );
+    },
+    /** 应用组：同一组四件，路径挂在当前应用下（运营助手） */
+    app: {
+      async chat(
+        appId: string,
+        body: { conversationId?: string; text: string; context?: unknown },
+      ): Promise<{ conversationId: string; messageId: string }> {
+        return apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/chat`,
+          { method: "POST", body: JSON.stringify(body) },
+        );
+      },
+      async conversations(
+        appId: string,
+      ): Promise<AdminAssistantConversation[]> {
+        const res = await apiFetch<{
+          conversations: AdminAssistantConversation[];
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations`,
+        );
+        return Array.isArray(res.conversations) ? res.conversations : [];
+      },
+      async conversation(
+        appId: string,
+        cid: string,
+      ): Promise<{
+        conversation: AdminAssistantConversation;
+        messages: AdminAssistantMessage[];
+      }> {
+        const res = await apiFetch<{
+          conversation: AdminAssistantConversation;
+          messages: AdminAssistantMessage[];
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations/${encodeURIComponent(cid)}`,
+        );
+        return {
+          conversation: res.conversation,
+          messages: Array.isArray(res.messages) ? res.messages : [],
+        };
+      },
+      async confirm(
+        appId: string,
+        messageId: string,
+        decision: "confirm" | "cancel",
+      ): Promise<AdminAssistantConfirmResult> {
+        return apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
+          { method: "POST", body: JSON.stringify({ decision }) },
+        );
+      },
+    },
+  },
+
+  /**
+   * 智能服务运行面调整（第 83 步片二）：GET 只回已存在的调整行
+   * （不含已发布设置本体）；PUT 按面孔逐个提交，字段为空的键不下发、
+   * 三键皆空即清除该面孔调整。写权限为平台管理员与本应用管理员。
+   */
+  agents: {
+    async overrides(appId: string): Promise<AgentOverrideRow[]> {
+      const res = await apiFetch<{ overrides: AgentOverrideRow[] }>(
+        `/admin/apps/${encodeURIComponent(appId)}/agents/overrides`,
+      );
+      return Array.isArray(res.overrides) ? res.overrides : [];
+    },
+    async putOverride(
+      appId: string,
+      face: AgentFaceKey,
+      fields: AgentOverrideFields,
+    ): Promise<AgentOverrideRow[]> {
+      const res = await apiFetch<{ ok: boolean; overrides: AgentOverrideRow[] }>(
+        `/admin/apps/${encodeURIComponent(appId)}/agents/overrides`,
+        { method: "PUT", body: JSON.stringify({ face, fields }) },
+      );
+      return Array.isArray(res.overrides) ? res.overrides : [];
     },
   },
 };

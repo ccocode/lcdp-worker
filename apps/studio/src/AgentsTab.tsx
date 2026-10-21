@@ -1,5 +1,17 @@
-import { Form, Input, InputNumber, Select, Switch, Typography } from "antd";
+import { Alert, Form, Input, InputNumber, Select, Switch, Typography } from "antd";
 import type { AgentsConfig } from "./api.js";
+
+/** 面孔键的职能称呼（运行面调整提示用，与管理台同名） */
+const FACE_LABELS: Record<string, string> = {
+  staff: "员工助手",
+  visitor: "访客客服",
+  ops: "运营助手",
+};
+
+/** 调整时间呈现：ISO → 「年-月-日 时:分」 */
+function fmtPresentTime(iso: string): string {
+  return iso.replace("T", " ").slice(0, 16);
+}
 
 /**
  * 智能体页签（M7）：AgentSchema 基础版编辑器——运行态助手的名称、人设、
@@ -32,8 +44,25 @@ export default function AgentsTab({
     { key: "kb", label: "制度问答", desc: "检索知识库回答制度问题，并给出文档引用" },
   ];
 
+  const present = agents.overridesPresent;
+  const presentParts =
+    present && Object.keys(present).length > 0
+      ? Object.entries(present).map(
+          ([face, at]) =>
+            `${FACE_LABELS[face] ?? face}，${fmtPresentTime(at)}`,
+        )
+      : [];
+
   return (
     <div style={{ padding: 20, maxWidth: 760 }}>
+      {presentParts.length > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`本应用存在管理台运行面调整（${presentParts.join("；")}），发布不会清除`}
+        />
+      )}
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
         配置运行态右下角「✦ 助手」的行为。助手能用的工具先按使用者角色与权限自动限定
         （无权限的实体工具不会出现）；下面的工具开关在此基础上进一步收窄，关掉的整类工具不会提供给助手。助手始终以提问者本人的身份与权限执行。

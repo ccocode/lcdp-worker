@@ -9,6 +9,7 @@ import {
   IdcardOutlined,
   InboxOutlined,
   AppstoreOutlined,
+  RobotOutlined,
   SettingOutlined,
   StopOutlined,
   TeamOutlined,
@@ -39,6 +40,8 @@ import Members from "./pages/Members";
 import AppKb from "./pages/AppKb";
 import Submissions from "./pages/Submissions";
 import AppSettings from "./pages/AppSettings";
+import AgentService from "./pages/AgentService";
+import AppAgentService from "./pages/AppAgentService";
 
 /**
  * 页面注册表（第 57 步）：页面定义单点——key / 组件 / 所属段
@@ -56,6 +59,7 @@ export type PageKey =
   | "kb"
   | "usage"
   | "switches"
+  | "agentsvc"
   | "config"
   | "audit"
   // 应用段基础页（须当前应用上下文；归正后：运营管理 5 + 数据维护 1 + 应用设置 1，
@@ -66,6 +70,7 @@ export type PageKey =
   | "members"
   | "appkb"
   | "submissions"
+  | "appagentsvc"
   | "app-audit"
   | "appsettings"
   // 领域模版段（内容领域，见 templates/content）
@@ -226,6 +231,16 @@ const PLATFORM_DEFS: PageDef[] = [
     render: () => <Switches />,
   },
   {
+    // 第 83 步片四：两项智能服务的呈现汇总（只读），维护面仍在
+    // 熔断与配额 / 成本看板 / 各应用的智能服务页，本页不复制。
+    key: "agentsvc",
+    label: "智能服务",
+    icon: <RobotOutlined />,
+    segment: "platform",
+    section: "平台运营",
+    render: () => <AgentService />,
+  },
+  {
     key: "config",
     label: "系统配置",
     icon: <SettingOutlined />,
@@ -293,6 +308,18 @@ const APP_DEFS: PageDef[] = [
     segment: "app",
     section: "运营管理",
     render: (ctx) => <AppAssets key={ctx.appId!} appId={ctx.appId!} />,
+  },
+  {
+    // 第 83 步片二第 3 点：本应用三位助手的日常调整（人设/启停/
+    // 知识范围，保存即生效）+ 运营助手会话记录只读。
+    key: "appagentsvc",
+    label: "智能服务",
+    icon: <RobotOutlined />,
+    segment: "app",
+    section: "运营管理",
+    render: (ctx) => (
+      <AppAgentService key={ctx.appId!} appId={ctx.appId!} />
+    ),
   },
   {
     key: "app-audit",
