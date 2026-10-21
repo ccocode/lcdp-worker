@@ -564,7 +564,7 @@ export default function AppThemeSettings({
 
       <Card title="当前绑定">
         <Descriptions column={2} size="small">
-          <Descriptions.Item label="生效面">{accessText}</Descriptions.Item>
+          <Descriptions.Item label="生效范围">{accessText}</Descriptions.Item>
           <Descriptions.Item label="主应用">
             {site?.isPrimary ? <Tag color="gold">主应用</Tag> : "否"}
           </Descriptions.Item>
@@ -611,7 +611,7 @@ export default function AppThemeSettings({
               />
               {binding.slot === "mobile" && (
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  移动设备/壳内进入，空缺回退桌面槽
+                  移动设备/壳内进入，未单独设置时使用桌面端主题
                 </Typography.Text>
               )}
             </Space>
@@ -638,7 +638,7 @@ export default function AppThemeSettings({
                 showIcon
                 message={
                   <>
-                    该槽当前绑定：{bindingPtr.id}@{bindingPtr.version}
+                    当前绑定：{bindingPtr.id}@{bindingPtr.version}
                     <Button
                       type="link"
                       danger

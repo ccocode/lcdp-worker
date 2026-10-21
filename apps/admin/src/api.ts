@@ -162,8 +162,8 @@ export function versionFitsSlot(v: ThemeVersionView, slot: ThemeSlotName): boole
 
 /** 槽位中文名 */
 export const THEME_SLOT_LABEL: Record<ThemeSlotName, string> = {
-  desktop: "桌面槽",
-  mobile: "移动槽",
+  desktop: "桌面端",
+  mobile: "移动端",
 };
 
 /** 版本端别标注文案：移动 / 桌面 / 桌面（存量） */
