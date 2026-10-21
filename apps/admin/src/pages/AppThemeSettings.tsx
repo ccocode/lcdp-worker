@@ -33,17 +33,33 @@ import {
 import { accessFormText, fmtTime } from "../helpers";
 
 /**
- * 主题（第 68 步口径：入口模型退役后，主题绑定是**应用自身的属性**）：
- * 呈现主语 = 本应用的主题——平台内置可选 + 本应用私有上传，列表就是
- * 该对象的集合形态属性；「设为当前」把某主题版本写进本应用的主题双槽
- * 指针（theme_slots，桌面槽/移动槽独立、values 按槽独立），经
- * PUT /admin/apps/:id/site 落盘，在本应用被访问时生效（专属域名 /
- * 主应用根路径 / 默认域名 /<id> 路径，形态见下方「当前绑定」）。
- * 写权口径：绑定权归本应用运营方——operator 仅可写 themeSlots 且主题须
- * builtin 或本应用私有（服务端供给执法），admin 全权。
- * 上传口径沿现状：运营者可上传本应用私有主题（admin 上传走平台内置
- * 通道、本页签不提供）。
+ * 主题（第 68 步口径：入口模型退役后，主题绑定是**应用自身的属性**；
+ * 第 74 步 B′ 领域货架改版）：呈现主语 = 本应用的主题——可选集 = 本应用
+ * 私有 + 本应用所属领域的货架主题（平台管理员供货、同领域应用自动
+ * 可见；自定义/空白领域应用无货架），列表就是该对象的集合形态属性。
+ * 列表按桌面 / 移动两组呈现，每组置顶显示当前激活（双槽指针、每组唯一），
+ * 「设为当前」把某主题版本写进本应用对应槽的指针（theme_slots，values
+ * 按槽独立），经 PUT /admin/apps/:id/site 落盘即时生效（生效面见下方
+ * 「当前绑定」）。写权口径：绑定权归本应用运营方与平台管理员，主题须
+ * 本应用私有或本领域货架（服务端供给执法，admin 同口径）。
+ * 上传口径：页签内上传默认落本应用私有（admin/operator 均可，operator
+ * 须持运营授权）；admin 可切换归属为某领域货架供货。
  */
+
+/** 领域 key → 展示名（与平台领域注册表 DOMAINS 的 name 同步） */
+const DOMAIN_LABEL: Record<string, string> = {
+  content: "内容",
+  commerce: "商城",
+  forum: "论坛",
+  support: "客服",
+  oa: "审批协同",
+  generic: "空白",
+};
+
+function domainLabel(key: string | null | undefined): string {
+  if (!key) return "未归类";
+  return DOMAIN_LABEL[key] ?? key;
+}
 
 function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "—";
@@ -101,9 +117,12 @@ interface BindingState {
 export default function AppThemeSettings({
   appId,
   isAdmin,
+  appDomain,
 }: {
   appId: string;
   isAdmin: boolean;
+  /** 本应用主领域 key（platform_apps.domain；无领域/未加载为 null） */
+  appDomain: string | null;
 }) {
   const [themes, setThemes] = useState<ThemeItem[]>([]);
   const [site, setSite] = useState<SiteAppView | null>(null);
@@ -111,6 +130,8 @@ export default function AppThemeSettings({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  /** 上传归属（仅 admin 可改）："" = 本应用私有；其余为领域 key（货架供货） */
+  const [uploadDomain, setUploadDomain] = useState("");
   const [problems, setProblems] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -140,10 +161,29 @@ export default function AppThemeSettings({
 
   const slots = useMemo(() => siteThemeSlots(site), [site]);
 
-  /** 本应用的主题（可选全集）：平台内置全部 + 本应用私有 */
+  /**
+   * 本应用的主题（可选全集）：本应用私有 + 本应用所属领域的货架 +
+   * 当前已绑定的主题（状态保底：即使归属口径变化，已绑主题仍须可见可管）。
+   * operator 的服务端列表已按其应用/领域过滤，此处再交一层口径一致。
+   */
+  const boundIds = useMemo(
+    () =>
+      new Set(
+        THEME_SLOTS.flatMap((s) => (slots[s] ? [slots[s]!.id] : [])),
+      ),
+    [slots],
+  );
   const myThemes = useMemo(
-    () => themes.filter((t) => t.scope === "builtin" || t.ownerAppId === appId),
-    [themes, appId],
+    () =>
+      themes.filter(
+        (t) =>
+          t.ownerAppId === appId ||
+          (t.scope === "domain" &&
+            appDomain !== null &&
+            t.domainKey === appDomain) ||
+          boundIds.has(t.id),
+      ),
+    [themes, appId, appDomain, boundIds],
   );
 
   /** 某主题版本在本应用双槽上的当前绑定标记 */
@@ -166,9 +206,13 @@ export default function AppThemeSettings({
       setUploading(true);
       setProblems([]);
       try {
-        const res = await api.themes.upload(file, appId);
+        const res = uploadDomain
+          ? await api.themes.upload(file, { domainKey: uploadDomain })
+          : await api.themes.upload(file, { appId });
         message.success(
-          `私有主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
+          uploadDomain
+            ? `领域货架主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），已上架「${domainLabel(uploadDomain)}」领域货架，同领域应用均可见可绑`
+            : `私有主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
         );
         await load();
       } catch (err) {
@@ -182,7 +226,7 @@ export default function AppThemeSettings({
         setUploading(false);
       }
     },
-    [appId, load],
+    [appId, load, uploadDomain],
   );
 
   /** 弹窗内切换 主题/槽位/版本 后，同步 values 编辑初值 */
@@ -205,8 +249,7 @@ export default function AppThemeSettings({
   );
 
   const openBinding = useCallback(
-    (theme: ThemeItem) => {
-      const slot: ThemeSlotName = "desktop";
+    (theme: ThemeItem, slot: ThemeSlotName) => {
       const version =
         theme.versions.find((v) => versionFitsSlot(v, slot))?.version ??
         theme.versions[0]?.version ??
@@ -295,24 +338,37 @@ export default function AppThemeSettings({
     }
   }, [binding, slots, appId, load]);
 
-  const versionDetail = (t: ThemeItem) => (
+  /** 主题来源标记：本应用私有 / 领域货架 / 已退役内置 / 他应用私有（仅已绑保底呈现） */
+  const originTag = (t: ThemeItem) => {
+    if (t.ownerAppId === appId) return <Tag color="blue">本应用私有</Tag>;
+    if (t.scope === "domain") {
+      return <Tag color="purple">{domainLabel(t.domainKey)}领域货架</Tag>;
+    }
+    if (t.scope === "builtin") return <Tag>平台内置（存量）</Tag>;
+    return <Tag color="orange">其他应用私有</Tag>;
+  };
+
+  const versionDetail = (t: ThemeItem, slot: ThemeSlotName) => (
     <Space direction="vertical" size={4}>
-      {t.versions.map((v) => (
-        <Typography.Text key={v.version} style={{ fontSize: 12 }}>
-          {t.id}@{v.version}：{v.fileCount} 个文件 / {fmtBytes(v.totalBytes)}
-          ，上传人 {v.createdBy ?? "—"}，{fmtTime(v.createdAt)}
-          ；端：{versionTargetLabel(v)}
-          {configOf(v).length > 0
-            ? `；配置项：${configOf(v)
-                .map((c) => `${c.label}(${c.key})`)
-                .join("、")}`
-            : "；无配置项"}
-        </Typography.Text>
-      ))}
+      {t.versions
+        .filter((v) => versionFitsSlot(v, slot))
+        .map((v) => (
+          <Typography.Text key={v.version} style={{ fontSize: 12 }}>
+            {t.id}@{v.version}：{v.fileCount} 个文件 / {fmtBytes(v.totalBytes)}
+            ，上传人 {v.createdBy ?? "—"}，{fmtTime(v.createdAt)}
+            ；端：{versionTargetLabel(v)}
+            {configOf(v).length > 0
+              ? `；配置项：${configOf(v)
+                  .map((c) => `${c.label}(${c.key})`)
+                  .join("、")}`
+              : "；无配置项"}
+          </Typography.Text>
+        ))}
     </Space>
   );
 
-  const themeColumns: ColumnsType<ThemeItem> = [
+  /** 分组（桌面/移动）共用的列定义：版本只列本组端的，绑定标记只认本组槽 */
+  const themeColumnsFor = (slot: ThemeSlotName): ColumnsType<ThemeItem> => [
     {
       title: "主题",
       dataIndex: "name",
@@ -320,11 +376,7 @@ export default function AppThemeSettings({
         <Space direction="vertical" size={2}>
           <Space size={6}>
             <Typography.Text strong>{t.name}</Typography.Text>
-            {t.ownerAppId === appId ? (
-              <Tag color="blue">本应用私有</Tag>
-            ) : (
-              <Tag>平台内置</Tag>
-            )}
+            {originTag(t)}
           </Space>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {t.id}
@@ -334,25 +386,21 @@ export default function AppThemeSettings({
       ),
     },
     {
-      title: "版本（当前绑定已标记）",
+      title: "版本（激活中已标记）",
       dataIndex: "versions",
       render: (_, t) => (
         <Space size={4} wrap>
-          {t.versions.length === 0 && (
-            <Typography.Text type="secondary">无版本</Typography.Text>
-          )}
-          {t.versions.map((v) => {
-            const marks = marksFor(t.id, v.version);
-            return (
-              <Tag key={v.version} color={marks.length > 0 ? "processing" : undefined}>
-                {v.version}（{v.fileCount} 文件 / {fmtBytes(v.totalBytes)} ·{" "}
-                {versionTargetLabel(v)}）
-                {marks.length > 0
-                  ? ` · 当前：${marks.map((s) => THEME_SLOT_LABEL[s]).join("、")}`
-                  : ""}
-              </Tag>
-            );
-          })}
+          {t.versions
+            .filter((v) => versionFitsSlot(v, slot))
+            .map((v) => {
+              const active = marksFor(t.id, v.version).includes(slot);
+              return (
+                <Tag key={v.version} color={active ? "processing" : undefined}>
+                  {v.version}（{v.fileCount} 文件 / {fmtBytes(v.totalBytes)} ·{" "}
+                  {versionTargetLabel(v)}）{active ? " · 激活中" : ""}
+                </Tag>
+              );
+            })}
         </Space>
       ),
     },
@@ -363,8 +411,8 @@ export default function AppThemeSettings({
         <Button
           type="primary"
           size="small"
-          disabled={t.versions.length === 0}
-          onClick={() => openBinding(t)}
+          disabled={!t.versions.some((v) => versionFitsSlot(v, slot))}
+          onClick={() => openBinding(t, slot)}
         >
           设为当前
         </Button>
@@ -403,34 +451,49 @@ export default function AppThemeSettings({
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="可选主题 = 平台内置主题全部 + 本应用私有主题；「设为当前」即把某主题版本设为本应用的当前主题"
-          description="绑定保存在本应用的主题双槽上（桌面槽/移动槽独立、版本按 target 进对应槽、两槽各自独立的配置值），在本应用被访问时生效；绑定、解绑、回滚（改绑旧版本）都只是切换指针，即时生效，与站点的运行模式互不影响。绑定权归本应用运营方（仅可绑内置或本应用私有主题）与平台管理员。"
+          message={`可选主题 = 本应用私有 + 本应用所属领域（${domainLabel(appDomain)}）的货架主题；按桌面 / 移动分组呈现，每组只有一个激活主题`}
+          description="领域货架由平台管理员供货，同领域应用自动可见可绑；空白（自定义模型）等无货架的领域只有私有主题。绑定保存在本应用的主题双槽上（桌面槽/移动槽独立、版本按 target 进对应槽、两槽各自独立的配置值），在本应用被访问时生效；绑定、解绑、回滚（改绑旧版本）都只是切换指针，即时生效，与站点的运行模式互不影响。绑定位归本应用运营方与平台管理员，服务端按归属执法（不可绑其他应用的私有主题或其他领域的货架主题）。"
         />
-        {!isAdmin && (
-          <Space size={8} style={{ marginBottom: 16 }}>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".zip,application/zip"
-              style={{ display: "none" }}
-              onChange={(ev) => {
-                const f = ev.target.files?.[0];
-                ev.target.value = "";
-                if (f) void onUploadFile(f);
-              }}
+        <Space size={8} wrap style={{ marginBottom: 16 }}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".zip,application/zip"
+            style={{ display: "none" }}
+            onChange={(ev) => {
+              const f = ev.target.files?.[0];
+              ev.target.value = "";
+              if (f) void onUploadFile(f);
+            }}
+          />
+          <Button
+            type="primary"
+            loading={uploading}
+            onClick={() => fileRef.current?.click()}
+          >
+            上传主题包（.zip）
+          </Button>
+          {isAdmin && (
+            <Select
+              style={{ width: 190 }}
+              value={uploadDomain}
+              onChange={(v) => setUploadDomain(v)}
+              options={[
+                { value: "", label: "归属：本应用私有" },
+                ...Object.entries(DOMAIN_LABEL).map(([key, label]) => ({
+                  value: key,
+                  label: `归属：${label}领域货架`,
+                })),
+              ]}
             />
-            <Button
-              type="primary"
-              loading={uploading}
-              onClick={() => fileRef.current?.click()}
-            >
-              上传私有主题包（.zip）
-            </Button>
-            <Typography.Text type="secondary">
-              私有主题仅本应用可见可绑，校验口径与平台内置主题一致（≤200 个文件、解压总大小 ≤20MB、单文件 ≤5MB）
-            </Typography.Text>
-          </Space>
-        )}
+          )}
+          <Typography.Text type="secondary">
+            {uploadDomain
+              ? `货架主题上架「${domainLabel(uploadDomain)}」领域，同领域所有应用可见可绑`
+              : "私有主题仅本应用可见可绑"}
+            ，校验口径统一（≤200 个文件、解压总大小 ≤20MB、单文件 ≤5MB）
+          </Typography.Text>
+        </Space>
         {problems.length > 0 && (
           <Alert
             type="error"
@@ -447,16 +510,55 @@ export default function AppThemeSettings({
           />
         )}
         {myThemes.length === 0 ? (
-          <Empty description="暂无可选主题（平台内置与本应用私有均为空）" />
-        ) : (
-          <Table
-            rowKey="id"
-            loading={loading}
-            columns={themeColumns}
-            dataSource={myThemes}
-            pagination={false}
-            expandable={{ expandedRowRender: versionDetail }}
+          <Empty
+            description={`暂无可选主题（本应用私有与「${domainLabel(appDomain)}」领域货架均为空）`}
           />
+        ) : (
+          THEME_SLOTS.map((slot) => {
+            const ptr = slots[slot];
+            const rows = myThemes.filter((t) =>
+              t.versions.some((v) => versionFitsSlot(v, slot)),
+            );
+            return (
+              <div key={slot} style={{ marginTop: slot === "mobile" ? 24 : 0 }}>
+                <Space size={8} style={{ marginBottom: 8 }}>
+                  <Typography.Text strong>
+                    {slot === "desktop" ? "桌面端" : "移动端"}
+                  </Typography.Text>
+                  {ptr ? (
+                    <Tag color="processing">
+                      当前激活：{ptr.id}@{ptr.version}
+                    </Tag>
+                  ) : (
+                    <Tag>未绑定</Tag>
+                  )}
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {slot === "desktop"
+                      ? "桌面设备访问本应用时呈现"
+                      : "移动设备 / 壳内访问时呈现，未绑定时回退桌面端"}
+                  </Typography.Text>
+                </Space>
+                {rows.length === 0 ? (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={`暂无${slot === "desktop" ? "桌面" : "移动"}端主题`}
+                  />
+                ) : (
+                  <Table
+                    rowKey="id"
+                    size="small"
+                    loading={loading}
+                    columns={themeColumnsFor(slot)}
+                    dataSource={rows}
+                    pagination={false}
+                    expandable={{
+                      expandedRowRender: (t) => versionDetail(t, slot),
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })
         )}
       </Card>
 

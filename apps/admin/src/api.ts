@@ -184,10 +184,16 @@ export interface ThemeItem {
   id: string;
   name: string;
   description: string | null;
-  /** 供给维度（M15 第④步）：builtin = 平台内置库；app = 应用私有 */
-  scope: "builtin" | "app";
-  /** scope=app 时的归属应用 id；builtin 为 null */
+  /**
+   * 供给维度（M15 第④步立 builtin/app；第 74 步 B′ 改版）：app = 应用私有；
+   * domain = 领域货架（同领域应用可见可绑）；builtin = 已退役的内置供给
+   * （存量迁移窗口才可能出现）。
+   */
+  scope: "builtin" | "app" | "domain";
+  /** scope=app 时的归属应用 id；其余为 null */
   ownerAppId?: string | null;
+  /** scope=domain 时的领域 key；其余为 null */
+  domainKey?: string | null;
   versions: ThemeVersionView[];
   boundEntries: ThemeBoundEntry[];
 }
@@ -197,6 +203,9 @@ export interface ThemeUploadResult {
   version: string;
   fileCount: number;
   totalBytes: number;
+  scope?: "builtin" | "app" | "domain";
+  ownerAppId?: string | null;
+  domainKey?: string | null;
 }
 
 /** 主题上传校验失败：problems 为服务端逐项原因（契约 §1 校验清单） */
@@ -645,14 +654,19 @@ export const api = {
     },
     /**
      * multipart 上传主题包 zip：校验失败抛 ThemeUploadError（带逐项 problems）。
-     * appId 给出时为应用私有通道（M15 第④步）：服务端按该应用的运营授权执法，
-     * 落 scope=app / owner=appId；不给时为平台内置通道（admin）。
+     * 归属二选一（第 74 步起服务端必填）：appId → 应用私有通道（服务端按该
+     * 应用的运营授权执法，落 scope=app / owner=appId）；domainKey → 领域
+     * 货架通道（仅 admin，落 scope=domain）。旧的无归属内置通道已退役。
      */
-    async upload(file: File, appId?: string): Promise<ThemeUploadResult> {
+    async upload(
+      file: File,
+      target: { appId?: string; domainKey?: string },
+    ): Promise<ThemeUploadResult> {
       const token = getToken();
       const fd = new FormData();
       fd.set("file", file);
-      if (appId) fd.set("appId", appId);
+      if (target.appId) fd.set("appId", target.appId);
+      if (target.domainKey) fd.set("domainKey", target.domainKey);
       const res = await fetch(`${API_BASE}/admin/themes`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},

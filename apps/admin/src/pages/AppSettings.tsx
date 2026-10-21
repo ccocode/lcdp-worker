@@ -174,7 +174,13 @@ export default function AppSettings({
           {
             key: "theme",
             label: "主题",
-            children: <AppThemeSettings appId={appId} isAdmin={isAdmin} />,
+            children: (
+              <AppThemeSettings
+                appId={appId}
+                isAdmin={isAdmin}
+                appDomain={meta?.app.domain ?? null}
+              />
+            ),
           },
           {
             key: "static",
