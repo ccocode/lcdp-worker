@@ -10,7 +10,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
-import { asText } from "../helpers";
+import { asText, fmtTime } from "../helpers";
 
 /** 领域 key → 展示名（与 AppThemeSettings 的 DOMAIN_LABEL 同步） */
 const DOMAIN_LABEL: Record<string, string> = {
@@ -25,7 +25,7 @@ const DOMAIN_LABEL: Record<string, string> = {
 /**
  * 应用管理（平台页）：应用总览 + 启用/停用（第 68 步：入口装配模型
  * 退役后，域名/主应用都是应用自身字段；第 75 步列表优化：加应用名称与
- * 领域模型列、去掉访问形态列、状态即开关——拨动经确认后落盘，停用后
+ * 领域模型列、去掉访问形态列、场景列改创建时间列、状态即开关——拨动经确认后落盘，停用后
  * 运行态全拒绝 403 app_disabled）。主应用以「是/否」开关呈现（拨开经
  * 确认后 PUT /admin/apps/:id/site 落盘；当前主应用不可关闭——主应用
  * 只能改设、不能取消；目标应用绑有专属域名时服务端拒绝、须先在该
@@ -125,7 +125,12 @@ export default function Apps() {
       },
     },
     { title: "租户", dataIndex: "tenant_id", render: (v, r) => asText(v ?? r.tenantId) },
-    { title: "场景", dataIndex: "scenario", render: (v) => asText(v) },
+    {
+      // 第 75 步续：场景列（来源标记、仅 setup 播种的应用有值）去掉，
+      // 改显应用创建时间（服务端按审计/版本证据回填、fmtTime 统一格式）。
+      title: "创建时间",
+      render: (_, r) => fmtTime(r.createdAt ?? r.created_at),
+    },
     {
       title: "当前版本",
       render: (_, r) => {
