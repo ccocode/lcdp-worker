@@ -386,6 +386,14 @@ function AnonGate({
     if (site?.mode === "redirect") redirectPerSite(site);
   }, [site]);
 
+  // 第 80 步：匿名面标题跟随解析出的应用（会员中心由 MemberCenterApp 自设）。
+  // 必须在下方早期 return 之前调用，否则加载前后 hook 数量变化会触发 React #310。
+  useEffect(() => {
+    if (pub?.entry?.kind === "member-center") return;
+    const n = pub?.primary?.name;
+    if (n) document.title = n;
+  }, [pub]);
+
   if (!loaded || site?.mode === "redirect") {
     return (
       <div style={{ padding: 80, textAlign: "center" }}>
@@ -394,11 +402,6 @@ function AnonGate({
     );
   }
   const primary = pub?.primary ?? null;
-  // 第 80 步：匿名面标题跟随解析出的应用（会员中心由 MemberCenterApp 自设）
-  useEffect(() => {
-    if (pub?.entry?.kind === "member-center") return;
-    if (primary?.name) document.title = primary.name;
-  }, [pub, primary]);
   /** 匿名面客服咨询窗：逐个装配应用探测 support/config，首个 enabled 挂载（M12） */
   const anonSupport = (
     <SupportAutoMount appIds={(pub?.apps ?? []).map((a) => a.id)} />
@@ -3628,6 +3631,16 @@ function AppView({
     if (currentOwned) setActiveAppId(currentOwned.appId);
   }, [currentOwned?.appId]);
 
+  // 第 80 步：浏览器标题跟随当前应用（页面归属/作用域变化时同步）。
+  // 必须在下方早期 return 之前调用，否则加载前后 hook 数量变化会触发 React #310；
+  // 取数口径与 activeLoaded 一致，loaded 未就绪时不设标题。
+  const titleLoaded =
+    loaded?.find((l) => l.app.id === (currentOwned?.appId ?? activeAppId)) ??
+    loaded?.[0];
+  useEffect(() => {
+    if (titleLoaded) document.title = titleLoaded.snapshot.app.name;
+  }, [titleLoaded]);
+
   /** 渲染器适配器绑定当前页所属应用（无当前页时退回当前应用，仅作占位不会被调用） */
   const adapterAppId = currentOwned?.appId ?? activeAppId;
   const adapter = useMemo(
@@ -3695,10 +3708,6 @@ function AppView({
   const activeLoaded =
     loaded.find((l) => l.app.id === (currentOwned?.appId ?? activeAppId)) ??
     primary;
-  // 第 80 步：浏览器标题跟随当前应用（切换应用/页面归属变化时同步）
-  useEffect(() => {
-    document.title = activeLoaded.snapshot.app.name;
-  }, [activeLoaded]);
   /**
    * 展示菜单按当前应用作用域（2026-10-19 定调：菜单须根据应用本身获取，
    * 不能只按角色裁剪）：每个装配应用各自组装一份菜单，展示只取当前应用那份；
