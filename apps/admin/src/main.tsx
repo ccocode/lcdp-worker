@@ -4,6 +4,7 @@ import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { desktopTheme } from "@lcdp/ui";
 import App from "./App";
+import "./global.css";
 
 /**
  * B 端视觉基线令牌单一事实源在 @lcdp/ui（第 73 步片一收口；值沿第 49 步基线：
