@@ -252,7 +252,7 @@ export default function ArticleEditor({
         type="warning"
         showIcon
         message="当前应用没有文章实体"
-        description="文章编辑页依赖内容领域骨架的 article 锚点实体，映射不健康时不可用。"
+        description="当前应用尚未建立文章数据，文章编辑暂不可用。"
       />
     );
   }
@@ -287,8 +287,8 @@ export default function ArticleEditor({
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Text type="secondary">
           {editing
-            ? "当前模式：编辑已有文章。保存后回读服务端落库值刷新表单（状态等字段按你的数据权限裁剪）。"
-            : "当前模式：新建文章。填写后保存即落库，状态流转仍可在文章工作台或流程待办中处理。"}
+            ? "正在编辑已有文章，保存后以最新内容为准；部分字段按你的权限不可修改。"
+            : "正在新建文章，保存后即创建；后续状态变更可在文章工作台或流程待办中处理。"}
         </Typography.Text>
         {readOnly && (
           <Alert

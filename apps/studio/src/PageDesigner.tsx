@@ -321,9 +321,9 @@ export default function PageDesigner({
     const seen = new Map<string, string>();
     for (const p of pagesArr) seen.set(p.route, `${p.route}（${p.name}）`);
     for (const e of topEntities) {
-      if (!seen.has(`/e/${e.key}`)) seen.set(`/e/${e.key}`, `/e/${e.key}（${e.label}列表·派生）`);
+      if (!seen.has(`/e/${e.key}`)) seen.set(`/e/${e.key}`, `/e/${e.key}（${e.label}列表·自动）`);
       if (!seen.has(`/e/${e.key}/form`))
-        seen.set(`/e/${e.key}/form`, `/e/${e.key}/form（${e.label}表单·派生）`);
+        seen.set(`/e/${e.key}/form`, `/e/${e.key}/form（${e.label}表单·自动）`);
     }
     return [...seen.entries()].map(([value, label]) => ({ value, label }));
   }, [pagesArr, topEntities]);
@@ -1908,14 +1908,14 @@ export default function PageDesigner({
         type="info"
         showIcon
         style={{ margin: "12px 16px 0" }}
-        message="页面改动与数据模型共用一份草稿：调整后记得点右上角「保存草稿」，再发布。画布为运行态真实渲染（只读预览，写操作已禁用）：把左栏组件拖到画布上落位；把鼠标移到画布组件上、按住其左上角的拖拽手柄拖动，可精确调整顺序与层级；点选组件后在右栏「属性」里改配置与数据源。"
+        message="页面改动与数据模型共用一份草稿：调整后记得点右上角「保存草稿」，再发布。画布就是页面实际效果（只读预览，不能在此填写或提交）：把左栏组件拖到画布上落位；把鼠标移到画布组件上、按住其左上角的拖拽手柄拖动，可精确调整顺序与层级；点选组件后在右栏「属性」里改配置与数据源。"
       />
       {pages === null && (
         <Alert
           type="warning"
           showIcon
           style={{ margin: "12px 16px 0" }}
-          message="当前全部页面由数据模型自动派生。在此生成或新建第一张设计页后，未被设计页覆盖的实体仍继续自动派生。"
+          message="当前全部页面都由数据模型自动生成。在此新建第一张设计页后，未被设计页覆盖的实体仍继续自动生成。"
         />
       )}
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
@@ -2088,7 +2088,7 @@ export default function PageDesigner({
             {currentPage && (
               <Popconfirm
                 title={`删除页面「${currentPage.name}」？`}
-                description="仅删除设计页；若该实体再无设计页覆盖，将恢复自动派生。"
+                description="仅删除设计页；若该实体再无设计页覆盖，将恢复为自动生成。"
                 onConfirm={() => deletePage(currentPage)}
               >
                 <Button danger>删除页面</Button>

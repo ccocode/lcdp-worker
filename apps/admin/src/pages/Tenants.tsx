@@ -117,7 +117,7 @@ export default function Tenants() {
         cancelText="取消"
       >
         <Form form={form} layout="vertical">
-          <Form.Item label="租户 ID（留空由服务端生成）" name="id">
+          <Form.Item label="租户 ID（留空自动生成）" name="id">
             <Input placeholder="如 acme" />
           </Form.Item>
           <Form.Item

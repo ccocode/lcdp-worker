@@ -474,11 +474,11 @@ function SsoCallbackPage({ params }: { params: Record<string, string> }) {
       sessionStorage.removeItem(SSO_APP_KEY);
       sessionStorage.removeItem(SSO_RETURN_KEY);
       if (!code || !appId) {
-        if (alive) setError("授权回调参数不完整，请返回原页面重新登录。");
+        if (alive) setError("登录未完成，请返回原页面重新登录。");
         return;
       }
       if (!state || !wantState || state !== wantState) {
-        if (alive) setError("授权状态校验失败（state 不一致），请重新登录。");
+        if (alive) setError("登录状态校验失败，请重新登录。");
         return;
       }
       try {
@@ -3541,7 +3541,7 @@ function AppView({
           } catch (err) {
             if (idx === 0) throw err;
             console.warn(
-              `[runtime] 应用 ${app.id} 快照加载失败，已从本次装配中剔除`,
+              `[runtime] 应用 ${app.id} 的页面数据加载失败，已跳过`,
               err,
             );
             return null;

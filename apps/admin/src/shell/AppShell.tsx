@@ -680,7 +680,7 @@ export default function AppShell() {
               style={{ width: 260 }}
               options={operableApps.map((a) => ({
                 value: a.id,
-                label: `${a.name}（${a.id}）${a.source === "derived" ? " · 推导" : ""}`,
+                label: a.name,
               }))}
             />
           </Space>

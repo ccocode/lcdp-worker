@@ -56,7 +56,7 @@ const DOMAIN_LABEL: Record<string, string> = {
   generic: "空白",
 };
 
-function domainLabel(key: string | null | undefined): string {
+export function domainLabel(key: string | null | undefined): string {
   if (!key) return "未归类";
   return DOMAIN_LABEL[key] ?? key;
 }
@@ -211,7 +211,7 @@ export default function AppThemeSettings({
           : await api.themes.upload(file, { appId });
         message.success(
           uploadDomain
-            ? `领域货架主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），已上架「${domainLabel(uploadDomain)}」领域货架，同领域应用均可见可绑`
+            ? `共享主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），已加入「${domainLabel(uploadDomain)}」领域共享主题，同领域应用均可见可绑`
             : `私有主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
         );
         await load();
@@ -342,7 +342,7 @@ export default function AppThemeSettings({
   const originTag = (t: ThemeItem) => {
     if (t.ownerAppId === appId) return <Tag color="blue">本应用私有</Tag>;
     if (t.scope === "domain") {
-      return <Tag color="purple">{domainLabel(t.domainKey)}领域货架</Tag>;
+      return null;
     }
     if (t.scope === "builtin") return <Tag>平台内置（存量）</Tag>;
     return <Tag color="orange">其他应用私有</Tag>;
@@ -451,8 +451,8 @@ export default function AppThemeSettings({
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message={`可选主题 = 本应用私有 + 本应用所属领域（${domainLabel(appDomain)}）的货架主题；按桌面 / 移动分组呈现，每组只有一个激活主题`}
-          description="领域货架由平台管理员供货，同领域应用自动可见可绑；空白（自定义模型）等无货架的领域只有私有主题。绑定保存在本应用的主题双槽上（桌面槽/移动槽独立、版本按 target 进对应槽、两槽各自独立的配置值），在本应用被访问时生效；绑定、解绑、回滚（改绑旧版本）都只是切换指针，即时生效，与站点的运行模式互不影响。绑定位归本应用运营方与平台管理员，服务端按归属执法（不可绑其他应用的私有主题或其他领域的货架主题）。"
+          message={`可选主题 = 本应用私有主题 + 「${domainLabel(appDomain)}」领域的共享主题；按桌面 / 移动分组呈现，每组只有一个启用主题`}
+          description="共享主题由平台管理员提供，同一领域的应用都可选用；没有共享主题的领域只能使用本应用私有主题。绑定、解绑或改绑旧版本后都立即生效，桌面与移动分别使用各自的主题、互不影响。只有本应用运营方与平台管理员可以绑定主题，且不能选用其他应用的私有主题或其他领域的共享主题。"
         />
         <Space size={8} wrap style={{ marginBottom: 16 }}>
           <input
@@ -482,16 +482,16 @@ export default function AppThemeSettings({
                 { value: "", label: "归属：本应用私有" },
                 ...Object.entries(DOMAIN_LABEL).map(([key, label]) => ({
                   value: key,
-                  label: `归属：${label}领域货架`,
+                  label: `归属：${label}领域共享主题`,
                 })),
               ]}
             />
           )}
           <Typography.Text type="secondary">
             {uploadDomain
-              ? `货架主题上架「${domainLabel(uploadDomain)}」领域，同领域所有应用可见可绑`
+              ? `共享主题将加入「${domainLabel(uploadDomain)}」领域，同领域所有应用可见可绑`
               : "私有主题仅本应用可见可绑"}
-            ，校验口径统一（≤200 个文件、解压总大小 ≤20MB、单文件 ≤5MB）
+            ，校验标准一致（≤200 个文件、解压总大小 ≤20MB、单文件 ≤5MB）
           </Typography.Text>
         </Space>
         {problems.length > 0 && (
@@ -511,7 +511,7 @@ export default function AppThemeSettings({
         )}
         {myThemes.length === 0 ? (
           <Empty
-            description={`暂无可选主题（本应用私有与「${domainLabel(appDomain)}」领域货架均为空）`}
+            description={`暂无可选主题（本应用私有与「${domainLabel(appDomain)}」领域共享主题均为空）`}
           />
         ) : (
           THEME_SLOTS.map((slot) => {

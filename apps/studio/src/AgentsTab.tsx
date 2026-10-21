@@ -26,10 +26,10 @@ export default function AgentsTab({
     label: string;
     desc: string;
   }[] = [
-    { key: "query", label: "数据查询", desc: "按当前用户权限查询与查看业务数据（仍受权限预裁剪）" },
+    { key: "query", label: "数据查询", desc: "按当前用户权限查询与查看业务数据" },
     { key: "create", label: "业务办理", desc: "新建/更新记录类写提案——执行前必经确认卡片，建单类默认回填表单待人工提交" },
     { key: "flow", label: "流程待办", desc: "发起流程、审批、催办与进度查询（写动作同样需确认）" },
-    { key: "kb", label: "制度问答", desc: "检索租户知识库回答制度问题，并给出文档引用" },
+    { key: "kb", label: "制度问答", desc: "检索知识库回答制度问题，并给出文档引用" },
   ];
 
   return (

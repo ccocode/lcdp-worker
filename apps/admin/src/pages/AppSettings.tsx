@@ -4,7 +4,7 @@ import { api, type AdminDataMeta, type AppOperator, type Row } from "../api";
 import { domainHealth } from "../domainHealth";
 import { asText } from "../helpers";
 import DomainBindings from "./DomainBindings";
-import AppThemeSettings from "./AppThemeSettings";
+import AppThemeSettings, { domainLabel } from "./AppThemeSettings";
 import StaticStatus from "./StaticStatus";
 
 /**
@@ -78,8 +78,8 @@ export default function AppSettings({
       {meta && health?.hasDomain && (
         <>
           <Descriptions column={2} bordered size="small">
-            <Descriptions.Item label="主领域">{meta.app.domain}</Descriptions.Item>
-            <Descriptions.Item label="骨架版本">
+            <Descriptions.Item label="主领域">{domainLabel(meta.app.domain)}</Descriptions.Item>
+            <Descriptions.Item label="领域模型版本">
               {meta.domainModules?.skeleton ?? "—"}
             </Descriptions.Item>
           </Descriptions>
@@ -150,7 +150,7 @@ export default function AppSettings({
           width: 220,
           render: (v: string) =>
             v === "derived" ? (
-              <Tag color="purple">领域角色推导（命中本应用角色映射）</Tag>
+              <Tag color="purple">领域角色成员</Tag>
             ) : (
               <Tag color="blue">运营授权</Tag>
             ),

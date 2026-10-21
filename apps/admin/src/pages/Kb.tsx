@@ -129,7 +129,7 @@ function Documents() {
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Input
-          placeholder="按应用 appId 筛选（留空=全部）"
+          placeholder="按应用 ID 筛选（留空 = 全部）"
           allowClear
           style={{ width: 240 }}
           value={appFilter}
@@ -165,11 +165,11 @@ function Documents() {
       >
         <Form form={form} layout="vertical">
           <Form.Item
-            label="所属应用 appId"
+            label="所属应用 ID"
             name="appId"
             rules={[{ required: true, message: "请输入应用 ID" }]}
           >
-            <Input placeholder="如 procurement-inventory；平台文档可用 platform 前缀口径以服务端为准" />
+            <Input placeholder="如 procurement-inventory；平台通用文档填 platform" />
           </Form.Item>
           <Form.Item
             label="标题"

@@ -51,7 +51,7 @@ const KEY_LABELS: Record<string, string> = {
   "storage.accessKeyId": "AccessKey",
   "storage.secretAccessKey": "SecretKey",
   "turnstile.siteKey": "站点密钥",
-  "turnstile.secretKey": "服务端密钥",
+  "turnstile.secretKey": "密钥（Secret Key）",
   "mail.smtpHost": "SMTP 主机",
   "mail.smtpPort": "SMTP 端口",
   "mail.smtpSecure": "SSL/TLS（true / false）",
@@ -201,7 +201,7 @@ export default function ConfigPage() {
     Modal.confirm({
       title: "重建向量索引",
       content:
-        "将按新维度修改向量列并对全部知识片段重新向量化，期间语义检索可能短暂不可用。确定执行？（演示口径：保持 768 时无需执行）",
+        "将按新维度修改向量列并对全部知识片段重新向量化，期间语义检索可能短暂不可用。确定执行？（保持 768 时无需执行）",
       okText: "执行重建",
       okButtonProps: { danger: true },
       cancelText: "取消",
@@ -279,7 +279,7 @@ export default function ConfigPage() {
                     <div>{KEY_LABELS[it.key] ?? "未命名配置项"}</div>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       <Mono>{it.key}</Mono>
-                      {it.scope !== "global" ? ` · 作用域 ${it.scope}` : ""}
+                      {it.scope !== "global" ? ` · 适用范围 ${it.scope}` : ""}
                     </Typography.Text>
                   </div>
                   {it.secret ? (

@@ -660,7 +660,7 @@ export function DataTable({ node }: NodeProps) {
   const govRemoveRow = (row: Row) => {
     Modal.confirm({
       title: "删除这条记录？",
-      content: "删除后不可恢复；若该记录仍被其他记录引用，服务端会拒绝删除。",
+      content: "删除后不可恢复；若该记录仍被其他记录引用，则无法删除。",
       okText: "删除",
       okButtonProps: { danger: true },
       cancelText: "取消",
@@ -2425,7 +2425,7 @@ export function Detail({ node }: NodeProps) {
     Modal.confirm({
       title: "删除这条记录？",
       content:
-        "删除后不可恢复；若仍被其他记录引用（如已有回复的帖子），服务端会拒绝删除，可先行下架。",
+        "删除后不可恢复；若仍被其他记录引用（如已有回复的帖子），则无法删除，可先行下架。",
       okText: "删除",
       okButtonProps: { danger: true },
       cancelText: "取消",

@@ -198,7 +198,7 @@ export default function Users({ currentUser }: { currentUser: UserInfo }) {
             title={`删除用户 ${asText(r.username)}？`}
             description={
               String(r.id) === currentUser.id
-                ? "不能删除自己的账号（服务端也会拒绝）"
+                ? "不能删除自己的账号"
                 : undefined
             }
             okText="删除"

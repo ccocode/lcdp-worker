@@ -148,7 +148,7 @@ export const componentCatalog: Array<{
     label: "客服会话记录",
     category: "智能",
     description:
-      "按当前记录的会话字段展示访客客服会话全文与转人工摘要，坐席可将问答沉淀为 FAQ 草稿",
+      "按当前记录的会话字段展示访客客服会话全文与转人工摘要，坐席可将问答整理为 FAQ 草稿",
     make: (id) => ({
       id,
       type: "SupportTranscript",
@@ -161,7 +161,7 @@ export const componentCatalog: Array<{
     label: "购物车",
     category: "数据",
     description:
-      "本地购物车与结算（绑定商品实体）：按现价渲染、失效商品不计入，结算调会员 checkout 端点由服务端重算",
+      "本地购物车与结算（绑定商品实体）：按当前价格显示、失效商品不计入，结算时按最新价格与库存重新核算",
     make: (id) => ({
       id,
       type: "CartView",

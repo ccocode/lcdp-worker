@@ -278,8 +278,8 @@ export default function FlowTasks({
         {segment !== "start" && <Button onClick={() => void load()}>刷新</Button>}
         <Typography.Text type="secondary">
           {segment === "start"
-            ? "管理侧兜底发起：可发起范围由服务端按已发布权限与记录状态裁剪，发起记流程审计。"
-            : "办理按流程指派执法：运营授权不赋予审批资格，指派给他人时办理会被拒绝。"}
+            ? "可发起的流程与记录按本应用已发布权限确定，发起后可在审计中查看。"
+            : "只能办理指派给你或你所属角色的待办；运营授权不等于审批资格，指派给他人的待办无法代办。"}
         </Typography.Text>
       </Space>
       {segment === "start" ? (

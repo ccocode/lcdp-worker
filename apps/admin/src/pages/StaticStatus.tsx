@@ -130,7 +130,7 @@ export default function StaticStatus({
         ),
     },
     {
-      title: "快照",
+      title: "静态页",
       key: "snapshot",
       width: 220,
       render: (_: unknown, r: Row) =>
@@ -190,8 +190,8 @@ export default function StaticStatus({
         <Alert
           type="info"
           showIcon
-          message="本应用未绑定专属域名，暂无静态站点面"
-          description="静态快照按绑定域名生成；未绑定的应用经默认域名路径以动态模式提供服务。绑定域名见「域名」页签。"
+          message="本应用未绑定专属域名，暂无静态页面"
+          description="绑定专属域名后，系统会为本应用生成静态页面；未绑定的应用通过默认域名正常提供服务。域名绑定见「域名」页签。"
         />
       ) : (
         <Table

@@ -187,9 +187,9 @@ export default function Permissions({
     for (const p of pages ?? []) seen.set(p.route, `${p.route}（${p.name}）`);
     for (const e of topEntities) {
       if (!seen.has(`/e/${e.key}`))
-        seen.set(`/e/${e.key}`, `/e/${e.key}（${e.label}列表·派生）`);
+        seen.set(`/e/${e.key}`, `/e/${e.key}（${e.label}列表·自动）`);
       if (!seen.has(`/e/${e.key}/form`))
-        seen.set(`/e/${e.key}/form`, `/e/${e.key}/form（${e.label}表单·派生）`);
+        seen.set(`/e/${e.key}/form`, `/e/${e.key}/form（${e.label}表单·自动）`);
     }
     return [...seen.entries()].map(([value, label]) => ({ value, label }));
   }, [pages, topEntities]);
@@ -981,7 +981,7 @@ export default function Permissions({
           <Input
             size="small"
             style={{ width: 560 }}
-            placeholder="如 author_name；留空 = 不盖章。会员新建行时服务端自动写入其显示名"
+            placeholder="如 author_name；留空 = 不盖章。会员新建时将自动写入其显示名"
             value={memberPolicy.stampDisplayNameAs ?? ""}
             onChange={(e) =>
               setMemberPolicy({
@@ -1036,7 +1036,7 @@ export default function Permissions({
                 mode="multiple"
                 size="small"
                 style={{ width: 430 }}
-                placeholder="未声明 = 全部字段可写（实体级口径）"
+                placeholder="未填写 = 全部字段可写"
                 value={memberPolicy.writableFields[entityKey] ?? []}
                 options={ent.fields.map((f) => ({
                   value: f.key,

@@ -281,7 +281,7 @@ function AppsView({
               placeholder="如 星桥科技官网 CMS"
             />
           </Form.Item>
-          <Form.Item label="主领域（创建后不可变更；选有骨架的领域将自动生成数据模型、页面与权限草稿）">
+          <Form.Item label="主领域（创建后不可变更；选择带预置模型的领域将自动生成数据模型、页面与权限草稿）">
             <Select
               value={newAppDomain}
               onChange={(v) => {
@@ -292,8 +292,8 @@ function AppsView({
                 value: d.key,
                 disabled: !d.available,
                 label: d.available
-                  ? `${d.name}领域${d.skeleton ? `（骨架 ${d.skeleton}）` : ""}`
-                  : `${d.name}领域（骨架打磨中）`,
+                  ? `${d.name}领域${d.skeleton ? `（预置模型 ${d.skeleton}）` : ""}`
+                  : `${d.name}领域（预置模型打磨中）`,
               }))}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -301,7 +301,7 @@ function AppsView({
             </Typography.Text>
           </Form.Item>
           {templateGroups.length > 0 && (
-            <Form.Item label="单据样板（样板库型领域：勾选后整束装配——实体 + 审批流 + 页面 + 权限，未勾选不进应用）">
+            <Form.Item label="单据样板（勾选的样板将整套加入应用：实体 + 审批流 + 页面 + 权限；未勾选不加入）">
               {templateGroups.map((g) => (
                 <div key={g.category} style={{ marginBottom: 8 }}>
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>

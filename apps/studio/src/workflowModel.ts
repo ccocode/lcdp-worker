@@ -946,7 +946,7 @@ export function connectNodes(
 ): { wf?: WorkflowSchema; error?: string } {
   const fromNode = nodeById(wf, from);
   const toNode = nodeById(wf, to);
-  if (!fromNode || !toNode) return { error: "连线端点不存在" };
+  if (!fromNode || !toNode) return { error: "连线的起点或终点不存在" };
   if (from === to) return { error: "不能把节点连接到自身" };
   if (fromNode.type === "end") return { error: "结束节点不能再连出" };
   if (toNode.type === "start") return { error: "开始节点不能有入边" };

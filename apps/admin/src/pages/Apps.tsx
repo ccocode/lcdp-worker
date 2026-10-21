@@ -82,7 +82,7 @@ export default function Apps() {
     const id = String(row.id);
     Modal.confirm({
       title: "设为主应用",
-      content: `确认把应用 ${id} 设为主应用？主应用占据默认域名的根路径，原主应用随即让位。若该应用已绑定专属域名，服务端会拒绝（须先解绑）。操作会写入审计。`,
+      content: `确认把应用 ${id} 设为主应用？主应用占据默认域名的根路径，原主应用随即让位。若该应用已绑定专属域名，须先解绑后才能设置。操作会写入审计。`,
       okText: "设为主应用",
       cancelText: "取消",
       onOk: async () => {
