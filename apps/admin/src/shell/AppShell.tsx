@@ -55,7 +55,8 @@ const { Header, Sider, Content } = Layout;
  * 只保留机制：state + history 导航（/<pagekey>?app=）、popstate 回读、
  * 上下文归位、appMeta 拉取与 appPageShell 占位、401 整页重载回原页
  * （api.expireSession）。归位时序与占位逻辑与重构前逐项一致（踩坑点，
- * 不得改判定时机）。
+ * 不得改判定时机）；第 78 步在此之上加同步预归位（首载初始化与 onLogin
+ * 以本地 grants 快照先行校验 appId），异步归位仍为最终权威。
  */
 
 /** 旧 # 链接迁移（M14 线一）：首载时把 #/<key> 以 replaceState 落到等价新路径 /<key> */
@@ -169,7 +170,22 @@ export default function AppShell() {
     route0.settingsTab,
   );
   // ---- 应用上下文 ----
-  const [appId, setAppId] = useState<string | null>(() => appFromSearch());
+  const [appId, setAppId] = useState<string | null>(() => {
+    const fromUrl = appFromSearch();
+    // 第 78 步首载同步归位：本地 grants 快照与会话同存（登出即清），地址里
+    // 的应用不在快照可运营集内时，初始值直接落首个可运营应用，不等异步
+    // 归位——页面 effect 先于外壳 effect 执行，空窗里会按旧应用发出 403 请求。
+    const g = getStoredGrants();
+    if (
+      fromUrl &&
+      g &&
+      g.apps.length > 0 &&
+      !g.apps.some((a) => a.id === fromUrl)
+    ) {
+      return g.apps[0]!.id;
+    }
+    return fromUrl;
+  });
   // 数据维护展开组当前实体（?entity= 承载，第 76 步）
   const [dataEntity, setDataEntity] = useState<string | null>(() =>
     entityFromSearch(),
@@ -301,8 +317,13 @@ export default function AppShell() {
         setAppId(first);
       }
     }
+    // 第 78 步地址对齐：同步归位（初始化 / onLogin）已把状态落到正确应用、
+    // 但地址仍带旧 app 参数时，以状态为准对齐地址（仅参数不一致时才动）。
+    if (appId && appFromSearch() !== appId) {
+      window.history.replaceState(null, "", pathWithApp(page, appId));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grants, user]);
+  }, [grants, user, appId]);
 
   // 当前应用的领域元数据（领域菜单与模版页共用一份，切换应用即重拉）。
   // 第 65 步补 user 维度：meta 是按调用者数据权限裁剪的（actions/字段/菜单）——
@@ -448,7 +469,20 @@ export default function AppShell() {
     return (
       <Login
         onLogin={(u) => {
-          setGrants(getStoredGrants());
+          const me = getStoredGrants();
+          setGrants(me);
+          // 第 78 步换人登录同步归位：appId 状态跨登出保留、地址也残留上一
+          // 会话的应用；新用户快照在 Login.submit 已先行落盘，若当前 appId
+          // 不在其可运营集内，在 setUser 触发页面挂载的同批更新里先纠正到
+          // 首个可运营应用并对齐地址，页面首帧即正确上下文、零错发请求。
+          if (me && me.apps.length > 0) {
+            const cur = appId ?? appFromSearch();
+            if (cur && !me.apps.some((a) => a.id === cur)) {
+              const first = me.apps[0]!.id;
+              window.history.replaceState(null, "", pathWithApp(page, first));
+              setAppId(first);
+            }
+          }
           setUser(u);
         }}
       />
