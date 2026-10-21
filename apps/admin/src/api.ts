@@ -437,6 +437,8 @@ export interface AdminAssistantMessage {
 export interface AdminAssistantConversation {
   id: string;
   title: string | null;
+  /** 发起人（监督视图 scope=all 的列表与详情才回） */
+  username?: string;
   createdAt: string | null;
   updatedAt: string | null;
 }
@@ -1550,11 +1552,13 @@ export const api = {
       },
       async conversations(
         appId: string,
+        opts?: { scope?: "all" },
       ): Promise<AdminAssistantConversation[]> {
+        const qs = opts?.scope === "all" ? "?scope=all" : "";
         const res = await apiFetch<{
           conversations: AdminAssistantConversation[];
         }>(
-          `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations`,
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations${qs}`,
         );
         return Array.isArray(res.conversations) ? res.conversations : [];
       },

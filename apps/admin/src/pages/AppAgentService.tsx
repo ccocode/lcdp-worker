@@ -33,7 +33,8 @@ import { fmtTime } from "../helpers";
  * 有调整、沿用已发布设置（服务端只回调整内容，不回设置本体）。
  * 能使用哪些工具由应用的设计决定，不在本页出现。页面档位随
  * 管理台既有分档：领域角色身份只读，管理员与应用管理员可改。
- * 下半部分为运营助手会话记录（只读，本人会话）。
+ * 下半部分为运营助手会话记录（只读；监督视图——本应用管理员档位
+ * 看本应用全部运营会话，领域角色档位只看本人会话）。
  */
 
 const FACES: { key: AgentFaceKey; label: string; hint: string }[] = [
@@ -105,7 +106,9 @@ export default function AppAgentService({ appId }: { appId: string }) {
       setLoading(false);
     }
     try {
-      setConversations(await api.assistant.app.conversations(appId));
+      setConversations(
+        await api.assistant.app.conversations(appId, { scope: "all" }),
+      );
     } catch {
       // 会话记录读取失败不阻塞调整面，列表保持为空
       setConversations([]);
@@ -174,6 +177,11 @@ export default function AppAgentService({ appId }: { appId: string }) {
     {
       title: "会话",
       render: (_, c) => c.title || "（无标题）",
+    },
+    {
+      title: "发起人",
+      width: 140,
+      render: (_, c) => c.username ?? "—",
     },
     {
       title: "最近活动",

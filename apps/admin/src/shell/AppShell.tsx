@@ -709,12 +709,18 @@ export default function AppShell() {
           {effectiveDef.needsMeta ? appPageShell(pageNode) : pageNode}
         </Content>
       </Layout>
+      {/* 助手上下文按当前页所在区划分（第 83 步片四）：平台区页
+          （segment=platform，如工作台/智能服务）传 null → 平台助手；
+          应用内页传当前应用 → 运营助手。上下文切换时 AssistantDrawer
+          内部按 appId 给 ChatPane 定 key，换上下文即换新会话面。 */}
       <AssistantDrawer
         open={assistantOpen}
         onClose={() => setAssistantOpen(false)}
-        appId={appId}
+        appId={effectiveDef.segment === "platform" ? null : appId}
         appName={
-          currentApp && typeof currentApp.name === "string"
+          effectiveDef.segment !== "platform" &&
+          currentApp &&
+          typeof currentApp.name === "string"
             ? currentApp.name
             : null
         }
