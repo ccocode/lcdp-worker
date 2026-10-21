@@ -36,6 +36,8 @@ import { htmlToText } from "../lib/richtext";
  * read 的实体三者皆不渲染（点了必吃 403 的假按钮不出现）。
  * 删除被其他记录引用时服务端回 409 referencedBy，前端弹窗逐项明示。
  * 内容领域模版以 lockEntity + 状态筛选复用本组件（自动继承本套能力）。
+ * 第 76 步：数据维护页按 ?entity= 锁定单实体呈现（展开组）；子表归位——
+ * 编辑抽屉内以子表区（embedded + presetFilter）维护子实体行，子表不进菜单。
  */
 
 export interface StatusFilter {
@@ -53,6 +55,15 @@ interface Props {
   /** 行内附加动作（领域模版的快捷直改），渲染在「编辑」之前 */
   extraRowActions?: (row: Row, reload: () => void) => React.ReactNode;
   title?: string;
+  /**
+   * 预置等值过滤（子表区用，第 76 步）：列表恒按此过滤、新建恒注入此值、
+   * 表单不渲染此字段（父键由上下文决定，不给用户改）。
+   */
+  presetFilter?: { field: string; value: string };
+  /** 内嵌呈现（子表区用）：不包 Card、工具栏紧凑 */
+  embedded?: boolean;
+  /** 嵌套深度：子表区仅在 depth=0 的编辑抽屉内渲染，防止无限嵌套 */
+  depth?: number;
 }
 
 const SYSTEM_COLS = ["id", "created_at", "updated_at"];
@@ -74,7 +85,12 @@ export default function DataAdmin({
   statusFilter,
   extraRowActions,
   title,
+  presetFilter,
+  embedded = false,
+  depth = 0,
 }: Props) {
+  const presetField = presetFilter?.field;
+  const presetValue = presetFilter?.value;
   const entities = meta.entities;
   const [entityKey, setEntityKey] = useState<string | null>(
     lockEntity ?? entities[0]?.key ?? null,
@@ -96,6 +112,18 @@ export default function DataAdmin({
     [entities, entityKey],
   );
 
+  /** 子实体集（第 76 步子表归位）：parentField 的 ref 指向当前实体且可读者 */
+  const childEntities = useMemo(() => {
+    if (!entity) return [];
+    return entities.filter(
+      (c) =>
+        !!c.parentField &&
+        c.fields.find((f) => f.key === c.parentField)?.refEntity ===
+          entity.key &&
+        c.actions.includes("read"),
+    );
+  }, [entities, entity]);
+
   const statusValue = statusFilter?.value ?? null;
 
   const load = useCallback(async () => {
@@ -104,6 +132,7 @@ export default function DataAdmin({
     try {
       const filters: Record<string, string> = {};
       if (statusFilter && statusValue) filters[statusFilter.field] = statusValue;
+      if (presetField && presetValue !== undefined) filters[presetField] = presetValue;
       const res = await api.adminData.list(appId, entityKey, {
         q: keyword || undefined,
         limit: pageSize,
@@ -117,7 +146,7 @@ export default function DataAdmin({
     } finally {
       setLoading(false);
     }
-  }, [appId, entityKey, keyword, page, pageSize, statusFilter, statusValue]);
+  }, [appId, entityKey, keyword, page, pageSize, statusFilter, statusValue, presetField, presetValue]);
 
   useEffect(() => {
     void load();
@@ -252,6 +281,8 @@ export default function DataAdmin({
         const v = values[f.key];
         if (v !== undefined && v !== null && v !== "") body[f.key] = v;
       }
+      // 子表区新建：父键恒由上下文注入（表单不渲染该字段）
+      if (presetField && presetValue !== undefined) body[presetField] = presetValue;
       setSaving(true);
       try {
         const { strippedFields } = await api.adminData.create(appId, entityKey, body);
@@ -278,6 +309,8 @@ export default function DataAdmin({
     const changed: Record<string, unknown> = {};
     for (const f of entity.fields) {
       if (SYSTEM_COLS.includes(f.key)) continue;
+      // 预置字段（父键）不进表单、不可变更：跳过比对，防被误判清空
+      if (f.key === presetField) continue;
       const next = values[f.key];
       const prev = editing[f.key];
       const norm = (v: unknown) =>
@@ -323,9 +356,9 @@ export default function DataAdmin({
     return <Alert type="info" showIcon message="已发布设计中没有数据实体" />;
   }
 
-  return (
-    <Card title={title ?? "数据维护"}>
-      {!lockEntity && (
+  const body = (
+    <>
+      {!lockEntity && !embedded && (
         <Typography.Paragraph
           type="secondary"
           style={{ marginBottom: 12, fontSize: 12 }}
@@ -362,9 +395,11 @@ export default function DataAdmin({
             新建{entity.label}
           </Button>
         )}
-        <Typography.Text type="secondary">
-          读 + 新建 + 编辑 + 删除（按你的数据权限呈现动作），全程审计；敏感字段以掩码呈现，未修改不会回写；被引用的记录不能删除。
-        </Typography.Text>
+        {!embedded && (
+          <Typography.Text type="secondary">
+            读 + 新建 + 编辑 + 删除（按你的数据权限呈现动作），全程审计；敏感字段以掩码呈现，未修改不会回写；被引用的记录不能删除。
+          </Typography.Text>
+        )}
       </Space>
       <PageTable
         rowKey={(r) => String(r.id)}
@@ -394,7 +429,7 @@ export default function DataAdmin({
           setEditing(null);
           setCreating(false);
         }}
-        width={560}
+        width={editing && childEntities.length > 0 ? 760 : 560}
         extra={
           <Button type="primary" loading={saving} onClick={() => void save()}>
             保存
@@ -405,6 +440,7 @@ export default function DataAdmin({
           <Form form={form} layout="vertical">
             {entity.fields
               .filter((f) => !creating || !SYSTEM_COLS.includes(f.key))
+              .filter((f) => f.key !== presetField)
               .map((f) => (
               <Form.Item
                 key={f.key}
@@ -434,7 +470,34 @@ export default function DataAdmin({
             </Typography.Text>
           </Form>
         )}
+        {/* 子表区（第 76 步）：子实体行在本记录的编辑抽屉内维护，不再单独成页 */}
+        {editing &&
+          depth === 0 &&
+          childEntities.map((c) => (
+            <div key={c.key} style={{ marginTop: 24 }}>
+              <Typography.Title level={5} style={{ marginBottom: 8 }}>
+                {c.label}
+              </Typography.Title>
+              <DataAdmin
+                appId={appId}
+                meta={meta}
+                lockEntity={c.key}
+                presetFilter={{
+                  field: c.parentField!,
+                  value: String(editing.id),
+                }}
+                embedded
+                depth={1}
+              />
+            </div>
+          ))}
       </Drawer>
-    </Card>
+    </>
+  );
+
+  return embedded ? (
+    <div>{body}</div>
+  ) : (
+    <Card title={title ?? "数据维护"}>{body}</Card>
   );
 }

@@ -22,6 +22,7 @@ const pages: PageDef[] = [
     templateDomain: "commerce",
     needsMeta: true,
     requiresEntities: [{ role: "product" }],
+    coversRole: "product",
     render: (ctx) => {
       const meta = ctx.appMeta!;
       const productKey = meta.domainModules?.roles["product"] ?? "product";
@@ -87,6 +88,7 @@ const pages: PageDef[] = [
     templateDomain: "commerce",
     needsMeta: true,
     requiresEntities: [{ role: "order" }],
+    coversRole: "order",
     render: (ctx) => (
       <CommerceOrders key={`${ctx.appId!}:orders`} appId={ctx.appId!} meta={ctx.appMeta!} />
     ),
@@ -100,6 +102,7 @@ const pages: PageDef[] = [
     templateDomain: "commerce",
     needsMeta: true,
     requiresEntities: [{ role: "category" }],
+    coversRole: "category",
     render: (ctx) => (
       <DataAdmin
         key={`${ctx.appId!}:mallcat`}

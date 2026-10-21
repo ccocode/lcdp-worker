@@ -13,8 +13,10 @@ import {
   StopOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
+import { Alert } from "antd";
 import type {
   AdminDataMeta,
+  AdminEntityMeta,
   GrantsMe,
   Row,
   UserInfo,
@@ -91,6 +93,12 @@ export interface PageContext {
   currentApp: Row | null;
   /** 当前可见页集（工作台快捷入口等按此过滤） */
   visibleKeys: Set<PageKey>;
+  /** 数据维护展开组当前实体（?entity= 承载；非 data 页为 null） */
+  dataEntity: string | null;
+  /** 数据维护展开组实体清单（去重 + 归位后的顶层实体；外壳菜单与 data 页共用） */
+  dataMenuEntities: { key: string; label: string }[];
+  /** 跳到数据维护展开组的某个实体页 */
+  goData: (entityKey: string) => void;
   /** 深链别名种子：/replay 进入时为 "replay"，供审计中心预选页签 */
   auditTabSeed: string | null;
   /** 深链别名种子：/domains 等存量深链进入时为对应页签 key，供应用设置预选页签 */
@@ -118,6 +126,12 @@ export interface PageDef {
    * 但不出现在左侧菜单分组里——如文章编辑页，只从工作台/快捷入口进入。
    */
   menuHidden?: boolean;
+  /**
+   * 模版段：本页承接数据维护的实体角色名（第 76 步去重声明）——声明了的
+   * 实体从数据维护展开组中除名（一个实体只出现一次）；队列/统计类页面
+   * 不承接实体维护，不声明（如留言审核是待审队列、不维护正式记录）。
+   */
+  coversRole?: string;
   /** 模版段：所属领域 key（可见性按 domain + 映射健康判定） */
   templateDomain?: string;
   /** 模版段：所需实体（实体 key 或 roles 语义锚点），缺一不可见（W7 数据维度） */
@@ -279,15 +293,40 @@ const APP_DEFS: PageDef[] = [
     ),
   },
   {
+    // 第 76 步展开：本页不再聚合全部实体——菜单由外壳按 dataMenuEntities
+    // 渲染为可展开组（每实体一项），页面本体按 ?entity= 锁定单实体呈现；
+    // 实体不在展开组内（被模版覆盖/子表/连接表）或组为空时呈空态，
+    // 落到组内首个实体的重定向由外壳 effect 负责。
     key: "data",
     label: "数据维护",
     icon: <AppstoreOutlined />,
     segment: "app",
     section: "数据维护",
     needsMeta: true,
-    render: (ctx) => (
-      <DataAdmin key={ctx.appId!} appId={ctx.appId!} meta={ctx.appMeta!} />
-    ),
+    render: (ctx) => {
+      const ent =
+        ctx.dataEntity &&
+        ctx.dataMenuEntities.find((e) => e.key === ctx.dataEntity);
+      if (!ent) {
+        return (
+          <Alert
+            type="info"
+            showIcon
+            message="本应用没有待维护的数据表"
+            description="该应用的实体均已由领域模版页维护，或已发布设计中尚无数据实体。"
+          />
+        );
+      }
+      return (
+        <DataAdmin
+          key={`${ctx.appId!}:data:${ent.key}`}
+          appId={ctx.appId!}
+          meta={ctx.appMeta!}
+          lockEntity={ent.key}
+          title={ent.label}
+        />
+      );
+    },
   },
   {
     key: "appsettings",
@@ -365,6 +404,8 @@ export function contextVisibility(args: {
   appGroups: MenuGroup[];
   visibleKeys: Set<PageKey>;
   fallbackPage: PageKey;
+  /** 数据维护展开组（第 76 步）：去重/归位后的顶层实体；null = 尚无 meta 不出菜单 */
+  dataMenu: { entities: { key: string; label: string }[] } | null;
 } {
   const { isAdmin, grants, appId, appMeta } = args;
   const operable = grants?.apps ?? [];
@@ -397,16 +438,45 @@ export function contextVisibility(args: {
   const platformGroups = groupBySection(
     platformVisible.filter((d) => !d.menuHidden),
   );
+  // 「数据维护」分组自 appGroups 摘出：展开组由外壳按 dataMenu 单独渲染
+  // 为可展开子菜单（第 76 步），data 页 def 本身只负责页面本体。
   const appGroups = groupBySection(
     [...appVisible, ...templateVisible].filter((d) => !d.menuHidden),
     APP_SECTION_ORDER,
-  );
+  ).filter((g) => g.label !== "数据维护");
   const visibleKeys = new Set<PageKey>([
     ...platformVisible.map((d) => d.key),
     ...appVisible.map((d) => d.key),
     ...templateVisible.map((d) => d.key),
   ]);
-  return { platformGroups, appGroups, visibleKeys, fallbackPage: "workbench" };
+  // 数据维护展开组（第 76 步）：覆盖集 = 可见模版页 coversRole 声明经
+  // roles 映射求解；候选 = meta 实体（已按调用者权限裁剪）− 覆盖集
+  // − 子实体（parentField 非空，归父实体编辑面）− 连接表（字段 ≥2 且
+  // 全部为 ref 的纯多对多连接实体，归两端编辑面）。
+  const roles = appMeta?.domainModules?.roles ?? {};
+  const covered = new Set<string>();
+  for (const d of templateVisible) {
+    if (d.coversRole) covered.add(roles[d.coversRole] ?? d.coversRole);
+  }
+  const isJunction = (e: AdminEntityMeta) =>
+    e.fields.length >= 2 && e.fields.every((f) => f.type === "ref");
+  const dataMenu =
+    appId && appMeta
+      ? {
+          entities: appMeta.entities
+            .filter(
+              (e) => !covered.has(e.key) && !e.parentField && !isJunction(e),
+            )
+            .map((e) => ({ key: e.key, label: e.label })),
+        }
+      : null;
+  return {
+    platformGroups,
+    appGroups,
+    visibleKeys,
+    fallbackPage: "workbench",
+    dataMenu,
+  };
 }
 
 /**
@@ -460,4 +530,20 @@ export function appFromSearch(): string | null {
 
 export function pathWithApp(key: PageKey, appId: string | null): string {
   return appId ? `/${key}?app=${encodeURIComponent(appId)}` : `/${key}`;
+}
+
+/** 数据维护展开组深链：实体以 ?entity= 承载（与 ?app= 同一地址契约） */
+export function entityFromSearch(): string | null {
+  try {
+    return new URLSearchParams(window.location.search).get("entity");
+  } catch {
+    return null;
+  }
+}
+
+export function pathWithData(appId: string | null, entityKey: string): string {
+  const qs = new URLSearchParams();
+  if (appId) qs.set("app", appId);
+  qs.set("entity", entityKey);
+  return `/data?${qs.toString()}`;
 }

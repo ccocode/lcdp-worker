@@ -20,6 +20,7 @@ const pages: PageDef[] = [
     templateDomain: "support",
     needsMeta: true,
     requiresEntities: [{ role: "ticket" }],
+    coversRole: "ticket",
     render: (ctx) => (
       <SupportTickets key={`${ctx.appId!}:tickets`} appId={ctx.appId!} meta={ctx.appMeta!} />
     ),

@@ -13,7 +13,8 @@ import {
   Typography,
   message,
 } from "antd";
-import { LogoutOutlined, SafetyOutlined } from "@ant-design/icons";
+import { DatabaseOutlined, LogoutOutlined, SafetyOutlined } from "@ant-design/icons";
+import type { MenuProps } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
   api,
@@ -31,7 +32,9 @@ import {
   DEF_BY_KEY,
   appFromSearch,
   contextVisibility,
+  entityFromSearch,
   pathWithApp,
+  pathWithData,
   resolvePath,
   type PageContext,
   type PageKey,
@@ -160,6 +163,11 @@ export default function AppShell() {
   );
   // ---- 应用上下文 ----
   const [appId, setAppId] = useState<string | null>(() => appFromSearch());
+  // 数据维护展开组当前实体（?entity= 承载，第 76 步）
+  const [dataEntity, setDataEntity] = useState<string | null>(() =>
+    entityFromSearch(),
+  );
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
   /** 应用行清单（仅作当前应用信息富化；切换器与归位口径走 grants/me） */
   const [appsRows, setAppsRows] = useState<Row[]>([]);
   const [appMeta, setAppMeta] = useState<AdminDataMeta | null>(null);
@@ -172,6 +180,7 @@ export default function AppShell() {
       setAuditTabSeed(r.auditTab);
       setSettingsTabSeed(r.settingsTab);
       setAppId(appFromSearch());
+      setDataEntity(entityFromSearch());
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -300,11 +309,54 @@ export default function AppShell() {
     (key: PageKey) => {
       setAuditTabSeed(null);
       setSettingsTabSeed(null);
+      setDataEntity(null);
       window.history.pushState(null, "", pathWithApp(key, appId));
       setPage(key);
     },
     [appId],
   );
+
+  /** 数据维护展开组导航（第 76 步）：实体走 ?entity=，与 ?app= 同一地址契约 */
+  const goData = useCallback(
+    (entityKey: string) => {
+      setAuditTabSeed(null);
+      setSettingsTabSeed(null);
+      window.history.pushState(null, "", pathWithData(appId, entityKey));
+      setPage("data");
+      setDataEntity(entityKey);
+    },
+    [appId],
+  );
+
+  // 数据页落点归位（第 76 步）：meta 就绪后，若当前实体不在本应用展开组内
+  // （裸 /data 进入、切应用后旧实体失效、手写了被覆盖实体的 URL），一律
+  // 落到组内第一个实体；组为空时不重定向（页面呈空态）。meta 在途时不判，
+  // 与会话内归位 effect 同一时序纪律。
+  useEffect(() => {
+    if (!user || page !== "data" || metaState !== "ok" || !appMeta) return;
+    const { dataMenu } = contextVisibility({
+      isAdmin: user.role === "admin",
+      grants,
+      appId,
+      appMeta,
+    });
+    const entities = dataMenu?.entities ?? [];
+    if (entities.length === 0) return;
+    if (!dataEntity || !entities.some((e) => e.key === dataEntity)) {
+      const first = entities[0]!.key;
+      window.history.replaceState(null, "", pathWithData(appId, first));
+      setDataEntity(first);
+    }
+  }, [user, grants, page, metaState, appMeta, appId, dataEntity]);
+
+  // 进入数据页时自动展开数据维护子菜单（用户仍可手动收起）
+  useEffect(() => {
+    if (page === "data") {
+      setOpenKeys((ks) =>
+        ks.includes("data-submenu") ? ks : [...ks, "data-submenu"],
+      );
+    }
+  }, [page]);
 
   const switchApp = useCallback(
     (id: string) => {
@@ -338,22 +390,44 @@ export default function AppShell() {
     );
 
   const isAdmin = user.role === "admin";
-  const { platformGroups, appGroups, visibleKeys, fallbackPage } =
+  const { platformGroups, appGroups, visibleKeys, fallbackPage, dataMenu } =
     contextVisibility({ isAdmin, grants, appId, appMeta });
   const effectivePage: PageKey = visibleKeys.has(page) ? page : fallbackPage;
   const effectiveDef = DEF_BY_KEY.get(effectivePage)!;
 
   /** 左侧菜单 = 平台分组 + 应用分组（分区只写功能名，当前应用看顶栏切换器） */
-  const menuItems = [...platformGroups, ...appGroups].map((g) => ({
-    type: "group" as const,
-    key: `group:${g.label}`,
-    label: g.label,
-    children: g.items.map((d) => ({
-      key: d.key,
-      label: d.label,
-      icon: d.icon,
-    })),
-  }));
+  const menuItems: MenuProps["items"] = [...platformGroups, ...appGroups].map(
+    (g) => ({
+      type: "group" as const,
+      key: `group:${g.label}`,
+      label: g.label,
+      children: g.items.map((d) => ({
+        key: d.key,
+        label: d.label,
+        icon: d.icon,
+      })),
+    }),
+  );
+  // 数据维护展开组（第 76 步）：可展开子菜单插在「应用设置」分组之前
+  // （即模版段/运营管理之后，与 APP_SECTION_ORDER 的分区顺序一致）；
+  // 组为空（实体全被模版覆盖）时整组不出现。
+  if (dataMenu && dataMenu.entities.length > 0) {
+    const submenu = {
+      type: "submenu" as const,
+      key: "data-submenu",
+      label: "数据维护",
+      icon: <DatabaseOutlined />,
+      children: dataMenu.entities.map((e) => ({
+        key: `data:${e.key}`,
+        label: e.label,
+      })),
+    };
+    const idx = menuItems.findIndex(
+      (g) => g && "label" in g && g.label === "应用设置",
+    );
+    if (idx >= 0) menuItems.splice(idx, 0, submenu);
+    else menuItems.push(submenu);
+  }
 
   /** 应用区页面统一占位：元数据未就绪时不渲染具体页 */
   const appPageShell = (node: React.ReactNode) =>
@@ -380,6 +454,9 @@ export default function AppShell() {
     appMeta,
     currentApp,
     visibleKeys,
+    dataEntity,
+    dataMenuEntities: dataMenu?.entities ?? [],
+    goData,
     auditTabSeed,
     settingsTabSeed,
     go,
@@ -395,9 +472,18 @@ export default function AppShell() {
         </div>
         <Menu
           mode="inline"
-          selectedKeys={[effectivePage]}
+          selectedKeys={
+            effectivePage === "data" && dataEntity
+              ? [`data:${dataEntity}`]
+              : [effectivePage]
+          }
+          openKeys={openKeys}
+          onOpenChange={setOpenKeys}
           items={menuItems}
-          onClick={(e) => go(e.key as PageKey)}
+          onClick={(e) => {
+            if (e.key.startsWith("data:")) goData(e.key.slice("data:".length));
+            else go(e.key as PageKey);
+          }}
         />
       </Sider>
       <Layout>

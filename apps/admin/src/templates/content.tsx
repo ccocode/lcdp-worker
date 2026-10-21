@@ -22,6 +22,7 @@ const pages: PageDef[] = [
     templateDomain: "content",
     needsMeta: true,
     requiresEntities: [{ role: "article" }],
+    coversRole: "article",
     render: (ctx) => (
       <ContentArticles
         key={ctx.appId!}
@@ -44,6 +45,7 @@ const pages: PageDef[] = [
     needsMeta: true,
     menuHidden: true,
     requiresEntities: [{ role: "article" }],
+    coversRole: "article",
     render: (ctx) => (
       <ArticleEditor
         key={`${ctx.appId!}:editor`}
@@ -62,6 +64,7 @@ const pages: PageDef[] = [
     templateDomain: "content",
     needsMeta: true,
     requiresEntities: [{ role: "category" }],
+    coversRole: "category",
     render: (ctx) => (
       <DataAdmin
         key={`${ctx.appId!}:cat`}
@@ -81,6 +84,7 @@ const pages: PageDef[] = [
     templateDomain: "content",
     needsMeta: true,
     requiresEntities: [{ role: "author" }],
+    coversRole: "author",
     render: (ctx) => (
       <DataAdmin
         key={`${ctx.appId!}:author`}
@@ -92,6 +96,9 @@ const pages: PageDef[] = [
     ),
   },
   {
+    // 注意：本页不声明 coversRole——它是公开提交的待审队列（另一套存储，
+    // 通过后才落成正式行），不维护 message 实体的正式记录；message 实体
+    // 仍归数据维护展开组（第 76 步执行单 §0.4 纠正设计稿盘点）。
     key: "content-messages",
     label: "留言审核",
     icon: <AuditOutlined />,
@@ -122,7 +129,7 @@ export const contentTemplate: TemplateDef = {
   metrics: [
     { key: "pending-articles", label: "待审文章", entityRole: "article", filterField: "status", filterValue: "待审核", page: "content-workbench" },
     { key: "published-articles", label: "已发布文章", entityRole: "article", filterField: "status", filterValue: "已发布", page: "content-workbench" },
-    { key: "draft-articles", label: "草稿文章", entityRole: "article", filterField: "status", filterValue: "草稿", page: "data" },
+    { key: "draft-articles", label: "草稿文章", entityRole: "article", filterField: "status", filterValue: "草稿", page: "content-workbench" },
   ],
   quickLinks: [
     { label: "文章工作台", page: "content-workbench" },
