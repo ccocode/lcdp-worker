@@ -617,10 +617,17 @@ export const api = {
   },
 
   site: {
-    /** 应用站点属性读（域名/模式/主题双槽/主应用/应用别名 + 平台域名常量） */
+    /** 应用站点属性读（域名/模式/主题双槽/主应用/应用别名 + 平台域名常量）。
+     * accessTier（第 81 步）：调用者对本应用的管理档位 t0/t1/t2，前端
+     * 据此呈现写控件（t2 只读）；执法以服务端各写端点断言为准。 */
     async get(
       appId: string,
-    ): Promise<{ app: SiteAppView; defaultHost: string; memberCenterHost: string }> {
+    ): Promise<{
+      app: SiteAppView;
+      accessTier: "t0" | "t1" | "t2" | null;
+      defaultHost: string;
+      memberCenterHost: string;
+    }> {
       return apiFetch(`/admin/apps/${encodeURIComponent(appId)}/site`);
     },
     /**
@@ -1041,6 +1048,55 @@ export const api = {
         `/admin/kb/documents/${encodeURIComponent(id)}/${decision === "approve" ? "approve" : "reject"}`,
         { method: "POST", body: JSON.stringify({}) },
       );
+    },
+    /**
+     * 应用面知识库（第 81 步 G4）：文档与待审队列按当前应用治理——
+     * 文档面限 t0/t1，待审队列另对 support 领域 t2 开放（服务端断言）。
+     */
+    app: {
+      async documents(appId: string): Promise<Row[]> {
+        const res = await apiFetch<unknown>(
+          `/admin/apps/${encodeURIComponent(appId)}/kb/documents`,
+        );
+        return pageOf<Row>(res, "documents").rows;
+      },
+      async create(
+        appId: string,
+        body: { title: string; content: string },
+      ): Promise<void> {
+        await apiFetch(`/admin/apps/${encodeURIComponent(appId)}/kb/documents`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+      },
+      async remove(appId: string, id: string): Promise<void> {
+        await apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/kb/documents/${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        );
+      },
+      async reembed(appId: string, id: string): Promise<void> {
+        await apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/kb/documents/${encodeURIComponent(id)}/reembed`,
+          { method: "POST" },
+        );
+      },
+      async pending(appId: string): Promise<Row[]> {
+        const res = await apiFetch<unknown>(
+          `/admin/apps/${encodeURIComponent(appId)}/kb/pending`,
+        );
+        return pageOf<Row>(res, "rows").rows;
+      },
+      async review(
+        appId: string,
+        id: string,
+        decision: "approve" | "reject",
+      ): Promise<void> {
+        await apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/kb/documents/${encodeURIComponent(id)}/${decision === "approve" ? "approve" : "reject"}`,
+          { method: "POST", body: JSON.stringify({}) },
+        );
+      },
     },
   },
 

@@ -36,6 +36,7 @@ import DataAdmin from "./pages/DataAdmin";
 import FlowTasks from "./pages/FlowTasks";
 import AppAssets from "./pages/AppAssets";
 import Members from "./pages/Members";
+import AppKb from "./pages/AppKb";
 import Submissions from "./pages/Submissions";
 import AppSettings from "./pages/AppSettings";
 
@@ -63,6 +64,7 @@ export type PageKey =
   | "data"
   | "appassets"
   | "members"
+  | "appkb"
   | "submissions"
   | "app-audit"
   | "appsettings"
@@ -120,11 +122,6 @@ export interface PageDef {
    * 只影响菜单呈现分组，visibleKeys 与可见性谓词不因此改变。
    */
   topLevel?: boolean;
-  /**
-   * 运营者例外可见（平台段默认仅 admin）：目前仅知识库——
-   * 对可运营集（含推导来源）含 supplier-service 的运营者可见。
-   */
-  operatorException?: "kb";
   /** 渲染前须经 appPageShell（依赖当前应用 appMeta 就绪） */
   needsMeta?: boolean;
   /**
@@ -202,12 +199,14 @@ const PLATFORM_DEFS: PageDef[] = [
     render: () => <Apps />,
   },
   {
+    // 第 81 步 G4：平台知识库回归 admin 专属（应用面治理走应用段
+    // 「知识库」页 appkb）；原运营者例外（可运营 supplier-service
+    // 即可见）已撤，与服务端 /admin/kb 收口同口径。
     key: "kb",
     label: "知识库",
     icon: <BookOutlined />,
     segment: "platform",
     section: "平台运营",
-    operatorException: "kb",
     render: () => <Kb />,
   },
   {
@@ -276,6 +275,16 @@ const APP_DEFS: PageDef[] = [
     segment: "app",
     section: "运营管理",
     render: (ctx) => <Members key={ctx.appId!} appId={ctx.appId!} />,
+  },
+  {
+    // 第 81 步 G4：应用面知识库（本应用文档 + 待审队列）；页内按
+    // 服务端档位呈现（t2 客服仅待审、双面 403 呈无权态）。
+    key: "appkb",
+    label: "知识库",
+    icon: <BookOutlined />,
+    segment: "app",
+    section: "运营管理",
+    render: (ctx) => <AppKb key={ctx.appId!} appId={ctx.appId!} />,
   },
   {
     key: "appassets",
@@ -402,8 +411,8 @@ function groupBySection(items: PageDef[], order?: string[]): MenuGroup[] {
  * 可见性谓词（第 57 步 W7，输入 = 身份 + 可运营集（含 source）+ 当前应用
  * meta 的 domain/健康/实体集）：
  * - 工作台全身份可见（默认落点）；
- * - 平台段其余页 admin 全量；运营者仅 kb 例外（可运营集含 supplier-service，
- *   grant 或推导来源均可——如客服坐席 kefu 经 support 角色推导命中）；
+ * - 平台段其余页 admin 全量（第 81 步 G4 起：原 kb 运营者例外已撤，
+ *   知识库治理走应用段 appkb 页、按应用档位）；
  * - 应用段基础页须有当前应用上下文（数据维护页在 meta 未发布/实体为空时
  *   呈现页内空态而非菜单消失）；
  * - 模版段三重门控：domain 命中 + 映射健康 + 所需实体（roles 锚点）齐备。
@@ -421,16 +430,12 @@ export function contextVisibility(args: {
   /** 数据维护展开组（第 76 步）：去重/归位后的顶层实体；null = 尚无 meta 不出菜单 */
   dataMenu: { entities: { key: string; label: string }[] } | null;
 } {
-  const { isAdmin, grants, appId, appMeta } = args;
-  const operable = grants?.apps ?? [];
+  const { isAdmin, appId, appMeta } = args;
   const platformVisible = PAGE_DEFS.filter((d) => {
     if (d.segment !== "platform") return false;
     if (d.key === "workbench") return true;
-    if (isAdmin) return true;
-    return (
-      d.operatorException === "kb" &&
-      operable.some((a) => a.id === "supplier-service")
-    );
+    // 第 81 步 G4：平台段回归 admin 专属（原 kb 运营者例外已撤）。
+    return isAdmin;
   });
   const appVisible = appId
     ? PAGE_DEFS.filter((d) => d.segment === "app")

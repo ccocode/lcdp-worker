@@ -126,6 +126,8 @@ export default function AppThemeSettings({
 }) {
   const [themes, setThemes] = useState<ThemeItem[]>([]);
   const [site, setSite] = useState<SiteAppView | null>(null);
+  /** 管理档位（第 81 步）：t2 领域角色只读——上传/绑定控件禁用，执法在服务端 */
+  const [accessTier, setAccessTier] = useState<"t0" | "t1" | "t2" | null>(null);
   const [defaultHost, setDefaultHost] = useState("www.coode.cc.cd");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +149,7 @@ export default function AppThemeSettings({
       const [ts, s] = await Promise.all([api.themes.list(), api.site.get(appId)]);
       setThemes(ts);
       setSite(s.app);
+      setAccessTier(s.accessTier);
       setDefaultHost(s.defaultHost);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
@@ -160,6 +163,7 @@ export default function AppThemeSettings({
   }, [load]);
 
   const slots = useMemo(() => siteThemeSlots(site), [site]);
+  const readOnly = accessTier === "t2";
 
   /**
    * 本应用的主题（可选全集）：本应用私有 + 本应用所属领域的货架 +
@@ -411,7 +415,7 @@ export default function AppThemeSettings({
         <Button
           type="primary"
           size="small"
-          disabled={!t.versions.some((v) => versionFitsSlot(v, slot))}
+          disabled={readOnly || !t.versions.some((v) => versionFitsSlot(v, slot))}
           onClick={() => openBinding(t, slot)}
         >
           设为当前
@@ -447,6 +451,15 @@ export default function AppThemeSettings({
         title="本应用的主题"
         extra={<Button onClick={() => void load()}>刷新</Button>}
       >
+        {readOnly && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="你对本应用是领域角色，只能查看主题"
+            description="主题的上传与绑定属于应用管理事项，请由本应用管理员（运营授权）或平台管理员操作。"
+          />
+        )}
         <Alert
           type="info"
           showIcon
@@ -469,6 +482,7 @@ export default function AppThemeSettings({
           <Button
             type="primary"
             loading={uploading}
+            disabled={readOnly}
             onClick={() => fileRef.current?.click()}
           >
             上传主题包（.zip）
