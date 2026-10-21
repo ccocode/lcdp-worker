@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   Button,
   Card,
   Checkbox,
@@ -21,7 +22,16 @@ import { asText, fmtTime } from "../helpers";
  * 任一应用下看到的都是同一域的会员全集，启停在域内全局生效）。
  * M15 第③步起应用由全局上下文给定（顶栏切换器 / URL ?app=），页内不再自选。
  */
+function isForbidden(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { status?: unknown }).status === 403
+  );
+}
+
 export default function Members({ appId }: { appId: string }) {
+  const [denied, setDenied] = useState(false);
   const [scope, setScope] = useState("");
   const [rows, setRows] = useState<MemberItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -51,8 +61,17 @@ export default function Members({ appId }: { appId: string }) {
       setTotal(res.total);
       setScope(res.scope);
       setCandidates(res.roleCandidates);
+      setDenied(false);
     } catch (err) {
-      showError(err, "加载会员失败");
+      if (isForbidden(err)) {
+        // 档位不足（成员面限平台管理员与本应用管理员）：呈无权态，
+        // 不与「暂无会员」的空数据混淆
+        setDenied(true);
+        setRows([]);
+        setTotal(0);
+      } else {
+        showError(err, "加载会员失败");
+      }
     } finally {
       setLoading(false);
     }
@@ -189,6 +208,19 @@ export default function Members({ appId }: { appId: string }) {
       ),
     },
   ];
+
+  if (denied) {
+    return (
+      <Card title="应用会员">
+        <Alert
+          type="warning"
+          showIcon
+          message="当前身份无权查看本应用会员"
+          description="会员查看与管理限平台管理员与本应用管理员。"
+        />
+      </Card>
+    );
+  }
 
   return (
     <Card
