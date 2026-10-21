@@ -261,7 +261,7 @@ export default function ConfigPage() {
           >
             {groupItems.length === 0 ? (
               <Typography.Text type="secondary">
-                暂无配置项（服务端未返回该组键，可能尚未落库，当前生效值为 env / 默认）。
+                暂无配置项（该组尚未保存过配置，当前使用系统默认值）。
               </Typography.Text>
             ) : (
               groupItems.map(({ it, idx }) => (

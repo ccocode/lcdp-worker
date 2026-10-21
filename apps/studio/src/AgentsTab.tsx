@@ -35,8 +35,8 @@ export default function AgentsTab({
   return (
     <div style={{ padding: 20, maxWidth: 760 }}>
       <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        配置运行态右下角「✦ 助手」的行为。工具开关是第二层裁剪：关掉的整类工具不会提供给助手；
-        第一层是按使用者角色与权限配置自动预裁剪（无权限的实体工具不下发），且助手始终以提问者本人的身份与权限执行。
+        配置运行态右下角「✦ 助手」的行为。助手能用的工具先按使用者角色与权限自动限定
+        （无权限的实体工具不会出现）；下面的工具开关在此基础上进一步收窄，关掉的整类工具不会提供给助手。助手始终以提问者本人的身份与权限执行。
       </Typography.Paragraph>
       <Form layout="vertical">
         <Form.Item label="助手名称">
@@ -96,7 +96,7 @@ export default function AgentsTab({
             type="secondary"
             style={{ fontSize: 12, marginTop: 6 }}
           >
-            本期固定为需确认：助手提出的任何写操作都先渲染确认卡片，用户确认后才由服务端执行；删除类工具不生成。
+            助手提出的任何写操作都会先出确认卡片，用户确认后才执行；删除类操作不提供。
           </Typography.Paragraph>
         </Form.Item>
       </Form>

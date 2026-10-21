@@ -62,7 +62,7 @@ export default function SupportStats({
     <Card title="服务统计">
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Text type="secondary">
-          口径与骨架服务统计一致（转人工建单 = 来源为「访客咨询」的工单）；点卡片进入工单工作台对应队列。
+          统计范围与服务统计一致（转人工建单 = 来源为「访客咨询」的工单）；点卡片进入工单工作台对应队列。
         </Typography.Text>
         <Row gutter={16}>
           {cards.map((c, i) => (

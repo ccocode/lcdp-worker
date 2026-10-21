@@ -105,7 +105,7 @@ export default function Tenants() {
         pagination={false}
       />
       <div style={{ marginTop: 12, color: tokens.colorTextTertiary, fontSize: 12 }}>
-        说明：default 为系统默认租户，不提供删除（契约约束）。
+        说明：default 为系统默认租户，不可删除。
       </div>
 
       <Modal

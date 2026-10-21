@@ -919,7 +919,7 @@ function Designer({
         type="secondary"
         style={{ fontSize: 12, marginTop: 8, maxWidth: 560 }}
       >
-        入口以本应用为主应用（装配顺序首位）时，运行态登录面与公开面按所选外壳呈现；作为次应用装配进其他入口时，外壳由该入口的主应用决定。
+        本应用独立访问时，登录页与公开页按所选外壳呈现；从员工默认入口进入时，外壳以该入口为准。
       </Typography.Paragraph>
       {shell === "site" && (
         <>

@@ -2026,7 +2026,7 @@ export default function PageDesigner({
                         type="secondary"
                         style={{ fontSize: 12 }}
                       >
-                        暂无片段。在画布选中组件后，在右栏「属性」点「存为片段」即可沉淀复用。
+                        暂无片段。在画布选中组件后，在右栏「属性」点「存为片段」即可保存复用。
                       </Typography.Paragraph>
                     )}
                   </div>
@@ -2131,7 +2131,7 @@ export default function PageDesigner({
                 color: tokens.colorTextTertiary,
               }}
             >
-              未设计（自动派生）：
+              未设计（自动生成）：
               {undesigned.map((e) => `${e.label}（${e.key}）`).join("、")}
             </div>
           )}

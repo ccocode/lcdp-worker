@@ -644,7 +644,7 @@ export default function Permissions({
         权限矩阵
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        行 = 实体，列 = 角色。展开实体行可为「只读以上」的角色设置行级数据范围（服务端下推 SQL）；行级选「本部门」需指定部门引用字段，选「仅本人」需指定归属字段（行值与用户显示名比对）。
+        行 = 实体，列 = 角色。展开实体行可为「只读以上」的角色设置行级数据范围；行级选「本部门」需指定部门引用字段，选「仅本人」需指定归属字段（行值与用户显示名比对）。
       </Typography.Paragraph>
       <Table
         size="small"
@@ -804,7 +804,7 @@ export default function Permissions({
         菜单可见
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        按角色勾选可见页面（设计页与派生页的 route 全集）。开启「全部页面」即写入 *，新页面自动可见。
+        按角色勾选可见页面（包含设计页与自动生成页）。开启「全部页面」即写入 *，新页面自动可见。
       </Typography.Paragraph>
       <Space direction="vertical" size={10} style={{ display: "flex", marginBottom: 8 }}>
         {roles.map((r) => {
@@ -883,7 +883,7 @@ export default function Permissions({
           return (
             <Space key={r.entity} size={10} wrap align="start" style={{ paddingLeft: 120 }}>
               <Typography.Text type="secondary" style={{ width: 110, paddingTop: 4 }}>
-                {ent.label} 字段白名单
+                {ent.label} 可见字段
               </Typography.Text>
               <Select
                 mode="multiple"
@@ -930,8 +930,8 @@ export default function Permissions({
         会员策略（应用会员）
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-        应用会员是前台自助注册的第三类主体（区别于员工角色与匿名访客）：会员页面仅登录会员可见，会员数据经会员面按此策略与归属执法，未声明的实体会员一律不可见、不可读写。归属字段声明后（如订单的
-        member_id），该实体的行读写强制收口到当前会员本人。多应用共用一套会员在「应用设置」的会员域里配置。
+        应用会员是前台自助注册的第三类主体（区别于员工角色与匿名访客）：会员页面仅登录会员可见，会员数据按此策略与归属范围管理，未声明的实体会员一律不可见、不可读写。归属字段声明后（如订单的
+        member_id），该实体的数据读写只限当前会员本人。多应用共用一套会员在「应用设置」的会员域里配置。
       </Typography.Paragraph>
       <Space direction="vertical" size={12} style={{ display: "flex" }}>
         <Space size={10} wrap align="start">
@@ -1030,7 +1030,7 @@ export default function Permissions({
                 type="secondary"
                 style={{ width: 130, paddingTop: 4 }}
               >
-                {ent.label} 可写字段白名单
+                {ent.label} 可写字段
               </Typography.Text>
               <Select
                 mode="multiple"
@@ -1057,7 +1057,7 @@ export default function Permissions({
             type="secondary"
             style={{ fontSize: 12, paddingLeft: 120, margin: 0 }}
           >
-            字段白名单（商城线）：为实体声明后，会员写请求里出现白名单外字段将被服务端整单拒绝（400）；系统盖章字段（如归属 member_id）不受白名单影响。订单类实体通常应排除状态字段，防止会员自行改单状态。
+            可写字段（商城线）：为实体声明后，会员提交的数据里出现清单外字段将整单被拒（400）；系统盖章字段（如归属 member_id）不受此清单影响。订单类实体通常应排除状态字段，防止会员自行改单状态。
           </Typography.Paragraph>
         )}
         <Space size={10} wrap align="start">

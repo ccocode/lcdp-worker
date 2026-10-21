@@ -2770,7 +2770,7 @@ export function SupportTranscript({ node }: NodeProps) {
       <Card title={title}>
         <Typography.Paragraph type="secondary">
           客服会话记录：发布后，坐席在工单详情页打开时，这里按当前记录的{" "}
-          {conversationField} 字段展示访客会话全文与转人工摘要，并可将问答沉淀为
+          {conversationField} 字段展示访客会话全文与转人工摘要，并可将问答整理为
           FAQ 草稿（进知识库待审队列）。
         </Typography.Paragraph>
         <div
@@ -2942,7 +2942,7 @@ export function SupportTranscript({ node }: NodeProps) {
                         void submitFaq(question!, m.text, m.id)
                       }
                     >
-                      沉淀为 FAQ
+                      存为 FAQ 草稿
                     </Button>
                   ))}
               </div>
@@ -3049,8 +3049,8 @@ export function CartView({ node }: NodeProps) {
       <Card title={variant === "checkout" ? "结算" : "购物车"}>
         <Typography.Paragraph type="secondary">
           购物车组件（绑定商品实体）：发布后按本机购物车条目现拉商品现价与状态，
-          下架/不存在的商品标示失效且不计入合计；结算时填写收货信息，经会员
-          checkout 端点由服务端按现价重算金额、扣库存并生成待支付订单。
+          下架/不存在的商品标示失效且不计入合计；结算时填写收货信息，提交后
+          按现价重新核算金额、扣减库存并生成待支付订单。
         </Typography.Paragraph>
         <div
           style={{
@@ -3296,7 +3296,7 @@ export function CartView({ node }: NodeProps) {
                 type="secondary"
                 style={{ display: "block", fontSize: 12 }}
               >
-                展示价按商品现价计算，最终金额以服务端提交时重算为准
+                展示价按商品现价计算，最终金额以提交时重新核算为准
               </Typography.Text>
             </div>
             <Form

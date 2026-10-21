@@ -599,7 +599,7 @@ export default function AppThemeSettings({
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
             <Space size={8}>
               <Typography.Text style={{ width: 72, display: "inline-block" }}>
-                槽位
+                设备
               </Typography.Text>
               <Segmented
                 value={binding.slot}

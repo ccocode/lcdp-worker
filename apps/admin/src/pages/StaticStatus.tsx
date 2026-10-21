@@ -147,7 +147,7 @@ export default function StaticStatus({
       <Space style={{ marginBottom: 16 }}>
         <Button onClick={() => void load()}>刷新</Button>
         <Button type="primary" loading={rebuilding} onClick={() => void rebuild()}>
-          全量重建快照
+          全量重新生成
         </Button>
       </Space>
       <Descriptions column={2} style={{ marginBottom: 16 }} size="small">
@@ -175,7 +175,7 @@ export default function StaticStatus({
           )}
         </Descriptions.Item>
         <Descriptions.Item label="说明">
-          生成状态以快照清单为准；进程内最近运行记录在 api 重启后会清空。
+          生成状态以静态页清单为准；最近一次生成记录在服务重启后会清空。
           {!isAdmin && "运行模式切换由平台管理员操作。"}
         </Descriptions.Item>
       </Descriptions>
