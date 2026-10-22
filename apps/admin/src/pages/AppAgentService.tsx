@@ -70,6 +70,7 @@ export default function AppAgentService({ appId }: { appId: string }) {
     messages: AdminAssistantMessage[];
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [editingFace, setEditingFace] = useState<AgentFaceKey | null>(null);
 
   const readOnly = tier === "t2";
 
@@ -134,6 +135,7 @@ export default function AppAgentService({ appId }: { appId: string }) {
       const next = await api.agents.putOverride(appId, face, fields);
       applyRows(next);
       message.success("已保存，立即生效");
+      setEditingFace(null);
     } catch (err) {
       message.error(err instanceof Error ? err.message : "保存失败");
     } finally {
@@ -147,6 +149,7 @@ export default function AppAgentService({ appId }: { appId: string }) {
       const next = await api.agents.putOverride(appId, face, {});
       applyRows(next);
       message.success("已清除，恢复已发布设置");
+      setEditingFace(null);
     } catch (err) {
       message.error(err instanceof Error ? err.message : "清除失败");
     } finally {
@@ -199,6 +202,98 @@ export default function AppAgentService({ appId }: { appId: string }) {
     },
   ];
 
+  const faceColumns: ColumnsType<(typeof FACES)[number]> = [
+    {
+      title: "助手",
+      width: 180,
+      render: (_, f) => (
+        <div>
+          <div>{f.label}</div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {f.hint}
+          </Typography.Text>
+        </div>
+      ),
+    },
+    {
+      title: "启用",
+      width: 90,
+      render: (_, f) =>
+        forms[f.key].enabled ? (
+          <Tag color="green">已启用</Tag>
+        ) : (
+          <Tag>已停用</Tag>
+        ),
+    },
+    {
+      title: "调整状态",
+      width: 100,
+      render: (_, f) =>
+        rowOf(f.key) ? <Tag color="blue">已调整</Tag> : <Tag>未调整</Tag>,
+    },
+    {
+      title: "人设",
+      render: (_, f) => {
+        const v = rowOf(f.key)?.fields.systemPrompt;
+        return v ? (
+          <Typography.Paragraph
+            style={{ margin: 0 }}
+            ellipsis={{ rows: 2, tooltip: v }}
+          >
+            {v}
+          </Typography.Paragraph>
+        ) : (
+          <Typography.Text type="secondary">沿用已发布设置</Typography.Text>
+        );
+      },
+    },
+    {
+      title: "知识范围",
+      width: 200,
+      render: (_, f) => {
+        const v = rowOf(f.key)?.fields.knowledgeScope;
+        return v ? (
+          <Typography.Text ellipsis={{ tooltip: v }} style={{ maxWidth: 200 }}>
+            {v}
+          </Typography.Text>
+        ) : (
+          <Typography.Text type="secondary">沿用已发布设置</Typography.Text>
+        );
+      },
+    },
+    {
+      title: "最近调整",
+      width: 190,
+      render: (_, f) => {
+        const row = rowOf(f.key);
+        if (!row) {
+          return (
+            <Typography.Text type="secondary">当前用已发布设置</Typography.Text>
+          );
+        }
+        return (
+          <span>
+            {fmtTime(row.updatedAt)}
+            {row.updatedBy ? ` · ${row.updatedBy}` : ""}
+          </span>
+        );
+      },
+    },
+    {
+      title: "操作",
+      width: 90,
+      render: (_, f) => (
+        <Button
+          type="link"
+          size="small"
+          onClick={() => setEditingFace(f.key)}
+        >
+          {readOnly ? "查看" : "调整"}
+        </Button>
+      ),
+    },
+  ];
+
   if (loading) {
     return (
       <div style={{ padding: 48, textAlign: "center" }}>
@@ -220,51 +315,56 @@ export default function AppAgentService({ appId }: { appId: string }) {
           message="当前身份可查看本页，不可调整"
         />
       )}
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
-        {FACES.map((f) => {
-          const row = rowOf(f.key);
-          const form = forms[f.key];
-          return (
-            <Card
-              key={f.key}
-              title={
-                <Space>
-                  {f.label}
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {f.hint}
-                  </Typography.Text>
-                  {row ? (
-                    <Tag color="blue">已调整</Tag>
-                  ) : (
-                    <Tag>未调整</Tag>
-                  )}
-                </Space>
-              }
-              extra={
-                row ? (
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    最近调整 {fmtTime(row.updatedAt)}
-                    {row.updatedBy ? ` · ${row.updatedBy}` : ""}
-                  </Typography.Text>
-                ) : (
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    当前用已发布设置
-                  </Typography.Text>
-                )
-              }
-            >
+      <Card title="智能助手">
+        <Table
+          rowKey="key"
+          columns={faceColumns}
+          dataSource={FACES}
+          pagination={false}
+        />
+      </Card>
+
+      <Card title="运营助手会话记录" style={{ marginTop: 16 }}>
+        <Table
+          rowKey="id"
+          columns={convColumns}
+          dataSource={conversations}
+          pagination={false}
+          locale={{ emptyText: "暂无会话记录" }}
+        />
+      </Card>
+
+      <Drawer
+        title={
+          editingFace
+            ? `${FACES.find((f) => f.key === editingFace)?.label ?? ""} · ${
+                readOnly ? "查看" : "调整"
+              }`
+            : "调整"
+        }
+        width={"min(560px, 100vw)"}
+        open={editingFace !== null}
+        onClose={() => setEditingFace(null)}
+      >
+        {editingFace &&
+          (() => {
+            const f = FACES.find((x) => x.key === editingFace)!;
+            const form = forms[f.key];
+            const row = rowOf(f.key);
+            return (
               <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 12,
-                  maxWidth: 720,
-                }}
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
               >
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {f.hint}；保存后立即生效，不用重新发布。
+                  {row
+                    ? `最近调整 ${fmtTime(row.updatedAt)}${row.updatedBy ? ` · ${row.updatedBy}` : ""}`
+                    : "当前用已发布设置"}
+                </Typography.Text>
                 <div>
                   <div style={{ marginBottom: 4 }}>人设</div>
                   <Input.TextArea
-                    rows={4}
+                    rows={6}
                     maxLength={2000}
                     value={form.prompt}
                     disabled={readOnly}
@@ -317,20 +417,9 @@ export default function AppAgentService({ appId }: { appId: string }) {
                   </Space>
                 )}
               </div>
-            </Card>
-          );
-        })}
-      </Space>
-
-      <Card title="运营助手会话记录" style={{ marginTop: 16 }}>
-        <Table
-          rowKey="id"
-          columns={convColumns}
-          dataSource={conversations}
-          pagination={false}
-          locale={{ emptyText: "暂无会话记录" }}
-        />
-      </Card>
+            );
+          })()}
+      </Drawer>
 
       <Drawer
         title={detail?.title ?? "会话记录"}
