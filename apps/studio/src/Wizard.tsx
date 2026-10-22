@@ -64,7 +64,7 @@ const CHOICE_LABELS: Record<string, string> = {
 const STAGE_TEXT: Record<string, string> = {
   selecting: "选型中",
   deciding: "抉择中",
-  companion: "陪跑中",
+  companion: "生成中",
   done: "已完成",
   abandoned: "已放弃",
 };
@@ -341,7 +341,7 @@ export default function WizardDrawer({
     Modal.confirm({
       title: "发布新版本？",
       content:
-        "发布将基于已保存的草稿上线：陪跑步应用的变更都已写入草稿。发布后应用立即可以打开使用。",
+        "发布将基于已保存的草稿上线：前面各步应用的变更都已写入草稿。发布后应用立即可以打开使用。",
       okText: "确认发布",
       cancelText: "再想想",
       onOk: async () => {
@@ -456,7 +456,7 @@ export default function WizardDrawer({
         })}
       </div>
       <Divider style={{ margin: "12px 0" }} />
-      <Typography.Text strong>陪跑进度</Typography.Text>
+      <Typography.Text strong>生成进度</Typography.Text>
       <div style={{ marginTop: 8 }}>
         {STEP_DEFS.map((s) => (
           <div
@@ -724,7 +724,7 @@ export default function WizardDrawer({
                   <>
                     <Divider style={{ margin: "20px 0 12px" }} />
                     <Typography.Title level={5} style={{ marginTop: 0 }}>
-                      三、陪跑：建应用并逐步生成
+                      三、生成：建应用并逐步完善
                     </Typography.Title>
                     {!session.appId ? (
                       <Card size="small">
@@ -732,7 +732,7 @@ export default function WizardDrawer({
                           type="secondary"
                           style={{ fontSize: 13 }}
                         >
-                          创建后将按已定案的领域与样板生成初始草稿，然后开始三步陪跑生成。
+                          创建后将按已定案的领域与样板生成初始草稿，然后分三步逐步生成。
                         </Typography.Paragraph>
                         <Space direction="vertical" style={{ display: "flex" }} size={10}>
                           <span>
@@ -759,7 +759,7 @@ export default function WizardDrawer({
                             onClick={() => void doCreateApp()}
                             style={{ alignSelf: "flex-start" }}
                           >
-                            创建应用并开始陪跑
+                            创建应用并开始生成
                           </Button>
                         </Space>
                       </Card>

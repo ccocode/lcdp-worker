@@ -425,7 +425,7 @@ export default function Copilot({
             type="info"
             showIcon
             message="创建向导用于从零新建应用"
-            description="向导会依次完成领域选型、关键抉择与三步陪跑生成，最后由你确认发布。已经打开的应用请继续用单发提案做增量设计。"
+            description="向导会依次完成领域选型、关键抉择与分三步逐步生成，最后由你确认发布。已经打开的应用请继续用单发提案做增量设计。"
           />
           <Button
             type="primary"
