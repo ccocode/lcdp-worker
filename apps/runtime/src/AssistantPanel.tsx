@@ -11,6 +11,7 @@ import {
   Typography,
   message as antdMessage,
 } from "antd";
+import { tokens } from "@lcdp/ui";
 import type {
   AssistantContext,
   AssistantFillForm,
@@ -75,15 +76,21 @@ export default function AssistantPanel({
     return () => window.removeEventListener("lcdp:open-assistant", onOpen);
   }, []);
 
-  // 回填结果留痕上报（第 84 步片三②）：renderer 表单回读后派发 lcdp:fill-outcome
-  // （detail = { entity, messageId, missed[] }）。防串应用口径：doFillForm 发起
-  // 回填时已把「来源消息 id → 发起应用 id」绑定写入 sessionStorage，本监听只在
-  // 绑定存在且与本面板当前 appId 一致时才上报（应用切换瞬间到达的事件绑定
-  // 必属别的应用、直接跳过）；绑定一次性消费。留痕尽力而为，失败静默。
+  // 回填结果留痕上报（第 84 步片三② / 第 85 步分桶）：renderer 表单回读后
+  // 派发 lcdp:fill-outcome（detail = { entity, messageId, missed[],
+  // unverifiable[] }），未落与无法核对分开透传。防串应用口径：doFillForm
+  // 发起回填时已把「来源消息 id → 发起应用 id」绑定写入 sessionStorage，
+  // 本监听只在绑定存在且与本面板当前 appId 一致时才上报（应用切换瞬间
+  // 到达的事件绑定必属别的应用、直接跳过）；绑定一次性消费。留痕尽力
+  // 而为，失败静默。
   useEffect(() => {
     const onFillOutcome = (e: Event) => {
       const detail = (
-        e as CustomEvent<{ messageId?: unknown; missed?: unknown }>
+        e as CustomEvent<{
+          messageId?: unknown;
+          missed?: unknown;
+          unverifiable?: unknown;
+        }>
       ).detail;
       const messageId =
         typeof detail?.messageId === "string" ? detail.messageId : "";
@@ -103,8 +110,13 @@ export default function AssistantPanel({
             (x): x is string => typeof x === "string",
           )
         : [];
+      const unverifiable = Array.isArray(detail?.unverifiable)
+        ? detail.unverifiable.filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
       void api.assistant
-        .reportFillResult(appId, messageId, missed)
+        .reportFillResult(appId, messageId, missed, unverifiable)
         .catch(() => {
           // 留痕上报失败静默，不阻塞用户
         });
@@ -427,6 +439,16 @@ export default function AssistantPanel({
             title={msg.pendingAction.summary}
             style={{ borderColor: "#ffe58f", background: "#fffbe6" }}
           >
+            {msg.pendingAction.droppedKeys &&
+              msg.pendingAction.droppedKeys.length > 0 && (
+                <div style={{ fontSize: 12, marginBottom: 6 }}>
+                  <Typography.Text type="secondary">
+                    提案中有 {msg.pendingAction.droppedKeys.length}{" "}
+                    个字段与数据模型不匹配，已忽略：
+                    {msg.pendingAction.droppedKeys.join("、")}
+                  </Typography.Text>
+                </div>
+              )}
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {msg.pendingAction.fields.map((f, i) => (
                 <div key={i} style={{ fontSize: 13 }}>
@@ -435,6 +457,39 @@ export default function AssistantPanel({
                 </div>
               ))}
             </div>
+            {(msg.pendingAction.kind === "fillForm" ||
+              msg.pendingAction.kind === "createRecord") &&
+              msg.pendingAction.missingFields &&
+              msg.pendingAction.missingFields.length > 0 && (
+                <details style={{ marginTop: 6 }}>
+                  <summary
+                    style={{
+                      fontSize: 13,
+                      cursor: "pointer",
+                      color: tokens.colorTextSecondary,
+                    }}
+                  >
+                    未提供的字段（{msg.pendingAction.missingFields.length}）
+                  </summary>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      marginTop: 4,
+                    }}
+                  >
+                    {msg.pendingAction.missingFields.map((label, i) => (
+                      <div key={i} style={{ fontSize: 13 }}>
+                        <Typography.Text type="secondary">
+                          {label}：
+                        </Typography.Text>
+                        未提供
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
               {msg.pendingAction.handled ? (
                 <Tag color="default">已处理</Tag>

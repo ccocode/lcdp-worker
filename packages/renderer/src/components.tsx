@@ -73,6 +73,12 @@ import { childEntities, parseAssetIds, resolveEntity } from "./adapter.js";
 import { cartStore } from "./cartStore.js";
 import type { CartItem } from "./cartStore.js";
 import { FieldInput } from "./fields.js";
+import {
+  checkChildRows,
+  checkFieldValue,
+  isEmptyValue,
+  resolveLabelField,
+} from "./fillcheck.js";
 import { RichTextView, htmlToText } from "./richtext.js";
 import {
   StatusBadge,
@@ -1249,16 +1255,24 @@ export function EntityForm({ node }: NodeProps) {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 回填保真（第 84 步片三）：助手回填后逐字段回读得出的未落字段
-  // （key = 主表字段键；明细类未落为 null）；渲染时按当前值过滤，用户补齐即消
+  // 回填保真（第 84 步片三 / 第 85 步断言真实化）：助手回填后逐字段回读
+  // 得出的未落字段（key = 主表字段键；子表类未落为 null）；渲染时按当前值
+  // 过滤，用户补齐即消。无法核对的字段单独一桶（标签无处解析、引用选项
+  // 拉取失败等），不与未落混报
   const [fillMissed, setFillMissed] = useState<
     { key: string | null; label: string }[]
   >([]);
+  const [fillUnverifiable, setFillUnverifiable] = useState<string[]>([]);
   /** values 镜像 ref：回填回调里据此计算「合并后表单值」做回读比对 */
   const valuesRef = useRef<Row>({});
   useEffect(() => {
     valuesRef.current = values;
   }, [values]);
+  /** childRows 镜像 ref：与 valuesRef 同理，供回填回调计算回填后子表状态 */
+  const childRowsRef = useRef<Record<string, Row[]>>({});
+  useEffect(() => {
+    childRowsRef.current = childRows;
+  }, [childRows]);
 
   useEffect(() => {
     if (!entity || !isEdit) return;
@@ -1303,6 +1317,8 @@ export function EntityForm({ node }: NodeProps) {
   // 已在本表单页时由宿主派发 lcdp:fill-form 事件触发再次读取（无需重新挂载）。
   // 第 84 步片三（回填保真）：预填后以 expect（用户在确认卡上见过的提案字段）
   // 为意图逐字段回读，未落字段记入 fillMissed 并在表单顶部明示（见渲染处）。
+  // 第 85 步断言真实化：比对源改为回填后的真实表单态、子表逐行逐字段核对、
+  // 结论分未落/无法核对两桶，纯判定逻辑抽至 ./fillcheck.ts。
   const applyAssistantFill = useCallback(async () => {
     if (!entity || isEdit || ctx.design) return;
     let raw: string | null = null;
@@ -1325,9 +1341,10 @@ export function EntityForm({ node }: NodeProps) {
       if (data.values && typeof data.values === "object") {
         setValues((prev) => ({ ...prev, ...data.values }));
       }
+      // byChild 提到块外：回读断言段要据它计算回填后的子表状态
+      const byChild: Record<string, Row[]> = {};
       if (data.items) {
-        // items 两种形态：按子实体 key 分组的对象，或单子表时的行数组（归入第一个子实体）
-        const byChild: Record<string, Row[]> = {};
+        // items 两种形态：按子实体 key 分组的对象，或单子表时的行数组（归入第一个子实体）;
         if (Array.isArray(data.items)) {
           const first = children[0];
           if (first) byChild[first.key] = data.items;
@@ -1354,123 +1371,212 @@ export function EntityForm({ node }: NodeProps) {
         }
       }
 
-      // —— 回读断言（片三）：提案有值而表单落空 = 执行未完全成功，逐字段核对 ——
-      // 意图优先取 expect（确认卡字段，标签口径）；缺省时退到 values 键集。
-      // 「已落」判据按字段类型分：空值未落；enum 须命中选项值；ref 须命中
-      // 引用选项 id（选项拉取失败不下结论）；日期须可解析；hidden 字段不渲染
-      // 视为未落；总额类字段由子表汇总驱动（rollup），不在此断言。
-      const merged: Row = { ...valuesRef.current, ...(data.values ?? {}) };
+      // —— 回读断言（第 85 步：断言真实化）——
+      // 比对源 = 回填落定后的表单态（与上方 setValues/setChildRows 的合并
+      // 结果完全一致），不再拿提案值和自身比。意图三路：values（主表原值）、
+      // expect（确认卡标签+展示值）、items（子表行原值）。结论分两桶：
+      // 未落（有意图、表单无值或值不符）与无法核对（标签在任何实体都解析
+      // 不到、引用选项拉取失败等），横幅与留痕分列、绝不混报。
+      // 纯判定逻辑在 ./fillcheck.ts（标签跨实体解析 / 同日判定 / 子表行
+      // 匹配 / 逐字段落位判定）。
+      const postValues: Row = { ...valuesRef.current, ...(data.values ?? {}) };
+      const postChildRows: Record<string, Row[]> = {
+        ...childRowsRef.current,
+        ...byChild,
+      };
       const missed: { key: string | null; label: string }[] = [];
+      const unverifiable: string[] = [];
       const pushMissed = (key: string | null, label: string) => {
         if (label && !missed.some((m) => m.label === label)) {
           missed.push({ key, label });
         }
       };
-      const checkField = async (
-        field: Field,
-        displayLabel: string,
-      ): Promise<void> => {
-        if (ctx.access?.[entity.key]?.fields?.[field.key] === "hidden") {
-          pushMissed(field.key, displayLabel);
-          return;
-        }
-        const actual = merged[field.key];
-        if (actual === null || actual === undefined || actual === "") {
-          pushMissed(field.key, displayLabel);
-          return;
-        }
-        if (field.type === "enum") {
-          const ok = (field.options ?? []).some(
-            (o) => o.value === String(actual),
-          );
-          if (!ok) pushMissed(field.key, displayLabel);
-          return;
-        }
-        if (field.type === "ref" && field.refEntity) {
-          try {
-            const opts = await ctx.adapter.options(field.refEntity);
-            if (
-              opts.length > 0 &&
-              !opts.some((o) => o.value === String(actual))
-            ) {
-              pushMissed(field.key, displayLabel);
-            }
-          } catch {
-            // 选项拉取失败时不下未落结论（非空即按已落宽口径处理）
-          }
-          return;
-        }
-        if (field.type === "date" || field.type === "datetime") {
-          if (!dayjs(String(actual)).isValid()) {
-            pushMissed(field.key, displayLabel);
-          }
+      const pushUnverifiable = (label: string) => {
+        if (
+          label &&
+          !unverifiable.includes(label) &&
+          !missed.some((m) => m.label === label)
+        ) {
+          unverifiable.push(label);
         }
       };
       const isRollupField = (field: Field): boolean =>
         field.type === "decimal" &&
         /total/i.test(field.key) &&
         children.some((c) => c.fields.some((cf) => cf.key === "amount"));
-      const intent: { label: string; value: unknown }[] = [];
+
+      // 引用选项拉取（同次回填内缓存）：成功回选项数组，失败回 null
+      const refOptionsCache = new Map<
+        string,
+        { value: string; label: string }[] | null
+      >();
+      const refOptions = async (refEntity: string) => {
+        if (!refOptionsCache.has(refEntity)) {
+          try {
+            const opts = await ctx.adapter.options(refEntity);
+            refOptionsCache.set(
+              refEntity,
+              opts.map((o) => ({ value: String(o.value), label: o.label })),
+            );
+          } catch {
+            refOptionsCache.set(refEntity, null);
+          }
+        }
+        return refOptionsCache.get(refEntity) ?? null;
+      };
+
+      // 主表字段核对（同一字段只核一次）：intent 为意图原值
+      const checkedMainKeys = new Set<string>();
+      const checkMainField = async (
+        field: Field,
+        intent: unknown,
+        displayLabel: string,
+      ): Promise<void> => {
+        if (checkedMainKeys.has(field.key)) return;
+        checkedMainKeys.add(field.key);
+        if (isRollupField(field)) return;
+        // hidden 字段不渲染、用户无从在表单里补齐：沿用旧口径记未落
+        //（横幅可见集按当前值过滤，它在 values 里有值时不会打扰用户）
+        if (ctx.access?.[entity.key]?.fields?.[field.key] === "hidden") {
+          pushMissed(field.key, displayLabel);
+          return;
+        }
+        let optionValues: string[] | undefined;
+        if (field.type === "ref" && field.refEntity) {
+          const opts = await refOptions(field.refEntity);
+          if (opts === null) {
+            // 选项拉取失败：不下未落结论，归无法核对
+            pushUnverifiable(displayLabel);
+            return;
+          }
+          optionValues = opts.map((o) => o.value);
+        }
+        const r = checkFieldValue(field, intent, postValues[field.key], {
+          optionValues,
+        });
+        if (r === "missed") pushMissed(field.key, displayLabel);
+        else if (r === "unverifiable") pushUnverifiable(displayLabel);
+      };
+
+      // 意图一：values 原值逐键核对（无 expect 的旧载荷也走这条 + 子表路径）
+      if (data.values) {
+        for (const [k, v] of Object.entries(data.values)) {
+          if (isEmptyValue(v)) continue;
+          const field = entity.fields.find((f) => f.key === k);
+          if (!field) continue;
+          await checkMainField(field, v, field.label);
+        }
+      }
+
+      // items 意图行按子实体 key 归集（形态与回填端一致：数组归第一个子实体）
+      const intentByChild = new Map<string, Row[]>();
+      if (data.items) {
+        if (Array.isArray(data.items)) {
+          const first = children[0];
+          if (first && data.items.length > 0) {
+            intentByChild.set(first.key, data.items);
+          }
+        } else {
+          for (const [k, rows] of Object.entries(data.items)) {
+            if (Array.isArray(rows) && rows.length > 0) {
+              intentByChild.set(k, rows);
+            }
+          }
+        }
+      }
+
+      // 意图二：expect 标签逐项解析（范围 = 父实体 + 全部子实体）
+      const expectList: { label: string; value: unknown }[] = [];
       if (Array.isArray(data.expect)) {
         for (const e of data.expect) {
           if (
             e &&
             typeof e.label === "string" &&
             e.label &&
-            e.value !== null &&
-            e.value !== undefined &&
-            e.value !== ""
+            !isEmptyValue(e.value)
           ) {
-            intent.push({ label: e.label, value: e.value });
+            expectList.push({ label: e.label, value: e.value });
           }
         }
       }
-      if (intent.length > 0) {
-        for (const it of intent) {
-          let field = entity.fields.find((f) => f.label === it.label);
-          if (!field) {
-            // 标签近似匹配（唯一命中才采信）：容忍提案标签与字段标签的包含关系
-            const cands = entity.fields.filter(
-              (f) => f.label.includes(it.label) || it.label.includes(f.label),
+      for (const it of expectList) {
+        const resolved = resolveLabelField(it.label, entity, children);
+        if (!resolved) {
+          // 任何实体都解析不到：无法核对，绝不判未落
+          pushUnverifiable(it.label);
+          continue;
+        }
+        if (!resolved.isChild) {
+          const field = resolved.field;
+          if (checkedMainKeys.has(field.key)) continue;
+          // 载荷带原值时已由意图一核对；未带时以确认卡展示值为意图，
+          // ref 字段先经引用选项把展示值映射回 id，映射不到归无法核对
+          let intentVal: unknown = it.value;
+          if (field.type === "ref" && field.refEntity) {
+            const opts = await refOptions(field.refEntity);
+            if (opts === null) {
+              pushUnverifiable(it.label);
+              continue;
+            }
+            const hit = opts.find(
+              (o) =>
+                o.label === String(it.value) || o.value === String(it.value),
             );
-            if (cands.length === 1) field = cands[0];
+            if (!hit) {
+              pushUnverifiable(it.label);
+              continue;
+            }
+            intentVal = hit.value;
           }
-          if (!field) {
-            pushMissed(null, it.label);
-            continue;
-          }
-          if (isRollupField(field)) continue;
-          await checkField(field, it.label);
+          await checkMainField(field, intentVal, it.label);
+          continue;
         }
-      } else if (data.values) {
-        for (const [k, v] of Object.entries(data.values)) {
-          if (v === null || v === undefined || v === "") continue;
-          const field = entity.fields.find((f) => f.key === k);
-          if (!field || isRollupField(field)) continue;
-          await checkField(field, field.label);
+        // 子表字段：意图行在 items 里时由意图三逐行逐字段核对，此处不重复；
+        // items 未带该子表行时，表单有行也无从核对意图（无法核对），
+        // 表单连行都没有则是确切的未落
+        const childEnt = resolved.owner;
+        if (intentByChild.has(childEnt.key)) continue;
+        if ((postChildRows[childEnt.key] ?? []).length === 0) {
+          pushMissed(null, it.label);
+        } else {
+          pushUnverifiable(it.label);
         }
       }
-      // 明细意图核对：意图行指向非本实体子表（或本实体根本无子表）时，
-      // 那些行不会出现在任何 ChildEditor 中——按「明细行」整体记未落
+
+      // 意图三：子表行逐行逐字段核对（回填后实存行 vs 意图行）；
+      // 明细指向未知子实体（或本实体根本无子表）时归无法核对（旧口径记
+      // 未落「明细行」，本步改口径）
       if (data.items) {
         if (Array.isArray(data.items)) {
           if (data.items.length > 0 && children.length === 0) {
-            pushMissed(null, "明细行");
+            pushUnverifiable("明细行");
           }
         } else {
           const childKeys = new Set(children.map((c) => c.key));
-          const hasUnknown = Object.entries(data.items).some(
-            ([k, rows]) =>
-              Array.isArray(rows) && rows.length > 0 && !childKeys.has(k),
-          );
-          if (hasUnknown) pushMissed(null, "明细行");
+          for (const [k, rows] of Object.entries(data.items)) {
+            if (Array.isArray(rows) && rows.length > 0 && !childKeys.has(k)) {
+              pushUnverifiable("明细行");
+            }
+          }
         }
       }
+      for (const [childKey, intentRows] of intentByChild) {
+        const childEnt = children.find((c) => c.key === childKey);
+        if (!childEnt) continue; // 未知子实体已在上面归无法核对
+        const res = checkChildRows(
+          childEnt,
+          intentRows,
+          postChildRows[childKey] ?? [],
+        );
+        for (const label of res.missedLabels) pushMissed(null, label);
+        for (const label of res.unverifiableLabels) pushUnverifiable(label);
+      }
+
       setFillMissed(missed);
-      // 回读结果留痕的接点（片三②）：服务端的 pending_action.handled 在
-      // 确认时即已落盘，回填发生在确认之后，当前无回報端点可写——结果先
-      // 经本事件带出（entity / 来源消息 id / 未落标签清单），待 platform 补
-      // 回報端点后由宿主监听回報（见第 84 步片三施工报告的接口契约建议）。
+      setFillUnverifiable(unverifiable);
+      // 回读结果留痕的接点（片三②）：经本事件带出（entity / 来源消息 id /
+      // 未落与无法核对两份标签清单），宿主（运行态 AssistantPanel）监听后
+      // 调 fill-result 端点回报服务端、并入 pending_action.handled 供回放。
       try {
         window.dispatchEvent(
           new CustomEvent("lcdp:fill-outcome", {
@@ -1478,6 +1584,7 @@ export function EntityForm({ node }: NodeProps) {
               entity: entity.key,
               messageId: data.sourceMessageId ?? null,
               missed: missed.map((m) => m.label),
+              unverifiable: [...unverifiable],
             },
           }),
         );
@@ -1794,6 +1901,16 @@ export function EntityForm({ node }: NodeProps) {
           message={`以下字段未能自动填入，请手动补齐：${visibleFillMissed
             .map((m) => m.label)
             .join("、")}`}
+          style={{ marginBottom: 12 }}
+        />
+      )}
+      {fillUnverifiable.length > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          message={`以下字段无法自动核对，请手动确认：${fillUnverifiable.join(
+            "、",
+          )}`}
           style={{ marginBottom: 12 }}
         />
       )}

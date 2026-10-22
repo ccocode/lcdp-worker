@@ -242,6 +242,16 @@ export interface AssistantPendingAction {
   fields: { label: string; value: unknown }[];
   /** 已确认或已取消后为 true，UI 渲染为禁用态 */
   handled?: boolean;
+  /**
+   * 未提供的字段标签（第 85 步，服务端核算）：目标实体里提案没有给值的
+   * 字段，确认卡以折叠区呈现，让遗漏肉眼可见（旧消息无此字段时不渲染）
+   */
+  missingFields?: string[];
+  /**
+   * 已忽略的字段键名（第 85 步，服务端核算）：提案里出现了与数据模型
+   * 对不上的字段键，已被服务端忽略，确认卡顶部一行小字提示
+   */
+  droppedKeys?: string[];
 }
 
 export interface AssistantMessage {
@@ -1663,18 +1673,20 @@ export const api = {
       return res;
     },
     /**
-     * 回填结果留痕上报（第 84 步片三②）：表单回读比对后把未落字段的中文标签
-     * 回报服务端，并入该消息 pending_action.handled 供审计回放。
+     * 回填结果留痕上报（第 84 步片三② / 第 85 步分桶）：表单回读比对后把
+     * 未落字段与无法核对字段的中文标签分别回报服务端，并入该消息
+     * pending_action.handled 供审计回放。
      * 尽力而为：调用方一律 catch 静默，失败绝不阻塞用户操作。
      */
     async reportFillResult(
       appId: string,
       messageId: string,
       missed: string[],
+      unverifiable: string[],
     ): Promise<void> {
       await apiFetch(
         `/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/fill-result`,
-        { method: "POST", body: JSON.stringify({ missed }) },
+        { method: "POST", body: JSON.stringify({ missed, unverifiable }) },
       );
     },
   },
