@@ -56,6 +56,26 @@ export function resolveLabelField(
   return cands.length === 1 ? cands[0]! : null;
 }
 
+/**
+ * 子表行摘要条目识别：确认卡 fields 里模型常为每行明细造一条汇总条目
+ * （子实体「采购明细」的行写作「明细1」「明细2」），这类条目不是字段，
+ * 内容由 items 承载、已由子表逐行核对覆盖。标签去掉尾随序号/分隔符后
+ * 与某个子实体标签构成包含关系且唯一命中时返回该子实体；否则返回
+ * null（调用方仍按无法核对处理）。
+ */
+export function matchChildRowSummaryLabel(
+  label: string,
+  children: Entity[],
+): Entity | null {
+  const core = label.replace(/[\s\d．。、:：-]+$/u, "").trim();
+  if (!core) return null;
+  const cands = children.filter(
+    (c) =>
+      c.label === core || c.label.includes(core) || core.includes(c.label),
+  );
+  return cands.length === 1 ? cands[0]! : null;
+}
+
 function parseDateLike(v: unknown): dayjs.Dayjs | null {
   if (typeof v !== "string" && typeof v !== "number" && !(v instanceof Date)) {
     return null;

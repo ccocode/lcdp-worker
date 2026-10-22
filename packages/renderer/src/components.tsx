@@ -77,6 +77,7 @@ import {
   checkChildRows,
   checkFieldValue,
   isEmptyValue,
+  matchChildRowSummaryLabel,
   resolveLabelField,
 } from "./fillcheck.js";
 import { RichTextView, htmlToText } from "./richtext.js";
@@ -1502,6 +1503,10 @@ export function EntityForm({ node }: NodeProps) {
       for (const it of expectList) {
         const resolved = resolveLabelField(it.label, entity, children);
         if (!resolved) {
+          // 子表行摘要条目（如「明细1」）不是字段：items 带了该子表行时
+          // 内容已由意图三逐行核对覆盖，不重复记无法核对
+          const childSummary = matchChildRowSummaryLabel(it.label, children);
+          if (childSummary && intentByChild.has(childSummary.key)) continue;
           // 任何实体都解析不到：无法核对，绝不判未落
           pushUnverifiable(it.label);
           continue;

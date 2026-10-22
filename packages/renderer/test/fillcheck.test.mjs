@@ -6,6 +6,7 @@ import {
   checkChildRows,
   checkFieldValue,
   matchChildRows,
+  matchChildRowSummaryLabel,
   resolveLabelField,
   sameDay,
 } from "../dist/fillcheck.js";
@@ -151,4 +152,22 @@ test("子表行缺失：意图行没有对应实存行时其字段记未落", ()
   const res = checkChildRows(child, intent, actual);
   assert.ok(res.missedLabels.includes("物料"));
   assert.ok(res.missedLabels.includes("数量"));
+});
+
+test("行摘要条目：明细序号标签唯一命中子实体", () => {
+  // 模型给明细行造的汇总条目「明细1」「明细2」→ 子实体「采购明细」
+  assert.equal(matchChildRowSummaryLabel("明细1", [child])?.key, "purchase_item");
+  assert.equal(matchChildRowSummaryLabel("明细2", [child])?.key, "purchase_item");
+  assert.equal(matchChildRowSummaryLabel("采购明细1", [child])?.key, "purchase_item");
+  assert.equal(matchChildRowSummaryLabel("采购明细", [child])?.key, "purchase_item");
+});
+
+test("行摘要条目：无关标签不命中、多义不命中", () => {
+  // 与子实体标签无包含关系的字段型标签不被吞掉（仍走无法核对）
+  assert.equal(matchChildRowSummaryLabel("采购日期", [child]), null);
+  assert.equal(matchChildRowSummaryLabel("备注", [child]), null);
+  // 「明细」同时被两个子实体标签包含 → 多义返回 null，不冒认
+  const child2 = { key: "purchase_item_old", label: "采购明细（旧）", fields: [] };
+  assert.equal(matchChildRowSummaryLabel("明细1", [child, child2]), null);
+  assert.equal(matchChildRowSummaryLabel("备注行1", [child, noteChild])?.key, "order_note");
 });
