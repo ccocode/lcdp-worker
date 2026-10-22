@@ -47,6 +47,7 @@ export const AUDIT_ACTION_TEXT: Record<string, string> = {
   "admin.kb_reembed": "重新向量化",
   "admin.kb_approve": "批准知识内容",
   "admin.kb_reject": "驳回知识内容",
+  "agents.override_update": "更新智能体设置",
   "app.create": "新建应用",
   "app.delete": "删除应用",
   "app.site_update": "更新站点设置",

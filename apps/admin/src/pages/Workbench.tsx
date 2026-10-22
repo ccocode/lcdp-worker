@@ -14,6 +14,7 @@ import {
   message,
 } from "antd";
 import {
+  auditActionText,
   statCardGradients,
   statCardText,
   statCardTextSecondary,
@@ -314,9 +315,9 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       width: 100,
       render: (_, r) =>
         asText(r.app.status ?? "active") === "disabled" ? (
-          <Tag color="red">已下架</Tag>
+          <Tag color="red">停用</Tag>
         ) : (
-          <Tag color="green">上架中</Tag>
+          <Tag color="green">启用</Tag>
         ),
     },
     {
@@ -380,7 +381,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       const totalCalls = bars.reduce((s, b) => s + b.calls, 0);
       return (
         <Card
-          title="近 12 小时 Token 用量"
+          title="Token 用量"
           style={{ marginTop: 16 }}
           extra={
             <Typography.Text type="secondary">
@@ -415,7 +416,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
                   </Typography.Text>
                   <div
                     style={{
-                      height: 84,
+                      height: 168,
                       display: "flex",
                       alignItems: "flex-end",
                       justifyContent: "center",
@@ -460,31 +461,71 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
         />
       </Card>
     ),
-    "recent-audit": () =>
-      auditFeed && auditFeed.length > 0 ? (
+    "recent-audit": () => {
+      // 布局（2026-10-23 优化）：动作中文标签（字典 @lcdp/ui auditActionText，
+      // 未映射回落原码）→ 操作者 → 所属应用名（借健康表 id→名称映射）→
+      // 时间右对齐单行不折行；整行 flex 单行排布，不再任由 Space 折行挤压。
+      const appNameOf = (id: string) =>
+        (health ?? []).find((h) => String(h.app.id) === id)?.app.name;
+      return auditFeed && auditFeed.length > 0 ? (
         <Card title="平台动态" style={{ height: "100%" }}>
           <div style={{ maxHeight: 264, overflowY: "auto" }}>
             <List
               size="small"
               dataSource={auditFeed}
-              renderItem={(r) => (
-                <List.Item>
-                  <Space wrap>
-                    <Typography.Text type="secondary">
-                      {fmtTime(r.created_at ?? r.createdAt)}
-                    </Typography.Text>
-                    <Typography.Text>{asText(r.actor)}</Typography.Text>
-                    <Typography.Text code>{asText(r.action)}</Typography.Text>
-                    <Typography.Text type="secondary">
-                      {asText(r.app_id ?? r.appId)}
-                    </Typography.Text>
-                  </Space>
-                </List.Item>
-              )}
+              renderItem={(r) => {
+                const zh = auditActionText(r.action);
+                const appId = asText(r.app_id ?? r.appId);
+                return (
+                  <List.Item style={{ padding: "8px 0" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        width: "100%",
+                        minWidth: 0,
+                      }}
+                    >
+                      {zh ? (
+                        <Tag style={{ margin: 0, flexShrink: 0 }}>{zh}</Tag>
+                      ) : (
+                        <Typography.Text code style={{ flexShrink: 0 }}>
+                          {asText(r.action)}
+                        </Typography.Text>
+                      )}
+                      <Typography.Text style={{ flexShrink: 0 }}>
+                        {asText(r.actor)}
+                      </Typography.Text>
+                      {appId && (
+                        <Typography.Text
+                          type="secondary"
+                          ellipsis
+                          style={{ fontSize: 12 }}
+                        >
+                          {asText(appNameOf(appId) ?? appId)}
+                        </Typography.Text>
+                      )}
+                      <Typography.Text
+                        type="secondary"
+                        style={{
+                          marginLeft: "auto",
+                          fontSize: 12,
+                          whiteSpace: "nowrap",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {fmtTime(r.created_at ?? r.createdAt)}
+                      </Typography.Text>
+                    </div>
+                  </List.Item>
+                );
+              }}
             />
           </div>
         </Card>
-      ) : null,
+      ) : null;
+    },
     "task-metrics": () => (
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
