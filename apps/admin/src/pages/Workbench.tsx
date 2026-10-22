@@ -165,9 +165,9 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       .catch(statFail("wb-health", "应用健康"));
     void api.audit
       // 平台动态：只取无应用归属的平台级事件（scope=platform），各应用明细不混显
-      .list({ page: 1, pageSize: 5, scope: "platform" })
+      .list({ page: 1, pageSize: 10, scope: "platform" })
       // 口径：服务端 pageOf 固定每页 50 条、未采信 pageSize，行数上限在客户端截断
-      .then((r) => alive && setAuditFeed(r.rows.slice(0, 5)))
+      .then((r) => alive && setAuditFeed(r.rows.slice(0, 10)))
       .catch(statFail("wb-audit", "平台动态"));
     return () => {
       alive = false;
@@ -300,7 +300,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   const healthColumns: ColumnsType<{ app: DataRow; pending: number | null }> = [
     {
       title: "应用",
-      render: (_, r) => `${asText(r.app.name ?? r.app.id)}（${asText(r.app.id)}）`,
+      render: (_, r) => asText(r.app.name ?? r.app.id),
     },
     {
       title: "发布版本",
@@ -457,19 +457,19 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
           loading={health === null}
           columns={healthColumns}
           dataSource={health ?? []}
-          scroll={{ y: 240 }}
+          scroll={{ y: 400 }}
         />
       </Card>
     ),
     "recent-audit": () => {
-      // 布局（2026-10-23 优化）：动作中文标签（字典 @lcdp/ui auditActionText，
-      // 未映射回落原码）→ 操作者 → 所属应用名（借健康表 id→名称映射）→
-      // 时间右对齐单行不折行；整行 flex 单行排布，不再任由 Space 折行挤压。
+      // 布局（2026-10-23 优化）：操作者（账号）→ 动作中文标签（字典
+      // @lcdp/ui auditActionText，未映射回落原码）→ 所属应用名（借健康表
+      // id→名称映射）→ 时间右对齐单行不折行；整行 flex 单行排布。
       const appNameOf = (id: string) =>
         (health ?? []).find((h) => String(h.app.id) === id)?.app.name;
       return auditFeed && auditFeed.length > 0 ? (
         <Card title="平台动态" style={{ height: "100%" }}>
-          <div style={{ maxHeight: 264, overflowY: "auto" }}>
+          <div style={{ maxHeight: 440, overflowY: "auto" }}>
             <List
               size="small"
               dataSource={auditFeed}
@@ -489,6 +489,9 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
                         minWidth: 0,
                       }}
                     >
+                      <Typography.Text style={{ flexShrink: 0 }}>
+                        {asText(r.actor)}
+                      </Typography.Text>
                       {zh ? (
                         <Tag style={{ margin: 0, flexShrink: 0 }}>{zh}</Tag>
                       ) : (
@@ -496,9 +499,6 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
                           {asText(r.action)}
                         </Typography.Text>
                       )}
-                      <Typography.Text style={{ flexShrink: 0 }}>
-                        {asText(r.actor)}
-                      </Typography.Text>
                       {appId && (
                         <Typography.Text
                           type="secondary"
