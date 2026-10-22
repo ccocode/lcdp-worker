@@ -127,7 +127,8 @@ export interface FlowTodoTask {
   mode: "any" | "all";
   createdAt: string;
   instance: { createdByName: string; createdAt: string };
-  record: Row;
+  /** 记录已删除或当前用户不可见时服务端给 null，渲染侧必须容错 */
+  record: Row | null;
 }
 
 /** 我处理过的任务（GET /flow/done），倒序 */
@@ -143,7 +144,8 @@ export interface FlowDoneTask {
   comment: string | null;
   actedAt: string;
   createdAt?: string;
-  record: Row;
+  /** 记录已删除或当前用户不可见时服务端给 null，渲染侧必须容错 */
+  record: Row | null;
 }
 
 /** 我发起的流程实例（GET /flow/mine） */
@@ -157,7 +159,8 @@ export interface FlowMineInstance {
   pendingAssignees: string[];
   createdAt: string;
   updatedAt: string;
-  record: Row;
+  /** 记录已删除或当前用户不可见时服务端给 null，渲染侧必须容错 */
+  record: Row | null;
 }
 
 /** 流程事件（通知流与进度时间线共用） */

@@ -54,7 +54,9 @@ export interface FlowCenterProps {
 
 /* fmtTime / errText 单一实现已收编 @lcdp/ui（第 73 步片二），本文件直接引 ui 版 */
 
-/* ---------- 记录摘要：record 是经服务端整形的行对象，取标识字段 + 关键字段通用渲染 ---------- */
+/* ---------- 记录摘要：record 是经服务端整形的行对象，取标识字段 + 关键字段通用渲染 ----------
+   record 可为 null（原记录已删除或当前用户不可见，2026-10-22 iOS 补验实证：null 直达渲染层
+   曾使「我发起的」整页白屏）——本组函数一律容错，标题回落「记录已删除或不可见」。 */
 
 const TITLE_KEYS = ["name", "title", "order_no", "in_no", "req_no", "code"];
 const SUMMARY_KEYS = [
@@ -72,7 +74,8 @@ const SUMMARY_KEYS = [
   "req_date",
 ];
 
-function recordTitle(record: Row): string {
+function recordTitle(record: Row | null): string {
+  if (!record) return "记录已删除或不可见";
   for (const key of TITLE_KEYS) {
     const v = record[key];
     if (typeof v === "string" && v) return v;
@@ -83,8 +86,9 @@ function recordTitle(record: Row): string {
 
 function summaryPairs(
   entity: EntityDef | undefined,
-  record: Row,
+  record: Row | null,
 ): { label: string; value: string }[] {
+  if (!record) return [];
   const pairs: { label: string; value: string }[] = [];
   const used = new Set<string>();
   const push = (key: string) => {
@@ -116,7 +120,7 @@ function RecordSummary({
   record,
 }: {
   entity?: EntityDef;
-  record: Row;
+  record: Row | null;
 }) {
   const pairs = summaryPairs(entity, record);
   return (
