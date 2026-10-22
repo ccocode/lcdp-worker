@@ -28,7 +28,7 @@ const BUILTIN_TOOL_LABELS: Record<string, string> = {
   fillForm: "表单回填",
 };
 
-/** 派生工具域中文名，与平台枚举一致 */
+/** 工具范围中文名，与平台枚举一致 */
 const TOOL_SCOPE_LABELS: Record<string, string> = {
   entityQuery: "实体查询",
   entityWrite: "实体写入",
@@ -283,7 +283,7 @@ export default function AgentsTab({
                         转人工 <Tag>必需</Tag>
                       </div>
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        访客要求人工、问题需建单跟进或超出知识范围时转人工——客服声明必须启用，服务端保存时强制校验。
+                        访客要求人工、问题需建单跟进或超出知识范围时转人工——客服必须启用，保存时系统会强制校验。
                       </Typography.Text>
                     </div>
                   </div>
@@ -306,7 +306,7 @@ export default function AgentsTab({
                   ))}
                 </div>
               </Form.Item>
-              <Form.Item label="派生工具域（结构面，只许关小）">
+              <Form.Item label="工具范围（来自领域设定，只能缩小）">
                 {visitor.toolScopes.length > 0 ? (
                   <Space size={6} wrap>
                     {visitor.toolScopes.map((s) => (
@@ -326,7 +326,7 @@ export default function AgentsTab({
                   </Space>
                 ) : (
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    未声明派生工具域。
+                    未设定工具范围。
                   </Typography.Text>
                 )}
                 <Typography.Paragraph
@@ -389,7 +389,7 @@ export default function AgentsTab({
                   : "无"}
               </div>
               <div>
-                <Typography.Text type="secondary">派生工具域：</Typography.Text>
+                <Typography.Text type="secondary">工具范围：</Typography.Text>
                 {ops.toolScopes.length > 0
                   ? ops.toolScopes.map((s) => TOOL_SCOPE_LABELS[s] ?? s).join("、")
                   : "无"}
