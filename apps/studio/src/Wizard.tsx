@@ -94,10 +94,18 @@ function choiceInfo(raw: unknown): {
   };
 }
 
-/** 定案值的短摘要（侧栏用）；会员域定案是 { mode, scopeKey? } 对象，按 mode 出文案 */
-function choiceSummary(value: unknown): string {
+/**
+ * 定案值的短摘要（侧栏用）；会员域定案是 { mode, scopeKey? } 对象，按 mode
+ * 出文案；字符串值（主题 id / later 等）优先按条目选项标签出文案，不直出原值。
+ */
+function choiceSummary(value: unknown, item?: WizardDecisionItem): string {
   if (Array.isArray(value)) return `已选 ${value.length} 项`;
-  if (typeof value === "string") return value;
+  if (typeof value === "string") {
+    const opt = item?.options.find((o) => optionKeyOf(o) === value);
+    if (opt?.label) return opt.label;
+    if (value === "later") return "稍后再定";
+    return value;
+  }
   if (value && typeof value === "object") {
     const o = value as { mode?: unknown; scopeKey?: unknown };
     if (o.mode === "existing") {
@@ -434,7 +442,7 @@ export default function WizardDrawer({
                   color: tokens.colorTextSecondary,
                 }}
               >
-                {info.decided ? choiceSummary(info.value) : ""}
+                {info.decided ? choiceSummary(info.value, it) : ""}
               </span>
               {info.invalidated ? (
                 <Tag color="orange">待重定</Tag>
