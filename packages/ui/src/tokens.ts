@@ -35,6 +35,22 @@ export const tokens = {
   colorErrorText: "#a8071a",
 } as const;
 
+/**
+ * 工作台统计卡渐变组（2026-10-23）：六张平台统计卡各一色，均为线性渐变的两端色；
+ * 卡面文字固定白系（主值纯白、标题白色 85%）。改色只改此处，各端不得散写字面量。
+ */
+export const statCardGradients = [
+  ["#1677ff", "#69b1ff"],
+  ["#722ed1", "#b37feb"],
+  ["#13c2c2", "#5cdbd3"],
+  ["#fa8c16", "#ffc069"],
+  ["#52c41a", "#95de64"],
+  ["#eb2f96", "#ff85c0"],
+] as const;
+
+export const statCardText = "#ffffff";
+export const statCardTextSecondary = "rgba(255,255,255,0.85)";
+
 /** 桌面主题（antd ThemeConfig）：admin / studio 直接用；runtime 根 Provider 同用此份，员工壳在此之上叠加应用主题覆盖（colorPrimary / borderRadius）。 */
 export const desktopTheme: ThemeConfig = {
   token: {

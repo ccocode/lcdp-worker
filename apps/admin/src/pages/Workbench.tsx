@@ -9,9 +9,15 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from "antd";
+import {
+  statCardGradients,
+  statCardText,
+  statCardTextSecondary,
+} from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
@@ -27,8 +33,10 @@ import { asText, fmtTime } from "../helpers";
  * 首页工作台（第 57 步，方案 §1.5；对象形态归正 W4 改版）：全身份默认落点。
  * 两种形态按身份分开组装（2026-10-23 用户定调重构）：
  * - admin（平台管理员）：只呈现平台维度——平台管理在应用之上，工作台不含
- *   应用层的角色数据（待办指标卡与由待办/待审拼成的最近动态均不渲染）。
- *   顺序 = 平台统计数字卡 → 快捷入口 → 用量统计起点 → 应用健康与平台动态
+ *   应用层的角色数据（待办指标卡与由待办/待审拼成的最近动态均不渲染），
+ *   也不设页内标题（页面定位由外壳头部承担）。顺序 = 平台统计卡（一排
+ *   六张、渐变色，色值在 @lcdp/ui 的 statCardGradients）→ 近 12 小时
+ *   Token 用量柱状图（groupBy=hour，空小时补零）→ 应用健康与平台动态
  *   并排（限高、限行数；平台动态只取无应用归属的平台级事件）。
  * - 运营者（有当前应用）：当前应用的对象区块（待办/指标/快捷入口/动态，
  *   APP_LAYOUT）。领域关键指标由领域模版声明（templates），本页只消费。
@@ -40,7 +48,7 @@ import { asText, fmtTime } from "../helpers";
 
 type BlockKey =
   | "platform-stat-cards"
-  | "usage-start"
+  | "usage-chart"
   | "app-health"
   | "recent-audit"
   | "task-metrics"
@@ -69,7 +77,6 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     todayCalls: number | null;
     todayTokens: number | null;
     kbPending: number | null;
-    meteringStart: string | null;
   }>({
     tenants: null,
     apps: null,
@@ -77,8 +84,10 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     todayCalls: null,
     todayTokens: null,
     kbPending: null,
-    meteringStart: null,
   });
+  const [hourly, setHourly] = useState<
+    { label: string; tokens: number; calls: number }[] | null
+  >(null);
   const [health, setHealth] = useState<
     { app: DataRow; pending: number | null }[] | null
   >(null);
@@ -108,9 +117,32 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
           calls += typeof row.calls === "number" ? row.calls : 0;
           tokens += typeof row.total_tokens === "number" ? row.total_tokens : 0;
         }
-        set({ todayCalls: calls, todayTokens: tokens, meteringStart: r.meteringStart });
+        set({ todayCalls: calls, todayTokens: tokens });
       })
       .catch(statFail("wb-usage", "今日用量"));
+    // 近 12 小时（含当前小时）Token 用量：小时桶按时刻对齐，空小时补零
+    const now = new Date();
+    const start = new Date(now);
+    start.setMinutes(0, 0, 0);
+    start.setHours(start.getHours() - 11);
+    void api.usage
+      .query({ groupBy: "hour", from: start.toISOString(), to: now.toISOString() })
+      .then((r) => {
+        if (!alive) return;
+        const byIso = new Map(r.rows.map((row) => [String(row.bucket), row]));
+        const bars: { label: string; tokens: number; calls: number }[] = [];
+        for (let i = 0; i < 12; i++) {
+          const t = new Date(start.getTime() + i * 3_600_000);
+          const row = byIso.get(t.toISOString());
+          bars.push({
+            label: `${t.getHours()}时`,
+            tokens: typeof row?.total_tokens === "number" ? row.total_tokens : 0,
+            calls: typeof row?.calls === "number" ? row.calls : 0,
+          });
+        }
+        setHourly(bars);
+      })
+      .catch(statFail("wb-hourly", "近12小时用量"));
     void api.apps
       .list()
       .then(async (apps) => {
@@ -295,45 +327,126 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   ];
 
   const blocks: Record<BlockKey, () => React.ReactNode> = {
-    "platform-stat-cards": () => (
+    "platform-stat-cards": () => {
+      const cards: { title: string; value: number | null; page: PageKey }[] = [
+        { title: "租户数", value: pStats.tenants, page: "tenants" },
+        { title: "应用数", value: pStats.apps, page: "apps" },
+        { title: "用户数（当前租户）", value: pStats.users, page: "users" },
+        { title: "知识库待审", value: pStats.kbPending, page: "kb" },
+        { title: "今日 AI 调用次数", value: pStats.todayCalls, page: "usage" },
+        { title: "今日 Token 用量", value: pStats.todayTokens, page: "usage" },
+      ];
+      return (
         <Row gutter={[16, 16]}>
-          <Col xs={24} sm={12} lg={6}>
-            <Card hoverable onClick={() => go("tenants")}>
-              <Statistic title="租户数" value={v(pStats.tenants)} />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card hoverable onClick={() => go("apps")}>
-              <Statistic title="应用数" value={v(pStats.apps)} />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card hoverable onClick={() => go("users")}>
-              <Statistic title="用户数（当前租户）" value={v(pStats.users)} />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card hoverable onClick={() => go("kb")}>
-              <Statistic title="知识库待审" value={v(pStats.kbPending)} />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card hoverable onClick={() => go("usage")}>
-              <Statistic title="今日 AI 调用次数" value={v(pStats.todayCalls)} />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card hoverable onClick={() => go("usage")}>
-              <Statistic title="今日 Token 用量" value={v(pStats.todayTokens)} />
-            </Card>
-          </Col>
+          {cards.map((card, i) => {
+            const g = statCardGradients[i % statCardGradients.length];
+            return (
+              <Col xs={24} sm={12} md={8} lg={4} key={card.title}>
+                <Card
+                  hoverable
+                  onClick={() => go(card.page)}
+                  style={{
+                    background: `linear-gradient(135deg, ${g[0]}, ${g[1]})`,
+                    border: "none",
+                  }}
+                >
+                  <div style={{ color: statCardTextSecondary, fontSize: 13 }}>
+                    {card.title}
+                  </div>
+                  <div
+                    style={{
+                      color: statCardText,
+                      fontSize: 24,
+                      fontWeight: 600,
+                      lineHeight: "32px",
+                      marginTop: 4,
+                    }}
+                  >
+                    {card.value === null
+                      ? "—"
+                      : card.value.toLocaleString("en-US")}
+                  </div>
+                </Card>
+              </Col>
+            );
+          })}
         </Row>
-    ),
-    "usage-start": () => (
-      <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
-        用量统计起点：{pStats.meteringStart ?? "—"}
-      </Typography.Paragraph>
-    ),
+      );
+    },
+    "usage-chart": () => {
+      const bars = hourly ?? [];
+      const max = Math.max(1, ...bars.map((b) => b.tokens));
+      const totalTokens = bars.reduce((s, b) => s + b.tokens, 0);
+      const totalCalls = bars.reduce((s, b) => s + b.calls, 0);
+      return (
+        <Card
+          title="近 12 小时 Token 用量"
+          style={{ marginTop: 16 }}
+          extra={
+            <Typography.Text type="secondary">
+              共 {totalTokens.toLocaleString("en-US")} Token · {totalCalls} 次调用
+            </Typography.Text>
+          }
+        >
+          <div style={{ display: "flex", gap: 8 }}>
+            {bars.map((b) => (
+              <Tooltip
+                key={b.label}
+                title={`${b.label} · Token ${b.tokens.toLocaleString("en-US")} · 调用 ${b.calls} 次`}
+              >
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 11, height: 16 }}
+                  >
+                    {b.tokens >= 1000
+                      ? `${(b.tokens / 1000).toFixed(1)}k`
+                      : b.tokens > 0
+                        ? b.tokens
+                        : ""}
+                  </Typography.Text>
+                  <div
+                    style={{
+                      height: 84,
+                      display: "flex",
+                      alignItems: "flex-end",
+                      justifyContent: "center",
+                      width: "100%",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "70%",
+                        maxWidth: 36,
+                        height: `${Math.max((b.tokens / max) * 100, b.tokens > 0 ? 6 : 0)}%`,
+                        minHeight: b.tokens > 0 ? 5 : 3,
+                        background: `linear-gradient(180deg, ${statCardGradients[0][1]}, ${statCardGradients[0][0]})`,
+                        borderRadius: 4,
+                        opacity: b.tokens > 0 ? 1 : 0.25,
+                      }}
+                    />
+                  </div>
+                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                    {b.label}
+                  </Typography.Text>
+                </div>
+              </Tooltip>
+            ))}
+          </div>
+          {hourly === null && (
+            <Typography.Text type="secondary">加载中…</Typography.Text>
+          )}
+        </Card>
+      );
+    },
     "app-health": () => (
       <Card title="应用健康" style={{ height: "100%" }}>
         <Table
@@ -454,15 +567,10 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   }
 
   // 组装顺序按身份分开（见文件头）：运营者 = APP_LAYOUT（应用对象区块）；
-  // admin = 平台维度（统计卡 → 快捷入口 → 用量统计起点 → 健康/动态并排），
-  // 不渲染 task-metrics / app-activity 等应用层角色数据。
+  // admin = 平台维度（统计卡一排 → 用量图 → 健康/动态并排），不渲染
+  // task-metrics / app-activity 等应用层角色数据；两形态均不设页内标题。
   return (
     <div>
-      <Typography.Title level={4} style={{ marginTop: 0 }}>
-        {appForm
-          ? `工作台 · ${appMeta?.app.name ?? ctx.currentApp?.name ?? appId}`
-          : "工作台 · 平台总览"}
-      </Typography.Title>
       {appForm &&
         !isAdmin &&
         APP_LAYOUT.map((key) => (
@@ -471,8 +579,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       {isAdmin && (
         <>
           {blocks["platform-stat-cards"]()}
-          {appForm && blocks["quick-links"]()}
-          {blocks["usage-start"]()}
+          {blocks["usage-chart"]()}
           <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
             <Col xs={24} xl={12}>
               {blocks["app-health"]()}
