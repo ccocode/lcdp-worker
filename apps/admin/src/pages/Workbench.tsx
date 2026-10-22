@@ -475,7 +475,9 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
               dataSource={auditFeed}
               renderItem={(r) => {
                 const zh = auditActionText(r.action);
-                const appId = asText(r.app_id ?? r.appId);
+                // 注意：不能经 asText 取 appId（空值会被它转成 "—" 而误判为有值）
+                const rawAppId = r.app_id ?? r.appId;
+                const appId = typeof rawAppId === "string" ? rawAppId : "";
                 return (
                   <List.Item style={{ padding: "8px 0" }}>
                     <div
