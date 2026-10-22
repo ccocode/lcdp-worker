@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -142,11 +142,18 @@ export default function WizardDrawer({
   open,
   onClose,
   onEnterDesigner,
+  onAppCreated,
 }: {
   open: boolean;
   onClose: () => void;
   /** 完成或已建应用后跳进该应用的设计器 */
   onEnterDesigner: (appId: string) => void;
+  /**
+   * 建应用成功、session.appId 落定后回调一次（第 89 步 A5；同一会话只报
+   * 一次）。宿主据此先刷新自身上下文再切换当前应用（管理台合并版必接；
+   * 独立设计台不接、行为不变）。
+   */
+  onAppCreated?: (appId: string) => void;
 }) {
   const [session, setSession] = useState<WizardSessionView | null>(null);
   const [starting, setStarting] = useState(false);
@@ -161,6 +168,8 @@ export default function WizardDrawer({
   const [appIdDraft, setAppIdDraft] = useState("");
   const [appNameDraft, setAppNameDraft] = useState("");
   const [creatingApp, setCreatingApp] = useState(false);
+  /** onAppCreated 已上报的会话 id（第 89 步 A5 防重复触发） */
+  const appCreatedReportedRef = useRef<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishedVersion, setPublishedVersion] = useState<number | null>(null);
 
@@ -182,6 +191,7 @@ export default function WizardDrawer({
       setReasons({});
       setInvalidatedNotice([]);
       setPublishedVersion(null);
+      appCreatedReportedRef.current = null;
       setAppIdDraft("");
       setAppNameDraft("");
     } catch (err) {
@@ -326,6 +336,12 @@ export default function WizardDrawer({
     setCreatingApp(true);
     try {
       await api.wizardCreateApp(session.id, appId, name);
+      // 第 89 步 A5：建应用成功、appId 已落定——同会话只上报一次，
+      // 宿主据此刷新上下文并切换当前应用（向导本身留在抽屉内继续走）。
+      if (appCreatedReportedRef.current !== session.id) {
+        appCreatedReportedRef.current = session.id;
+        onAppCreated?.(appId);
+      }
       void antdMessage.success("应用已创建，初始草稿已按定案生成");
       await refresh();
     } catch (err) {
@@ -1100,7 +1116,7 @@ function WizardStepCard({
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [note, setNote] = useState("");
-  const [busy, setBusy] = useState<"gen" | "apply" | null>(null);
+  const [busy, setBusy] = useState<"gen" | "apply" | "confirm" | null>(null);
 
   const adopt = useCallback((p: Proposal) => {
     setProposal(p);
@@ -1191,7 +1207,34 @@ function WizardStepCard({
     }
   };
 
+  const doConfirmNoChange = async () => {
+    setBusy("confirm");
+    try {
+      // 第 89 步 B3（O-86-2）：本步生成未产出可应用变更时，以空 proposalId
+      // 登记「无变更确认」——服务端核该步确无待应用提案后置 applied（审计
+      // 带 noChange）；若该步已有提案，服务端回 400，按既有口径出错误
+      // 提示、不静默。成功后与应用路径同口径刷新会话（步转已应用、后续
+      // 步解锁）。
+      await api.wizardStepApplied(session.id, stepKey, "");
+      void antdMessage.success("已确认本步无变更，可继续下一步");
+      onSessionChanged();
+    } catch (err) {
+      void antdMessage.error(errText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const canGenerate = enabled && !applied && !generating;
+  // 「已生成、无提案」死局（O-86-2）：提案已就绪但无可应用变更，应用按钮
+  // 无从点起——给出「确认无变更并继续」出口。有变更 / 生成中 / 已应用 /
+  // 已失效（须重走）的步不出现此出口。
+  const noChangeReady =
+    !applied &&
+    !invalidated &&
+    !generating &&
+    proposal?.status === "ready" &&
+    (proposal.changes ?? []).length === 0;
 
   return (
     <Card
@@ -1292,18 +1335,29 @@ function WizardStepCard({
                 selected={selected}
                 onSelectedChange={setSelected}
               />
-              {proposal.status === "ready" && (
-                <Button
-                  type="primary"
-                  block
-                  style={{ marginTop: 6 }}
-                  loading={busy === "apply"}
-                  disabled={selected.size === 0}
-                  onClick={() => void doApply()}
-                >
-                  应用所选到草稿（{selected.size} 项）
-                </Button>
-              )}
+              {proposal.status === "ready" &&
+                (noChangeReady ? (
+                  <Button
+                    type="primary"
+                    block
+                    style={{ marginTop: 6 }}
+                    loading={busy === "confirm"}
+                    onClick={() => void doConfirmNoChange()}
+                  >
+                    确认无变更并继续
+                  </Button>
+                ) : (
+                  <Button
+                    type="primary"
+                    block
+                    style={{ marginTop: 6 }}
+                    loading={busy === "apply"}
+                    disabled={selected.size === 0}
+                    onClick={() => void doApply()}
+                  >
+                    应用所选到草稿（{selected.size} 项）
+                  </Button>
+                ))}
             </>
           )}
         </>

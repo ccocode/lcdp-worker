@@ -493,6 +493,42 @@ function governanceActions(
   return set;
 }
 
+/**
+ * 写后标记（第 89 步 B5 / F3）：EntityForm 保存/删除成功、跳回列表前在
+ * sessionStorage 落 `lcdp.wrote.<entity>` 时间戳。列表挂载首拉若见新鲜
+ * 标记（15 秒内），首拉结果之后立即再确认一拉并以其为准——封死「保存后
+ * 回列表首拉落在写后读不一致窗口、回空集后定格『暂无数据』、只能手动
+ * 刷新」的时序（总验收步 1/步 2 两度复现）。无标记时零额外请求。
+ */
+const WROTE_MARK_PREFIX = "lcdp.wrote.";
+const WROTE_MARK_FRESH_MS = 15_000;
+
+function markEntityWrote(entityKey: string): void {
+  try {
+    window.sessionStorage.setItem(
+      `${WROTE_MARK_PREFIX}${entityKey}`,
+      String(Date.now()),
+    );
+  } catch {
+    // sessionStorage 不可用时不落标记（列表行为退回原口径）
+  }
+}
+
+/** 读取并清除某实体的新鲜写后标记：存在且未过期回 true（一次性消费） */
+function consumeFreshWroteMark(entityKey: string): boolean {
+  try {
+    const raw = window.sessionStorage.getItem(
+      `${WROTE_MARK_PREFIX}${entityKey}`,
+    );
+    if (!raw) return false;
+    window.sessionStorage.removeItem(`${WROTE_MARK_PREFIX}${entityKey}`);
+    const at = Number(raw);
+    return Number.isFinite(at) && Date.now() - at < WROTE_MARK_FRESH_MS;
+  } catch {
+    return false;
+  }
+}
+
 /** 数据表格：按绑定实体分页拉取，引用字段显示关联记录的标签，敏感字段由服务端脱敏 */
 export function DataTable({ node }: NodeProps) {
   const ctx = useRendererCtx();
@@ -528,15 +564,19 @@ export function DataTable({ node }: NodeProps) {
 
   // 数据视图签名（内容变化才重拉）：过滤（vf 全量 op + eq 兼容）与第一排序项经适配器下发服务端
   const viewSig = JSON.stringify(view ?? null);
+  // 在途请求序号（第 89 步 B5）：并发 load 只有最新一次的结果可落 state，
+  // 迟到的旧响应（空集等）不得覆盖新结果。
+  const loadSeqRef = useRef(0);
   const load = useCallback(async () => {
     if (!entity) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError(null);
-    try {
+    const fetchPage = () => {
       const filters = eqFiltersOf(view);
       const vf = viewFiltersOf(view);
       const firstSort = view?.sort?.[0];
-      const res = await ctx.adapter.list(entity.key, {
+      return ctx.adapter.list(entity.key, {
         limit: pageSize,
         offset: pageIdx * pageSize,
         filters: Object.keys(filters).length ? filters : undefined,
@@ -545,16 +585,27 @@ export function DataTable({ node }: NodeProps) {
           ? { field: firstSort.field, dir: firstSort.dir }
           : undefined,
       });
+    };
+    try {
+      let res = await fetchPage();
+      // 写后确认（第 89 步 B5 / F3）：刚有写入（保存/删除跳回）且首拉已回，
+      // 立即再拉一次以第二次为准——见文件上方 markEntityWrote 注释。
+      // 追加分页（卡片加载更多）不走确认路径。
+      if (!appendRef.current && consumeFreshWroteMark(entity.key)) {
+        res = await fetchPage();
+      }
+      if (seq !== loadSeqRef.current) return;
       setRows((prev) =>
         appendRef.current ? [...prev, ...res.rows] : res.rows,
       );
       appendRef.current = false;
       setTotal(res.total);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       appendRef.current = false;
       setError(friendlyErrText(err));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
     // view 的内容已由 viewSig 完整刻画
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1827,6 +1878,7 @@ export function EntityForm({ node }: NodeProps) {
         ctx.adapter.notify(msg, "error");
         return;
       }
+      markEntityWrote(entity.key);
       ctx.adapter.notify("保存成功");
       ctx.adapter.navigate(listRoute);
     } catch (err) {
@@ -1841,6 +1893,7 @@ export function EntityForm({ node }: NodeProps) {
     if (!window.confirm(`确认删除这条${entity.label}？此操作不可恢复。`)) return;
     try {
       await ctx.adapter.remove(entity.key, recordId!);
+      markEntityWrote(entity.key);
       ctx.adapter.notify("已删除");
       ctx.adapter.navigate(listRoute);
     } catch (err) {

@@ -1,0 +1,78 @@
+/* 设计器根（第 89 步并入管理台覆盖层）：根 Layout 占满宿主高度，Tabs 区
+   flex 撑满、内容定高，页签面板内部滚动——替代原 100vh 口径，视觉不变。
+   仅管理台 designer 模块副本有此段，独立设计台不需要。 */
+.lcdp-designer-root.ant-layout {
+  height: 100%;
+}
+.lcdp-designer-root > .ant-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.lcdp-designer-root > .ant-tabs > .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+}
+.lcdp-designer-root > .ant-tabs > .ant-tabs-content-holder > .ant-tabs-content {
+  height: 100%;
+}
+.lcdp-designer-root .ant-tabs-tabpane {
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* 页面设计器三栏内的 antd Tabs：撑满高度、内容区独立滚动（配合 className="pd-tabs"） */
+.pd-tabs {
+  display: flex;
+  flex-direction: column;
+}
+.pd-tabs > .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+}
+.pd-tabs > .ant-tabs-content-holder > .ant-tabs-content {
+  height: 100%;
+}
+.pd-tabs .ant-tabs-tabpane {
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* 设计模式节点包围盒（类名仅设计态由渲染器添加，运行态不渲染）：相对定位以便挂拖拽手柄 */
+.lcdp-node {
+  position: relative;
+}
+
+/* 拖拽手柄（拖拽辅助器）：组件左上角的抓手条，悬停或选中时显示；按住手柄拖动组件精确落位，
+   组件本体只负责点选，避免拖动表格/表单内部控件时误移组件（类 VS 编辑器布局拖拽的抓手） */
+.lcdp-drag-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 1px 9px 1px 5px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  border-radius: 0 0 8px 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.lcdp-node:hover > .lcdp-drag-handle,
+.lcdp-node-selected > .lcdp-drag-handle {
+  opacity: 1;
+}
+.lcdp-drag-handle:active {
+  cursor: grabbing;
+}

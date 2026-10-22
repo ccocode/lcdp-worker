@@ -332,7 +332,13 @@ export default function AssistantPanel({
       // sessionStorage 不可用时仍跳转表单（用户手动填写）
     }
     const target = `/e/${ff.entity}/form`;
-    if (context.path === target) {
+    // 第 89 步 B2（F13）：同实体**编辑**表单页（path 同为表单路由、但带记录
+    // id——id 承载于 URL query ?id=，见 DataTable.openRow 与 EntityForm 的
+    // ctx.params.id）不能走事件路径：renderer 的 applyAssistantFill 有 isEdit
+    // 守卫，事件到达会被静默吞掉、载荷滞留 sessionStorage。fillForm 语义是
+    // 起草新单，故编辑态一律 navigate 到无 id 的新建表单；宿主 SchemaRenderer
+    // 已按 路由+id 换 key，id 消失即整页重挂载，新表单挂载时自动消费载荷。
+    if (context.path === target && !context.recordId) {
       window.dispatchEvent(
         new CustomEvent("lcdp:fill-form", { detail: { entity: ff.entity } }),
       );

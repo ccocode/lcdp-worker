@@ -3806,6 +3806,10 @@ function AppView({
     />
   ) : current ? (
     <SchemaRenderer
+      // 第 89 步 B2（F13）：按 应用+路径+记录 id 换 key——同路径仅 query 里
+      // 的 id 变化（编辑表单 ?id= ↔ 新建表单无 id）时整页重挂载，避免表单
+      // 组件以旧编辑态残留状态承接新语义（助手回填跳新建即依赖此重挂载）。
+      key={`${adapterAppId}:${inPath}:${params.id ?? ""}`}
       page={current}
       dataSchema={currentLoaded.snapshot.data}
       adapter={adapter}

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  Button,
   Card,
+  Input,
   Modal,
   Space,
   Switch,
@@ -10,6 +12,11 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { api, type Row } from "../api";
 import { asText, fmtTime } from "../helpers";
+import type { PageContext } from "../registry";
+import { tokens } from "@lcdp/ui";
+import Designer from "../designer/Designer";
+import CreateAppModal from "../designer/CreateAppModal";
+import WizardDrawer from "../designer/Wizard";
 
 /** 领域 key → 展示名（与 AppThemeSettings 的 DOMAIN_LABEL 同步） */
 const DOMAIN_LABEL: Record<string, string> = {
@@ -30,11 +37,27 @@ const DOMAIN_LABEL: Record<string, string> = {
  * 只能改设、不能取消；目标应用绑有专属域名时服务端拒绝、须先在该
  * 应用设置里解绑）。单应用的域名/应用别名维护在应用区「应用设置 ·
  * 域名」页签。
+ *
+ * 第 89 步：创建入口收进本页——「新建应用」（普通创建）与「向导创建」
+ * 两按钮（仅平台管理员呈现）；创建成功后先刷新外壳上下文再切换当前
+ * 应用为新应用（归位校验按可运营集判定，顺序不可反）。行操作「设计」
+ * 以全屏覆盖层打开设计器（作用域锁定该行应用，关闭回本页原位）；
+ * 「删除」须输入应用 ID 全文一致才可提交（服务端级联删除、审计留痕）。
  */
-export default function Apps() {
+export default function Apps({ ctx }: { ctx: PageContext }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** 设计器覆盖层当前设计的应用 id（null = 未打开） */
+  const [designing, setDesigning] = useState<string | null>(null);
+  /** 普通创建对话框 */
+  const [createOpen, setCreateOpen] = useState(false);
+  /** 创建向导抽屉（宿主挂载，designer 模块的 WizardDrawer） */
+  const [wizardOpen, setWizardOpen] = useState(false);
+  /** 删除确认：目标行 + 输入的应用 ID 全文 */
+  const [deleteRow, setDeleteRow] = useState<Row | null>(null);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,6 +73,19 @@ export default function Apps() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * 应用创建成功后的统一接线（普通创建与向导创建共用）：先刷新外壳
+   * 上下文（grants + 应用清单落定）再切换当前应用——反过来会被归位
+   * 校验按旧可运营集弹回。
+   */
+  const afterAppCreated = useCallback(
+    async (appId: string) => {
+      await ctx.refreshContext();
+      ctx.switchApp(appId);
+    },
+    [ctx],
+  );
 
   const toggle = (row: Row, next: boolean) => {
     const id = String(row.id);
@@ -98,6 +134,25 @@ export default function Apps() {
         }
       },
     });
+  };
+
+  const doDelete = async () => {
+    if (!deleteRow) return;
+    const id = String(deleteRow.id);
+    setDeleting(true);
+    try {
+      await api.apps.remove(id);
+      message.success(`已删除应用 ${id}`);
+      setDeleteRow(null);
+      setDeleteText("");
+      // 删的若是当前上下文应用：刷新后可运营集不再含它，外壳归位自动兜底
+      await ctx.refreshContext();
+      void load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const columns: ColumnsType<Row> = [
@@ -167,11 +222,53 @@ export default function Apps() {
         />
       ),
     },
+    ...(ctx.isAdmin
+      ? [
+          {
+            title: "操作",
+            width: 130,
+            render: (_: unknown, r: Row) => (
+              <Space size={4}>
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => setDesigning(String(r.id))}
+                >
+                  设计
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  danger
+                  onClick={() => {
+                    setDeleteText("");
+                    setDeleteRow(r);
+                  }}
+                >
+                  删除
+                </Button>
+              </Space>
+            ),
+          } as ColumnsType<Row>[number],
+        ]
+      : []),
   ];
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-      <Card title="应用管理">
+      <Card
+        title="应用管理"
+        extra={
+          ctx.isAdmin ? (
+            <Space>
+              <Button type="primary" onClick={() => setCreateOpen(true)}>
+                新建应用
+              </Button>
+              <Button onClick={() => setWizardOpen(true)}>向导创建</Button>
+            </Space>
+          ) : undefined
+        }
+      >
         <Table
           rowKey={(r) => String(r.id)}
           loading={loading}
@@ -180,6 +277,85 @@ export default function Apps() {
           pagination={false}
         />
       </Card>
+
+      <CreateAppModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(app) => {
+          void (async () => {
+            await afterAppCreated(app.id);
+            setDesigning(app.id);
+          })();
+        }}
+      />
+
+      <WizardDrawer
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onAppCreated={(appId) => {
+          void afterAppCreated(appId);
+        }}
+        onEnterDesigner={(appId) => {
+          setWizardOpen(false);
+          setDesigning(appId);
+        }}
+      />
+
+      <Modal
+        title="删除应用"
+        open={deleteRow !== null}
+        onOk={() => void doDelete()}
+        onCancel={() => {
+          setDeleteRow(null);
+          setDeleteText("");
+        }}
+        okText="删除"
+        okButtonProps={{
+          danger: true,
+          disabled:
+            deleteRow === null || deleteText !== String(deleteRow.id),
+        }}
+        confirmLoading={deleting}
+        cancelText="取消"
+        destroyOnClose
+      >
+        <p>
+          确认删除应用 <strong>{deleteRow ? String(deleteRow.id) : ""}</strong>
+          ？设计、数据、流程、授权与资产将被级联删除（审计留痕），此操作不可恢复。
+        </p>
+        <p>请输入应用 ID 全文以确认：</p>
+        <Input
+          value={deleteText}
+          onChange={(e) => setDeleteText(e.target.value)}
+          placeholder={deleteRow ? String(deleteRow.id) : ""}
+        />
+      </Modal>
+
+      {designing && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 900,
+            background: tokens.colorBgLayout,
+          }}
+        >
+          <Designer
+            appId={designing}
+            user={ctx.user}
+            onClose={() => {
+              setDesigning(null);
+              // 关闭回本页：刷新列表反映设计器内的发布/改名等变化，
+              // 页面不卸载、滚动位置保持
+              void load();
+            }}
+            onOpenWizard={() => {
+              setDesigning(null);
+              setWizardOpen(true);
+            }}
+          />
+        </div>
+      )}
     </Space>
   );
 }

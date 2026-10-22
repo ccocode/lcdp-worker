@@ -112,6 +112,12 @@ export interface PageContext {
   settingsTabSeed: string | null;
   go: (key: PageKey) => void;
   switchApp: (id: string) => void;
+  /**
+   * 刷新外壳上下文（第 89 步）：重拉授权（grants/me）与应用行清单，
+   * 数据落定后才 resolve。新建应用成功后须先 await 本函数再 switchApp，
+   * 否则归位校验按旧可运营集判定会把新应用弹回。
+   */
+  refreshContext: () => Promise<void>;
 }
 
 export interface PageDef {
@@ -201,7 +207,7 @@ const PLATFORM_DEFS: PageDef[] = [
     segment: "platform",
     // 第 77 步：原「应用与资产」「内容与知识」「运营保障」三组合并为「平台运营」
     section: "平台运营",
-    render: () => <Apps />,
+    render: (ctx) => <Apps ctx={ctx} />,
   },
   {
     // 第 81 步 G4：平台知识库回归 admin 专属（应用面治理走应用段

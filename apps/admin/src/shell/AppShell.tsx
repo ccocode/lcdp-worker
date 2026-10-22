@@ -463,6 +463,24 @@ export default function AppShell() {
     [page],
   );
 
+  /**
+   * 刷新外壳上下文（第 89 步）：重拉授权与应用行清单，落定后才 resolve。
+   * 应用管理页新建应用成功后先 await 本函数再 switchApp——归位 effect 按
+   * grants 可运营集校验 appId，新应用不在集内会被弹回，须先让集更新。
+   * 拉取失败保留现状快照、不打断使用（与首拉的容错口径一致）。
+   */
+  const refreshContext = useCallback(async (): Promise<void> => {
+    const [me, list] = await Promise.allSettled([
+      api.grants.me(),
+      api.apps.list(),
+    ]);
+    if (me.status === "fulfilled") {
+      setGrants(me.value);
+      storeGrants(me.value);
+    }
+    if (list.status === "fulfilled") setAppsRows(list.value);
+  }, []);
+
   const logout = useCallback(() => {
     storeSession(null, null);
     storeGrants(null);
@@ -585,6 +603,7 @@ export default function AppShell() {
     settingsTabSeed,
     go,
     switchApp,
+    refreshContext,
   };
   const pageNode = effectiveDef.render(ctx);
 
