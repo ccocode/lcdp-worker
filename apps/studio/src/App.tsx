@@ -38,6 +38,7 @@ import PageDesigner from "./PageDesigner.js";
 import Permissions from "./Permissions.js";
 import WorkflowDesigner from "./WorkflowDesigner.js";
 import Copilot from "./Copilot.js";
+import WizardDrawer from "./Wizard.js";
 import AgentsTab from "./AgentsTab.js";
 import { desktopTheme, errText, fmtTime, tokens } from "@lcdp/ui";
 
@@ -71,6 +72,8 @@ const cloneBundle = (b: BundleView): BundleView =>
 export default function App() {
   const [user, setUser] = useState<UserInfo | null>(() => getStoredUser());
   const [designing, setDesigning] = useState<string | null>(null);
+  /** 创建向导抽屉（AGENT 三期）：入口在应用列表与 Copilot 抽屉 */
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const logout = () => {
     storeSession(null, null);
@@ -88,10 +91,27 @@ export default function App() {
           onBack={() => setDesigning(null)}
           onLogout={logout}
           user={user}
+          onOpenWizard={() => {
+            setDesigning(null);
+            setWizardOpen(true);
+          }}
         />
       ) : (
-        <AppsView user={user} onLogout={logout} onOpen={setDesigning} />
+        <AppsView
+          user={user}
+          onLogout={logout}
+          onOpen={setDesigning}
+          onWizard={() => setWizardOpen(true)}
+        />
       )}
+      <WizardDrawer
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onEnterDesigner={(appId) => {
+          setWizardOpen(false);
+          setDesigning(appId);
+        }}
+      />
     </ConfigProvider>
   );
 }
@@ -168,10 +188,13 @@ function AppsView({
   user,
   onLogout,
   onOpen,
+  onWizard,
 }: {
   user: UserInfo;
   onLogout: () => void;
   onOpen: (appId: string) => void;
+  /** 打开创建向导（AGENT 三期） */
+  onWizard: () => void;
 }) {
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -253,6 +276,7 @@ function AppsView({
           >
             新建应用
           </Button>
+          <Button onClick={onWizard}>向导创建</Button>
           <Button onClick={onLogout}>退出登录</Button>
         </Space>
       </div>
@@ -402,11 +426,14 @@ function Designer({
   user,
   onBack,
   onLogout,
+  onOpenWizard,
 }: {
   appId: string;
   user: UserInfo;
   onBack: () => void;
   onLogout: () => void;
+  /** 从 Copilot 抽屉切到创建向导（回应用列表语境开向导） */
+  onOpenWizard: () => void;
 }) {
   const [design, setDesign] = useState<DesignData | null>(null);
   const [working, setWorking] = useState<BundleView | null>(null);
@@ -1276,6 +1303,7 @@ function Designer({
         open={copilotOpen}
         onClose={() => setCopilotOpen(false)}
         onApplied={() => void load()}
+        onOpenWizard={onOpenWizard}
       />
     </Layout>
   );

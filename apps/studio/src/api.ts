@@ -375,6 +375,93 @@ export interface Proposal {
   appliedAt?: string | null;
 }
 
+// ---------------------------------------------------------- 设计向导（AGENT 三期，/apps/wizard）
+
+/** 向导阶段：选型 → 抉择 → 陪跑 → 完成 / 放弃 */
+export type WizardStage =
+  | "selecting"
+  | "deciding"
+  | "companion"
+  | "done"
+  | "abandoned";
+
+/** 陪跑三步：模型补充 / 页面 / 流程与权限 */
+export type WizardStepKey = "model" | "pages" | "flowPerms";
+
+/** 陪跑单步状态（服务端会话 steps 段；字段缺失时前端按未开始处理） */
+export interface WizardStepState {
+  /** pending 未开始 / generated 已生成待应用 / applied 已应用 / invalidated 已失效须重走 */
+  status?: string;
+  proposalId?: string | null;
+}
+
+/**
+ * 向导会话（POST /apps/wizard/sessions 与 GET 回执同形）。choices 为逐项
+ * 定案原始形态：{ value, version, stale } 包装（stale = 被上游回改置失效、
+ * 保留旧值待重定），解读在前端 helper 内收敛；proposalIds 为陪跑提案链
+ * （顺序即产生顺序）。
+ */
+export interface WizardSession {
+  id: string;
+  stage: WizardStage;
+  domainKey: string | null;
+  scenario: string | null;
+  choices: Record<string, unknown>;
+  appId: string | null;
+  proposalIds: string[];
+  steps: Partial<Record<WizardStepKey, WizardStepState>>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** 选型段候选（注册表机械派生：名称 + 说明 + 与其他候选的差别说明） */
+export interface WizardCandidate {
+  key: string;
+  name: string;
+  description: string;
+  differences?: string;
+}
+
+/**
+ * 抉择段单选项。value 的形态按条目 kind 解读：multi 为样板 key 字符串、
+ * single 的会员域项为 { mode } 对象、single 的主题项为主题 id 字符串、
+ * confirm 为 []；roleNames 条目不用 options，角色清单走条目的 roles。
+ */
+export interface WizardDecisionOption {
+  value: unknown;
+  label: string;
+  description?: string;
+  key?: string;
+}
+
+/** 抉择段条目：kind = multi（样板多选）/ confirm（骨架全量装入）/ roleNames（角色改名）/ single（单选） */
+export interface WizardDecisionItem {
+  key: string;
+  kind: string;
+  label?: string;
+  impact: string;
+  options: WizardDecisionOption[];
+  /** roleNames 条目的角色清单（key 为角色标识、label 为默认显示名）；其余 kind 不带 */
+  roles?: { key: string; label: string; audience?: string | null }[];
+  /** memberScope 选「并入既有」时的现存会员域清单（也可能挂在会话视图上） */
+  scopes?: string[];
+}
+
+/** 会话视图：会话本体 + 当前阶段脚本（selecting 带 candidates，deciding 带 items） */
+export interface WizardSessionView extends WizardSession {
+  candidates?: WizardCandidate[];
+  items?: WizardDecisionItem[];
+  memberScopes?: string[];
+}
+
+/**
+ * 定案回执：会话最新视图 + 本次回改使失效的下游清单（对象形：choices 回改
+ * 只失效 steps；领域变更时 choices 与 steps 两组都可能非空）。
+ */
+export interface WizardChoiceResult extends WizardSessionView {
+  invalidated?: { choices?: string[]; steps?: string[] };
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -535,6 +622,149 @@ export const api = {
       `/apps/${encodeURIComponent(appId)}/copilot/proposals/${encodeURIComponent(pid)}/apply`,
       { method: "POST", body: JSON.stringify({ changeIds }) },
     );
+  },
+
+  // ---------------------------------------------------------- 设计向导（/apps/wizard，向导只服务新建应用）
+  /** 开向导会话（stage=selecting）；scenario 可在开局时一并带上 */
+  async wizardCreate(scenario?: string): Promise<WizardSessionView> {
+    const res = await apiFetch<{ session?: WizardSessionView } & WizardSessionView>(
+      "/apps/wizard/sessions",
+      { method: "POST", body: JSON.stringify(scenario ? { scenario } : {}) },
+    );
+    return res.session ?? res;
+  },
+  /**
+   * 读会话 + 当前阶段脚本。阶段脚本在回执顶层 script 键（selecting 带
+   * candidates、deciding 带 items），在此合并进会话视图，调用方只读视图。
+   */
+  async wizardGet(id: string): Promise<WizardSessionView> {
+    const res = await apiFetch<
+      {
+        session?: WizardSessionView;
+        script?: {
+          candidates?: WizardCandidate[];
+          items?: WizardDecisionItem[];
+        };
+      } & WizardSessionView
+    >(`/apps/wizard/sessions/${encodeURIComponent(id)}`);
+    const view = res.session ?? res;
+    return {
+      ...view,
+      candidates: res.script?.candidates ?? view.candidates,
+      items: res.script?.items ?? view.items,
+    };
+  },
+  /** 选型定案：落 domainKey 并进入抉择段（scenario 顺带回传，未定案前以最后一次为准） */
+  async wizardDomain(
+    id: string,
+    domainKey: string,
+    scenario?: string,
+  ): Promise<WizardChoiceResult> {
+    const res = await apiFetch<
+      {
+        session?: WizardChoiceResult;
+        invalidated?: WizardChoiceResult["invalidated"];
+      } & WizardChoiceResult
+    >(`/apps/wizard/sessions/${encodeURIComponent(id)}/domain`, {
+      method: "POST",
+      body: JSON.stringify(scenario ? { domainKey, scenario } : { domainKey }),
+    });
+    const view = res.session ?? res;
+    return { ...view, invalidated: res.invalidated ?? view.invalidated };
+  },
+  /** 抉择逐项定案/回改：回执 invalidated（顶层对象）列出被本次回改置失效的下游定案与陪跑步 */
+  async wizardChoices(
+    id: string,
+    key: string,
+    value: unknown,
+  ): Promise<WizardChoiceResult> {
+    const res = await apiFetch<
+      {
+        session?: WizardChoiceResult;
+        invalidated?: WizardChoiceResult["invalidated"];
+      } & WizardChoiceResult
+    >(`/apps/wizard/sessions/${encodeURIComponent(id)}/choices`, {
+      method: "POST",
+      body: JSON.stringify({ key, value }),
+    });
+    const view = res.session ?? res;
+    return { ...view, invalidated: res.invalidated ?? view.invalidated };
+  },
+  /** 场景推荐：在注册表候选内给推荐序与逐项理由（不增删候选，定案仍由用户点选） */
+  async wizardRecommend(
+    id: string,
+    scenario: string,
+  ): Promise<{ order: string[]; reasons: Record<string, string> }> {
+    const res = await apiFetch<{
+      order?: string[];
+      reasons?: Record<string, string> | { key: string; reason: string }[];
+    }>(`/apps/wizard/sessions/${encodeURIComponent(id)}/recommend`, {
+      method: "POST",
+      body: JSON.stringify({ scenario }),
+    });
+    const reasons: Record<string, string> = {};
+    if (Array.isArray(res.reasons)) {
+      for (const r of res.reasons) {
+        if (r && typeof r.key === "string") reasons[r.key] = r.reason ?? "";
+      }
+    } else if (res.reasons) {
+      for (const [k, v] of Object.entries(res.reasons)) reasons[k] = String(v);
+    }
+    return { order: res.order ?? [], reasons };
+  },
+  /** 建应用：内部走既有装配路径（领域骨架 + 已定案样板），appId 落会话并进入陪跑段 */
+  async wizardCreateApp(
+    id: string,
+    appId: string,
+    name: string,
+  ): Promise<WizardSessionView> {
+    const res = await apiFetch<{ session?: WizardSessionView } & WizardSessionView>(
+      `/apps/wizard/sessions/${encodeURIComponent(id)}/create-app`,
+      { method: "POST", body: JSON.stringify({ appId, name }) },
+    );
+    return res.session ?? res;
+  },
+  /** 陪跑步进生成：按步装配 prompt 调既有提案管线，返回新提案 id（后续轮询/应用走 copilot 端点） */
+  async wizardStepGenerate(
+    id: string,
+    step: WizardStepKey,
+    note?: string,
+  ): Promise<{ proposalId: string }> {
+    const res = await apiFetch<{ proposalId?: string; id?: string }>(
+      `/apps/wizard/sessions/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/generate`,
+      { method: "POST", body: JSON.stringify(note ? { note } : {}) },
+    );
+    const proposalId = res.proposalId ?? res.id;
+    if (!proposalId) throw new ApiError("生成接口未返回提案 id");
+    return { proposalId };
+  },
+  /** 陪跑步应用登记：提案经既有 apply 落稿后调用，推进步状态 */
+  async wizardStepApplied(
+    id: string,
+    step: WizardStepKey,
+    proposalId: string,
+  ): Promise<WizardSessionView> {
+    const res = await apiFetch<{ session?: WizardSessionView } & WizardSessionView>(
+      `/apps/wizard/sessions/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/applied`,
+      { method: "POST", body: JSON.stringify({ proposalId }) },
+    );
+    return res.session ?? res;
+  },
+  /** 发布后收官：会话置 done */
+  async wizardComplete(id: string): Promise<WizardSessionView> {
+    const res = await apiFetch<{ session?: WizardSessionView } & WizardSessionView>(
+      `/apps/wizard/sessions/${encodeURIComponent(id)}/complete`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return res.session ?? res;
+  },
+  /** 放弃会话：置 abandoned（已建应用保留为普通草稿，不做任何回滚） */
+  async wizardAbandon(id: string): Promise<WizardSessionView> {
+    const res = await apiFetch<{ session?: WizardSessionView } & WizardSessionView>(
+      `/apps/wizard/sessions/${encodeURIComponent(id)}/abandon`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return res.session ?? res;
   },
 
   // ---------------------------------------------------------- 用户管理（/admin/users，限 admin）

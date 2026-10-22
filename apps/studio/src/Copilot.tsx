@@ -7,6 +7,7 @@ import {
   Drawer,
   Input,
   List,
+  Segmented,
   Space,
   Steps,
   Tag,
@@ -75,17 +76,124 @@ function logDetails(proposal: Proposal | null): (string | undefined)[] {
   });
 }
 
+/**
+ * 提案 Diff 呈现（Copilot 单发与创建向导陪跑步共用）：摘要 + 按段分组的
+ * 变更清单；ready 态可勾选，applied 态以禁用勾选回显已应用条目。
+ * 应用动作（调 apply 端点）由调用方持有，本组件只管展示与勾选状态。
+ */
+export function ProposalDiffView({
+  proposal,
+  selected,
+  onSelectedChange,
+}: {
+  proposal: Proposal;
+  selected: Set<string>;
+  onSelectedChange: (next: Set<string>) => void;
+}) {
+  const changes = proposal.changes ?? [];
+  const sections = (["data", "pages"] as const)
+    .map((section) => ({
+      section,
+      items: changes.filter((c) => c.section === section),
+    }))
+    .filter((g) => g.items.length > 0);
+  const appliedIds = new Set(proposal.appliedChangeIds ?? []);
+  return (
+    <>
+      {proposal.summary && (
+        <Typography.Paragraph style={{ margin: "8px 0 4px", fontSize: 13 }}>
+          {proposal.summary}
+        </Typography.Paragraph>
+      )}
+      {changes.length === 0 ? (
+        <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+          本次生成没有产生可应用的变更。
+        </Typography.Paragraph>
+      ) : (
+        <>
+          {proposal.status === "ready" && (
+            <Space size={12} style={{ margin: "4px 0 8px" }}>
+              <Typography.Link
+                onClick={() =>
+                  onSelectedChange(new Set(changes.map((c) => c.id)))
+                }
+              >
+                全选
+              </Typography.Link>
+              <Typography.Link onClick={() => onSelectedChange(new Set())}>
+                清空
+              </Typography.Link>
+              <Typography.Text type="secondary">
+                已选 {selected.size} / {changes.length} 项
+              </Typography.Text>
+            </Space>
+          )}
+          {sections.map(({ section, items }) => (
+            <div key={section} style={{ marginBottom: 10 }}>
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 12, letterSpacing: 1 }}
+              >
+                {SECTION_TITLES[section]}（{items.length}）
+              </Typography.Text>
+              <List
+                size="small"
+                dataSource={items}
+                renderItem={(c) => (
+                  <List.Item style={{ padding: "6px 0" }}>
+                    <Space size={8} align="start">
+                      {proposal.status === "ready" ? (
+                        <Checkbox
+                          checked={selected.has(c.id)}
+                          onChange={(e) =>
+                            onSelectedChange(
+                              (() => {
+                                const next = new Set(selected);
+                                if (e.target.checked) next.add(c.id);
+                                else next.delete(c.id);
+                                return next;
+                              })(),
+                            )
+                          }
+                        />
+                      ) : (
+                        <Checkbox checked={appliedIds.has(c.id)} disabled />
+                      )}
+                      <Tag
+                        color={KIND_META[c.kind].color}
+                        style={{ marginRight: 0 }}
+                      >
+                        {KIND_META[c.kind].text}
+                      </Tag>
+                      <span>{c.label}</span>
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            </div>
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
 export default function Copilot({
   appId,
   open,
   onClose,
   onApplied,
+  onOpenWizard,
 }: {
   appId: string;
   open: boolean;
   onClose: () => void;
   onApplied: () => void;
+  /** 模式切换到「创建向导」时的跳转（向导只服务新建应用，去应用列表打开） */
+  onOpenWizard?: () => void;
 }) {
+  /** 抽屉模式：single = 单发提案（当前应用增量）；wizard = 创建向导入口（新建应用专用） */
+  const [mode, setMode] = useState<"single" | "wizard">("single");
   const [prompt, setPrompt] = useState("");
   const [exampleIdx, setExampleIdx] = useState(0);
   const [current, setCurrent] = useState<Proposal | null>(null);
@@ -291,15 +399,7 @@ export default function Copilot({
         ? 6
         : 0;
 
-  // ------------------------------------------------------------ Diff 分组
   const changes = current?.changes ?? [];
-  const sections = (["data", "pages"] as const)
-    .map((section) => ({
-      section,
-      items: changes.filter((c) => c.section === section),
-    }))
-    .filter((g) => g.items.length > 0);
-  const appliedIds = new Set(current?.appliedChangeIds ?? []);
 
   return (
     <Drawer
@@ -309,11 +409,44 @@ export default function Copilot({
       onClose={onClose}
       destroyOnClose={false}
     >
-      <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
-        用一句话描述要新增的实体或页面。AI 生成的是作用于**当前应用**的增量提案：
-        应用后只写入设计草稿，不会直接发布，请在设计器中复核后再发布。
-      </Typography.Paragraph>
-      <Input.TextArea
+      <Segmented
+        block
+        value={mode}
+        onChange={(v) => setMode(v as "single" | "wizard")}
+        options={[
+          { label: "单发提案", value: "single" },
+          { label: "创建向导", value: "wizard" },
+        ]}
+        style={{ marginBottom: 14 }}
+      />
+      {mode === "wizard" ? (
+        <div>
+          <Alert
+            type="info"
+            showIcon
+            message="创建向导用于从零新建应用"
+            description="向导会依次完成领域选型、关键抉择与三步陪跑生成，最后由你确认发布。已经打开的应用请继续用单发提案做增量设计。"
+          />
+          <Button
+            type="primary"
+            block
+            style={{ marginTop: 14 }}
+            disabled={!onOpenWizard}
+            onClick={() => {
+              onClose();
+              onOpenWizard?.();
+            }}
+          >
+            前往应用列表打开向导
+          </Button>
+        </div>
+      ) : (
+        <>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13 }}>
+            用一句话描述要新增的实体或页面。AI 生成的是作用于**当前应用**的增量提案：
+            应用后只写入设计草稿，不会直接发布，请在设计器中复核后再发布。
+          </Typography.Paragraph>
+          <Input.TextArea
         rows={3}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
@@ -374,93 +507,21 @@ export default function Copilot({
               已应用到草稿
             </Tag>
           )}
-          {current.summary && (
-            <Typography.Paragraph
-              style={{ margin: "8px 0 4px", fontSize: 13 }}
+          <ProposalDiffView
+            proposal={current}
+            selected={selected}
+            onSelectedChange={setSelected}
+          />
+          {current.status === "ready" && changes.length > 0 && (
+            <Button
+              type="primary"
+              block
+              loading={applying}
+              disabled={selected.size === 0}
+              onClick={() => void applySelected()}
             >
-              {current.summary}
-            </Typography.Paragraph>
-          )}
-          {changes.length === 0 ? (
-            <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-              本次生成没有产生可应用的变更。
-            </Typography.Paragraph>
-          ) : (
-            <>
-              {current.status === "ready" && (
-                <Space size={12} style={{ margin: "4px 0 8px" }}>
-                  <Typography.Link
-                    onClick={() =>
-                      setSelected(new Set(changes.map((c) => c.id)))
-                    }
-                  >
-                    全选
-                  </Typography.Link>
-                  <Typography.Link onClick={() => setSelected(new Set())}>
-                    清空
-                  </Typography.Link>
-                  <Typography.Text type="secondary">
-                    已选 {selected.size} / {changes.length} 项
-                  </Typography.Text>
-                </Space>
-              )}
-              {sections.map(({ section, items }) => (
-                <div key={section} style={{ marginBottom: 10 }}>
-                  <Typography.Text
-                    type="secondary"
-                    style={{ fontSize: 12, letterSpacing: 1 }}
-                  >
-                    {SECTION_TITLES[section]}（{items.length}）
-                  </Typography.Text>
-                  <List
-                    size="small"
-                    dataSource={items}
-                    renderItem={(c) => (
-                      <List.Item style={{ padding: "6px 0" }}>
-                        <Space size={8} align="start">
-                          {current.status === "ready" ? (
-                            <Checkbox
-                              checked={selected.has(c.id)}
-                              onChange={(e) =>
-                                setSelected((prev) => {
-                                  const next = new Set(prev);
-                                  if (e.target.checked) next.add(c.id);
-                                  else next.delete(c.id);
-                                  return next;
-                                })
-                              }
-                            />
-                          ) : (
-                            <Checkbox
-                              checked={appliedIds.has(c.id)}
-                              disabled
-                            />
-                          )}
-                          <Tag
-                            color={KIND_META[c.kind].color}
-                            style={{ marginRight: 0 }}
-                          >
-                            {KIND_META[c.kind].text}
-                          </Tag>
-                          <span>{c.label}</span>
-                        </Space>
-                      </List.Item>
-                    )}
-                  />
-                </div>
-              ))}
-              {current.status === "ready" && (
-                <Button
-                  type="primary"
-                  block
-                  loading={applying}
-                  disabled={selected.size === 0}
-                  onClick={() => void applySelected()}
-                >
-                  应用所选到草稿（{selected.size} 项）
-                </Button>
-              )}
-            </>
+              应用所选到草稿（{selected.size} 项）
+            </Button>
           )}
         </>
       )}
@@ -522,6 +583,8 @@ export default function Copilot({
           </List.Item>
         )}
       />
+        </>
+      )}
     </Drawer>
   );
 }
