@@ -25,27 +25,28 @@ import { asText, fmtTime } from "../helpers";
 
 /**
  * 首页工作台（第 57 步，方案 §1.5；对象形态归正 W4 改版）：全身份默认落点。
- * 进入管理台即默认身处一个应用（外壳归位保证），本页统一顺序组装：
- * 当前应用的对象区块（待办/指标/快捷入口/动态）→ admin 附加
- * 的平台维度三区块（平台统计数字、应用健康积压计数、平台动态——只取无
- * 应用归属的平台级事件）。领域关键指标由领域模版声明（templates），
- * 本页只消费。计数一律取服务端 total——唯一例外是待审提交：submissions
- * 端点无分页与 total、返回全量数组，计数取数组长度（口径在此明示）。
+ * 两种形态按身份分开组装（2026-10-23 用户定调重构）：
+ * - admin（平台管理员）：只呈现平台维度——平台管理在应用之上，工作台不含
+ *   应用层的角色数据（待办指标卡与由待办/待审拼成的最近动态均不渲染）。
+ *   顺序 = 平台统计数字卡 → 快捷入口 → 用量统计起点 → 应用健康与平台动态
+ *   并排（限高、限行数；平台动态只取无应用归属的平台级事件）。
+ * - 运营者（有当前应用）：当前应用的对象区块（待办/指标/快捷入口/动态，
+ *   APP_LAYOUT）。领域关键指标由领域模版声明（templates），本页只消费。
+ * 计数一律取服务端 total——唯一例外是待审提交：submissions 端点无分页与
+ * total、返回全量数组，计数取数组长度（口径在此明示）。
+ * （应用列表已按用户 2026-10-20 晚指示撤出工作台：切换走顶栏切换器、
+ * 盘点走平台区「应用管理」、新建/删除走 Studio 建应用与应用管理。）
  */
 
 type BlockKey =
-  | "platform-stats"
+  | "platform-stat-cards"
+  | "usage-start"
   | "app-health"
   | "recent-audit"
   | "task-metrics"
   | "quick-links"
   | "app-activity";
 
-/**
- * 版式声明：有当前应用时 APP_LAYOUT → admin 附加 PLATFORM_LAYOUT。
- * （应用列表已按用户 2026-10-20 晚指示撤出工作台：切换走顶栏切换器、
- * 盘点走平台区「应用管理」、新建/删除走 Studio 建应用与应用管理。） */
-const PLATFORM_LAYOUT: BlockKey[] = ["platform-stats", "app-health", "recent-audit"];
 const APP_LAYOUT: BlockKey[] = ["task-metrics", "quick-links", "app-activity"];
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -89,7 +90,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     void message.error({ key, content: `${label}加载失败` });
 
   useEffect(() => {
-    // W4 后平台三区块是 admin 的附加维度：有无当前应用都加载（不再只限无应用形态）
+    // 平台维度数据只为 admin 加载：admin 的工作台就是平台维度（见文件头）
     if (!isAdmin) return;
     let alive = true;
     const set = (patch: Partial<typeof pStats>) =>
@@ -131,7 +132,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       .catch(statFail("wb-health", "应用健康"));
     void api.audit
       // 平台动态：只取无应用归属的平台级事件（scope=platform），各应用明细不混显
-      .list({ page: 1, pageSize: 8, scope: "platform" })
+      .list({ page: 1, pageSize: 5, scope: "platform" })
       .then((r) => alive && setAuditFeed(r.rows))
       .catch(statFail("wb-audit", "平台动态"));
     return () => {
@@ -293,8 +294,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
   ];
 
   const blocks: Record<BlockKey, () => React.ReactNode> = {
-    "platform-stats": () => (
-      <>
+    "platform-stat-cards": () => (
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={12} lg={6}>
             <Card hoverable onClick={() => go("tenants")}>
@@ -327,13 +327,14 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
             </Card>
           </Col>
         </Row>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 16 }}>
-          用量统计起点：{pStats.meteringStart ?? "—"}
-        </Typography.Paragraph>
-      </>
+    ),
+    "usage-start": () => (
+      <Typography.Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
+        用量统计起点：{pStats.meteringStart ?? "—"}
+      </Typography.Paragraph>
     ),
     "app-health": () => (
-      <Card title="应用健康" style={{ marginTop: 16 }}>
+      <Card title="应用健康" style={{ height: "100%" }}>
         <Table
           rowKey={(r) => String(r.app.id)}
           size="small"
@@ -341,30 +342,33 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
           loading={health === null}
           columns={healthColumns}
           dataSource={health ?? []}
+          scroll={{ y: 240 }}
         />
       </Card>
     ),
     "recent-audit": () =>
       auditFeed && auditFeed.length > 0 ? (
-        <Card title="平台动态" style={{ marginTop: 16 }}>
-          <List
-            size="small"
-            dataSource={auditFeed}
-            renderItem={(r) => (
-              <List.Item>
-                <Space wrap>
-                  <Typography.Text type="secondary">
-                    {fmtTime(r.created_at ?? r.createdAt)}
-                  </Typography.Text>
-                  <Typography.Text>{asText(r.actor)}</Typography.Text>
-                  <Typography.Text code>{asText(r.action)}</Typography.Text>
-                  <Typography.Text type="secondary">
-                    {asText(r.app_id ?? r.appId)}
-                  </Typography.Text>
-                </Space>
-              </List.Item>
-            )}
-          />
+        <Card title="平台动态" style={{ height: "100%" }}>
+          <div style={{ maxHeight: 264, overflowY: "auto" }}>
+            <List
+              size="small"
+              dataSource={auditFeed}
+              renderItem={(r) => (
+                <List.Item>
+                  <Space wrap>
+                    <Typography.Text type="secondary">
+                      {fmtTime(r.created_at ?? r.createdAt)}
+                    </Typography.Text>
+                    <Typography.Text>{asText(r.actor)}</Typography.Text>
+                    <Typography.Text code>{asText(r.action)}</Typography.Text>
+                    <Typography.Text type="secondary">
+                      {asText(r.app_id ?? r.appId)}
+                    </Typography.Text>
+                  </Space>
+                </List.Item>
+              )}
+            />
+          </div>
         </Card>
       ) : null,
     "task-metrics": () => (
@@ -448,7 +452,9 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     );
   }
 
-  // 统一渲染顺序：（有当前应用）APP_LAYOUT →（admin）平台三区块
+  // 组装顺序按身份分开（见文件头）：运营者 = APP_LAYOUT（应用对象区块）；
+  // admin = 平台维度（统计卡 → 快捷入口 → 用量统计起点 → 健康/动态并排），
+  // 不渲染 task-metrics / app-activity 等应用层角色数据。
   return (
     <div>
       <Typography.Title level={4} style={{ marginTop: 0 }}>
@@ -457,13 +463,25 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
           : "工作台 · 平台总览"}
       </Typography.Title>
       {appForm &&
+        !isAdmin &&
         APP_LAYOUT.map((key) => (
           <React.Fragment key={key}>{blocks[key]()}</React.Fragment>
         ))}
-      {isAdmin &&
-        PLATFORM_LAYOUT.map((key) => (
-          <React.Fragment key={key}>{blocks[key]()}</React.Fragment>
-        ))}
+      {isAdmin && (
+        <>
+          {blocks["platform-stat-cards"]()}
+          {appForm && blocks["quick-links"]()}
+          {blocks["usage-start"]()}
+          <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+            <Col xs={24} xl={12}>
+              {blocks["app-health"]()}
+            </Col>
+            <Col xs={24} xl={12}>
+              {blocks["recent-audit"]()}
+            </Col>
+          </Row>
+        </>
+      )}
     </div>
   );
 }
