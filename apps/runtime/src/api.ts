@@ -64,6 +64,14 @@ export interface Snapshot {
   permissions: PermissionSchema | null;
   /** 当前用户的有效访问摘要（透传渲染器 access 做呈现门控） */
   myAccess: MyAccess | null;
+  /**
+   * 智能体员工面视图（第 84 步片六）：服务端按助手 chat 回合的同口径组装
+   * （声明解析 + 运行面覆盖）；服务端计算异常时整段省略，前端必须容忍缺失——
+   * 缺失时按「无声明名、已启用」处理。
+   */
+  agents?: {
+    staff?: { name?: string | null; enabled?: boolean } | null;
+  } | null;
 }
 
 /** 站点目录项（第 68 步站点模型：应用即站点事实源，入口装配退役） */
@@ -242,6 +250,12 @@ export interface AssistantMessage {
   text: string;
   citations?: AssistantCitation[];
   pendingAction?: AssistantPendingAction;
+  /**
+   * 触发标记（第 84 步片七）：null = 常规回合；
+   * context_align:<entity>:<recordId> = 上下文对齐回合（system 触发消息与
+   * 助手回复同带），前端据此防重复对齐、回放据此辨识非用户手打回合。
+   */
+  trigger?: string | null;
   /** generating / done / failed 等（生成中消息轮询未结束） */
   status?: string;
   createdAt?: string;
@@ -1575,15 +1589,24 @@ export const api = {
   },
   /** 运行态助手（M7）：异步回合制——发送立即返回，助手消息经轮询会话详情取回 */
   assistant: {
-    /** 发送一条消息：立即返回会话与用户消息 id；同会话同时只允许一条生成中（409） */
+    /**
+     * 发送一条消息：立即返回会话与助手消息 id；同会话同时只允许一条生成中（409）。
+     * 上下文对齐（第 84 步片七）：传 align（无 text）发起对齐回合；服务端已对齐过
+     * 同一记录时返回 alreadyAligned=true 且 messageId 为既有回合，不新建回合。
+     */
     async chat(
       appId: string,
       body: {
         conversationId?: string;
-        text: string;
+        text?: string;
+        align?: { entity: string; recordId: string };
         context: AssistantContext;
       },
-    ): Promise<{ conversationId: string; messageId: string }> {
+    ): Promise<{
+      conversationId: string;
+      messageId: string;
+      alreadyAligned?: boolean;
+    }> {
       return apiFetch(
         `/apps/${encodeURIComponent(appId)}/assistant/chat`,
         { method: "POST", body: JSON.stringify(body) },
@@ -1638,6 +1661,21 @@ export const api = {
         }
       }
       return res;
+    },
+    /**
+     * 回填结果留痕上报（第 84 步片三②）：表单回读比对后把未落字段的中文标签
+     * 回报服务端，并入该消息 pending_action.handled 供审计回放。
+     * 尽力而为：调用方一律 catch 静默，失败绝不阻塞用户操作。
+     */
+    async reportFillResult(
+      appId: string,
+      messageId: string,
+      missed: string[],
+    ): Promise<void> {
+      await apiFetch(
+        `/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/fill-result`,
+        { method: "POST", body: JSON.stringify({ missed }) },
+      );
     },
   },
   /**

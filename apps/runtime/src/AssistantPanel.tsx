@@ -29,12 +29,24 @@ export default function AssistantPanel({
   appId,
   context,
   navigate,
+  staffName,
+  staffEnabled,
 }: {
   appId: string;
   /** 当前页面上下文（外壳按路由尽力推导：path/pageName/entityKey/recordId） */
   context: AssistantContext;
   /** 应用内导航（外壳 goPage，已处理预览前缀） */
   navigate: (to: string) => void;
+  /**
+   * 员工面声明名（快照 agents.staff.name，第 84 步片六）：有值时抽屉标题
+   * 显示该名，无值（段缺失/未声明名）回落「智能助手」。
+   */
+  staffName?: string | null;
+  /**
+   * 员工面启停（快照 agents.staff.enabled）：明确 false 时不渲染任何入口
+   * （与服务端 chat 403 口径对齐）；缺失时按启用处理。
+   */
+  staffEnabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -47,6 +59,14 @@ export default function AssistantPanel({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** 轮询代次：新发送/新对话/卸载时自增，旧轮询自停 */
   const pollGenRef = useRef(0);
+  /** 挂载恢复（最近会话）是否已 settle：对齐触发须等它完成，防抢先新建会话 */
+  const [restored, setRestored] = useState(false);
+  /**
+   * 上下文对齐在飞集合（第 84 步片七）：键 = 会话 id（未知时 "new"）+ 触发标记。
+   * 与「消息内容扫描 + 服务端去重」共同防重复对齐；发起失败也保留键，
+   * 不自动重试（用户仍可手动提问），新对话时整表清空。
+   */
+  const alignInFlightRef = useRef<Set<string>>(new Set());
 
   // AgentChat 组件（renderer）派发的打开事件
   useEffect(() => {
@@ -55,9 +75,50 @@ export default function AssistantPanel({
     return () => window.removeEventListener("lcdp:open-assistant", onOpen);
   }, []);
 
+  // 回填结果留痕上报（第 84 步片三②）：renderer 表单回读后派发 lcdp:fill-outcome
+  // （detail = { entity, messageId, missed[] }）。防串应用口径：doFillForm 发起
+  // 回填时已把「来源消息 id → 发起应用 id」绑定写入 sessionStorage，本监听只在
+  // 绑定存在且与本面板当前 appId 一致时才上报（应用切换瞬间到达的事件绑定
+  // 必属别的应用、直接跳过）；绑定一次性消费。留痕尽力而为，失败静默。
+  useEffect(() => {
+    const onFillOutcome = (e: Event) => {
+      const detail = (
+        e as CustomEvent<{ messageId?: unknown; missed?: unknown }>
+      ).detail;
+      const messageId =
+        typeof detail?.messageId === "string" ? detail.messageId : "";
+      if (!messageId) return;
+      let boundAppId: string | null = null;
+      try {
+        boundAppId = window.sessionStorage.getItem(
+          `lcdp.fillbind.${messageId}`,
+        );
+        window.sessionStorage.removeItem(`lcdp.fillbind.${messageId}`);
+      } catch {
+        return;
+      }
+      if (boundAppId !== appId) return;
+      const missed = Array.isArray(detail?.missed)
+        ? detail.missed.filter(
+            (x): x is string => typeof x === "string",
+          )
+        : [];
+      void api.assistant
+        .reportFillResult(appId, messageId, missed)
+        .catch(() => {
+          // 留痕上报失败静默，不阻塞用户
+        });
+    };
+    window.addEventListener("lcdp:fill-outcome", onFillOutcome);
+    return () =>
+      window.removeEventListener("lcdp:fill-outcome", onFillOutcome);
+  }, [appId]);
+
   // 挂载时恢复我的最近会话（失败静默：发送时自动新建）
   useEffect(() => {
     let alive = true;
+    setRestored(false);
+    alignInFlightRef.current.clear();
     (async () => {
       try {
         const list = await api.assistant.conversations(appId);
@@ -70,6 +131,8 @@ export default function AssistantPanel({
         }
       } catch {
         // 历史拉取失败不阻塞使用
+      } finally {
+        if (alive) setRestored(true);
       }
     })();
     return () => {
@@ -145,21 +208,114 @@ export default function AssistantPanel({
     }
   };
 
+  /**
+   * 上下文主动对齐（第 84 步片七）：在单据页（context 带 entityKey + recordId）
+   * 打开助手时，自动发起一轮对齐回合——服务端落 system 触发消息（带 trigger
+   * 标记、不冒充用户发言），助手先取数给现状摘要 + 可办下一步（提案形式）。
+   * 打扰边界：仅打开抽屉时触发，不主动弹窗、不后台轮询。防重复三层：
+   * 本 effect 的消息扫描（已含同标记消息不再发）+ 在飞集合 + 服务端
+   * alreadyAligned 去重；同一会话对同一记录只对齐一次，换记录/新会话可再对齐。
+   */
+  useEffect(() => {
+    if (!open || !restored || sending) return;
+    const entity = context.entityKey;
+    const recordId = context.recordId;
+    if (!entity || !recordId) return;
+    const token = `context_align:${entity}:${recordId}`;
+    if (messages.some((m) => m.trigger === token)) return;
+    const flightKey = `${conversationId ?? "new"}|${token}`;
+    if (alignInFlightRef.current.has(flightKey)) return;
+    alignInFlightRef.current.add(flightKey);
+    void (async () => {
+      setTurnError(null);
+      const knownAssistantIds = new Set(
+        messages.filter((m) => m.role === "assistant").map((m) => m.id),
+      );
+      setSending(true);
+      try {
+        const res = await api.assistant.chat(appId, {
+          conversationId: conversationId ?? undefined,
+          align: { entity, recordId },
+          context,
+        });
+        setConversationId(res.conversationId);
+        alignInFlightRef.current.delete(flightKey);
+        alignInFlightRef.current.add(`${res.conversationId}|${token}`);
+        if (res.alreadyAligned) {
+          // 服务端已有该记录的对齐回合：回读会话即可；若它还在生成中转入轮询
+          const detail = await api.assistant.conversation(
+            appId,
+            res.conversationId,
+          );
+          const msgs = detail.messages ?? [];
+          setMessages(msgs);
+          const target = msgs.find((m) => m.id === res.messageId);
+          if (target && target.status === "generating") {
+            const known = new Set(
+              msgs
+                .filter((m) => m.role === "assistant" && m.id !== res.messageId)
+                .map((m) => m.id),
+            );
+            pollUntilDone(res.conversationId, known);
+          } else {
+            setSending(false);
+          }
+          return;
+        }
+        pollUntilDone(res.conversationId, knownAssistantIds);
+      } catch (err) {
+        setSending(false);
+        setTurnError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    // context 对象每次渲染都是新引用，只取其标量字段作依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    open,
+    restored,
+    sending,
+    appId,
+    conversationId,
+    context.entityKey,
+    context.recordId,
+    messages,
+  ]);
+
   const startNewConversation = () => {
     pollGenRef.current += 1;
+    alignInFlightRef.current.clear();
     setConversationId(null);
     setMessages([]);
     setTurnError(null);
     setSending(false);
   };
 
-  /** fillForm 执行：写一次性预填 → 跳派生表单（已在该表单时派发事件触发再次读取） */
-  const doFillForm = (ff: AssistantFillForm) => {
+  /**
+   * fillForm 执行：写一次性预填 → 跳派生表单（已在该表单时派发事件触发再次读取）。
+   * 回填保真（第 84 步片三）：除 values/items 外，把用户刚确认的提案字段
+   * （expect：标签+展示值，仅含有值项）与来源消息 id 一并写入预填载荷——
+   * 表单侧据此在回填后逐字段回读比对，未落字段明示用户手动补齐
+   * （载荷形状与 renderer EntityForm 的 applyAssistantFill 读取端对齐）。
+   */
+  const doFillForm = (ff: AssistantFillForm, source?: AssistantMessage) => {
     try {
       window.sessionStorage.setItem(
         `lcdp.fill.${ff.entity}`,
-        JSON.stringify({ values: ff.values ?? {}, items: ff.items }),
+        JSON.stringify({
+          values: ff.values ?? {},
+          items: ff.items,
+          expect: (source?.pendingAction?.fields ?? []).filter(
+            (f) =>
+              f.value !== null && f.value !== undefined && f.value !== "",
+          ),
+          sourceMessageId: source?.id,
+        }),
       );
+      // 回填归属绑定（第 84 步片三②）：表单回读事件到达时据此判定该回填
+      // 属于哪个应用，防应用切换瞬间把留痕串报到别的应用（见上方监听）。
+      if (source?.id) {
+        window.sessionStorage.setItem(`lcdp.fillbind.${source.id}`, appId);
+      }
     } catch {
       // sessionStorage 不可用时仍跳转表单（用户手动填写）
     }
@@ -186,7 +342,7 @@ export default function AssistantPanel({
         if (res.executed) antdMessage.success(res.message);
         else antdMessage.info(res.message);
       }
-      if (decision === "confirm" && res.fillForm) doFillForm(res.fillForm);
+      if (decision === "confirm" && res.fillForm) doFillForm(res.fillForm, msg);
       // 刷新会话：回读 handled 状态与服务端回写的结果消息
       if (conversationId) {
         const detail = await api.assistant.conversation(appId, conversationId);
@@ -206,6 +362,27 @@ export default function AssistantPanel({
   };
 
   const renderMessage = (msg: AssistantMessage) => {
+    // 系统消息（确认结果通知、上下文对齐触发标签）：居中浅色小字一行，
+    // 不套用户/助手气泡——它们不是任何一方的发言（第 84 步片七回放诚实）
+    if (msg.role === "system") {
+      return (
+        <div
+          key={msg.id}
+          style={{
+            alignSelf: "center",
+            maxWidth: "92%",
+            color: "#8c8c8c",
+            fontSize: 12,
+            textAlign: "center",
+            padding: "2px 8px",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {msg.text}
+        </div>
+      );
+    }
     const isUser = msg.role === "user";
     const generating = !isUser && msg.status === "generating";
     return (
@@ -287,6 +464,15 @@ export default function AssistantPanel({
     );
   };
 
+  // 片六：抽屉标题读员工面声明名（staffName），无名回落通用称呼；
+  // 员工面明确停用（staffEnabled === false）时不渲染任何入口——本 return 在
+  // 全部 hook 之后，hook 顺序不受影响。
+  const faceName =
+    typeof staffName === "string" && staffName.trim()
+      ? staffName.trim()
+      : null;
+  if (staffEnabled === false) return null;
+
   return (
     <>
       <Button
@@ -305,7 +491,7 @@ export default function AssistantPanel({
         ✦ 助手
       </Button>
       <Drawer
-        title="✦ 智能助手"
+        title={faceName ? `✦ ${faceName}` : "✦ 智能助手"}
         width={"min(480px, 100vw)"}
         open={open}
         onClose={() => setOpen(false)}

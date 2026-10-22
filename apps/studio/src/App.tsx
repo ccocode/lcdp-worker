@@ -442,8 +442,10 @@ function Designer({
               agents: d.published.agents,
             }
           : null);
-      // agents 段（M7）旧快照/旧草稿可能缺失：归一化为完整配置（与服务端默认口径一致），
-      // 保证智能体页签受控渲染，且 baseline 取归一化后的形态、不会误报未保存修改
+      // agents 段（M7，第 84 步片四）：归一化为三画像声明形态——旧键
+      // assistant/support 兼容读、未声明的段保持 null（读侧回填领域/平台
+      // 默认），保证智能体页签受控渲染，且 baseline 取归一化后的形态、
+      // 不会误报未保存修改
       if (initial) initial.agents = normalizeAgents(initial.agents);
       setWorking(initial ? cloneBundle(initial) : null);
       setBaseline(initial ? JSON.stringify(initial) : "");

@@ -91,17 +91,47 @@ export interface FragmentDef {
   root: ComponentNode;
 }
 
-/** 智能体配置（M7，设计包 agents 段）：运行态助手的名称/人设/工具开关/回合上限 */
+/** 员工助手声明（设计包 agents.staff）：名称/人设/工具开关/回合上限 */
+export interface StaffAgentDecl {
+  name: string;
+  persona: string;
+  tools: { query: boolean; create: boolean; flow: boolean; kb: boolean };
+  /** 单回合内工具循环上限（1..12，默认 6） */
+  maxTurns: number;
+  /** 写操作策略：本期唯一值 confirm（任何写先经用户确认卡片） */
+  writePolicy: "confirm";
+}
+
+/**
+ * 画像声明（设计包 agents.visitor / agents.ops 同构，与平台 SupportAgentDecl
+ * 对齐）：人设字段名 systemPrompt、知识范围为知识库编号列表 knowledgeBases、
+ * 工具面为 builtinTools（内置工具）/ toolScopes（派生工具域）。
+ * 注意与管理台运行面调整（覆盖层）的同义异名字段（knowledgeScope 等）区分，
+ * 两层不可混写——声明层写覆盖层字段名会被服务端保存校验静默剥离。
+ */
+export interface SupportAgentDecl {
+  name: string;
+  systemPrompt: string;
+  builtinTools: string[];
+  toolScopes: string[];
+  knowledgeBases: string[];
+  /** 写操作策略：visitor 可 confirm / auto；ops 仅 confirm（服务端校验把关） */
+  writePolicy: string;
+  /** 单回合内工具循环上限（1..12） */
+  maxTurns: number;
+}
+
+/**
+ * 智能体配置（设计包 agents 段，第 84 步片一/片四）：三画像声明
+ * staff / visitor / ops。null = 本应用未声明该画像（运行时按「应用声明
+ * → 领域声明 → 平台默认」回填；visitor 无平台默认，两级皆无则客服不
+ * 启用）。旧键 assistant / support 仅在 normalizeAgents 读侧兼容，保存
+ * 只写新键。
+ */
 export interface AgentsConfig {
-  assistant: {
-    name: string;
-    persona: string;
-    tools: { query: boolean; create: boolean; flow: boolean; kb: boolean };
-    /** 单回合内工具循环上限（1..12，默认 6） */
-    maxTurns: number;
-    /** 写操作策略：本期唯一值 confirm（任何写先经用户确认卡片） */
-    writePolicy: "confirm";
-  };
+  staff: StaffAgentDecl | null;
+  visitor: SupportAgentDecl | null;
+  ops: SupportAgentDecl | null;
   /**
    * 管理台运行面调整的存在标记（第 83 步片二，服务端读侧附带）：
    * { 面孔键（staff/visitor/ops）: 最近调整时间 ISO }，只有存在性
@@ -110,48 +140,120 @@ export interface AgentsConfig {
   overridesPresent?: Record<string, string> | null;
 }
 
-/** agents 段缺失时的客户端默认值（与服务端默认口径一致） */
+/** agents 段整体缺失时的客户端形态：三画像皆未声明 */
 export function defaultAgentsConfig(): AgentsConfig {
+  return { staff: null, visitor: null, ops: null };
+}
+
+/** 在本应用新建员工助手声明时的初始值（与平台缺省口径一致） */
+export function newStaffDecl(): StaffAgentDecl {
   return {
-    assistant: {
-      name: "应用助理",
-      persona: "",
-      tools: { query: true, create: true, flow: true, kb: true },
-      maxTurns: 6,
-      writePolicy: "confirm",
-    },
+    name: "应用助理",
+    persona: "",
+    tools: { query: true, create: true, flow: true, kb: true },
+    maxTurns: 6,
+    writePolicy: "confirm",
   };
 }
 
-/** 把任意来源的 agents 段归一化为完整配置（缺字段补默认，保证编辑器受控渲染） */
+/**
+ * 在本应用新建访客客服声明时的初始值：转人工（humanHandoff）为客服
+ * 必需项（服务端保存校验强制），初始即带上；人设留空由用户填写。
+ */
+export function newVisitorDecl(): SupportAgentDecl {
+  return {
+    name: "客服",
+    systemPrompt: "",
+    builtinTools: ["kbSearch", "humanHandoff"],
+    toolScopes: [],
+    knowledgeBases: [],
+    writePolicy: "confirm",
+    maxTurns: 6,
+  };
+}
+
+function turnsOr(v: unknown, fallback: number): number {
+  return typeof v === "number" && v >= 1 && v <= 12 ? Math.round(v) : fallback;
+}
+
+function stringArrayOr(v: unknown): string[] {
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string")
+    : [];
+}
+
+/** staff 段归一化：非对象 → null（未声明）；字段级缺失逐个回填缺省（与服务端 resolveAssistant 同口径） */
+function normalizeStaff(raw: unknown): StaffAgentDecl | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  const t =
+    a.tools && typeof a.tools === "object"
+      ? (a.tools as Record<string, unknown>)
+      : {};
+  const boolOr = (v: unknown): boolean => (typeof v === "boolean" ? v : true);
+  return {
+    name: typeof a.name === "string" && a.name ? a.name : "应用助理",
+    persona: typeof a.persona === "string" ? a.persona : "",
+    tools: {
+      query: boolOr(t.query),
+      create: boolOr(t.create),
+      flow: boolOr(t.flow),
+      kb: boolOr(t.kb),
+    },
+    maxTurns: turnsOr(a.maxTurns, 6),
+    writePolicy: "confirm",
+  };
+}
+
+/** visitor / ops 段归一化（同构）：非对象 → null（未声明）；persona 为 systemPrompt 的写入别名，读时并入 */
+function normalizeDecl(
+  raw: unknown,
+  defaults: { name: string; maxTurns: number },
+): SupportAgentDecl | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  return {
+    name:
+      typeof a.name === "string" && a.name ? a.name : defaults.name,
+    systemPrompt:
+      typeof a.systemPrompt === "string"
+        ? a.systemPrompt
+        : typeof a.persona === "string"
+          ? a.persona
+          : "",
+    builtinTools: stringArrayOr(a.builtinTools),
+    toolScopes: stringArrayOr(a.toolScopes),
+    knowledgeBases: stringArrayOr(a.knowledgeBases),
+    writePolicy:
+      typeof a.writePolicy === "string" && a.writePolicy
+        ? a.writePolicy
+        : "confirm",
+    maxTurns: turnsOr(a.maxTurns, defaults.maxTurns),
+  };
+}
+
+/**
+ * 把任意来源的 agents 段归一化为三画像声明形态：新键优先、旧键
+ * （assistant / support）回退兼容读；未声明的段保持 null（不虚构声明，
+ * 保证保存往返不把 null 写成空对象、ops 段原样保留）。
+ */
 export function normalizeAgents(input: AgentsConfig | null | undefined): AgentsConfig {
-  const d = defaultAgentsConfig().assistant;
-  const a = input?.assistant;
+  const r = (input ?? {}) as unknown as Record<string, unknown>;
   // 运行面调整标记只透传（存在性提示用），不进编辑字段
   const present =
-    input?.overridesPresent &&
-    typeof input.overridesPresent === "object" &&
-    Object.keys(input.overridesPresent).length > 0
-      ? { overridesPresent: input.overridesPresent }
+    r.overridesPresent &&
+    typeof r.overridesPresent === "object" &&
+    Object.keys(r.overridesPresent as Record<string, unknown>).length > 0
+      ? { overridesPresent: r.overridesPresent as Record<string, string> }
       : {};
-  if (!a) return { ...defaultAgentsConfig(), ...present };
   return {
     ...present,
-    assistant: {
-      name: typeof a.name === "string" && a.name ? a.name : d.name,
-      persona: typeof a.persona === "string" ? a.persona : d.persona,
-      tools: {
-        query: a.tools?.query ?? d.tools.query,
-        create: a.tools?.create ?? d.tools.create,
-        flow: a.tools?.flow ?? d.tools.flow,
-        kb: a.tools?.kb ?? d.tools.kb,
-      },
-      maxTurns:
-        typeof a.maxTurns === "number" && a.maxTurns >= 1 && a.maxTurns <= 12
-          ? Math.round(a.maxTurns)
-          : d.maxTurns,
-      writePolicy: "confirm",
-    },
+    staff: normalizeStaff(r.staff !== undefined ? r.staff : r.assistant),
+    visitor: normalizeDecl(r.visitor !== undefined ? r.visitor : r.support, {
+      name: "客服",
+      maxTurns: 6,
+    }),
+    ops: normalizeDecl(r.ops, { name: "运营助理", maxTurns: 8 }),
   };
 }
 

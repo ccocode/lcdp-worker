@@ -1249,6 +1249,16 @@ export function EntityForm({ node }: NodeProps) {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 回填保真（第 84 步片三）：助手回填后逐字段回读得出的未落字段
+  // （key = 主表字段键；明细类未落为 null）；渲染时按当前值过滤，用户补齐即消
+  const [fillMissed, setFillMissed] = useState<
+    { key: string | null; label: string }[]
+  >([]);
+  /** values 镜像 ref：回填回调里据此计算「合并后表单值」做回读比对 */
+  const valuesRef = useRef<Row>({});
+  useEffect(() => {
+    valuesRef.current = values;
+  }, [values]);
 
   useEffect(() => {
     if (!entity || !isEdit) return;
@@ -1287,10 +1297,13 @@ export function EntityForm({ node }: NodeProps) {
   }, []);
 
   // M7 助手回填（fillForm）：运行态新建表单挂载时，读取助手面板确认后写入的一次性预填
-  // （sessionStorage `lcdp.fill.<entity>` = { values, items }），预填主表字段与子表行后立即清除。
+  // （sessionStorage `lcdp.fill.<entity>` = { values, items, expect?, sourceMessageId? }），
+  // 预填主表字段与子表行后立即清除。
   // 仅新建（非编辑）、非设计态生效，不影响普通空表单与编辑既有记录的流程；
   // 已在本表单页时由宿主派发 lcdp:fill-form 事件触发再次读取（无需重新挂载）。
-  const applyAssistantFill = useCallback(() => {
+  // 第 84 步片三（回填保真）：预填后以 expect（用户在确认卡上见过的提案字段）
+  // 为意图逐字段回读，未落字段记入 fillMissed 并在表单顶部明示（见渲染处）。
+  const applyAssistantFill = useCallback(async () => {
     if (!entity || isEdit || ctx.design) return;
     let raw: string | null = null;
     try {
@@ -1304,6 +1317,10 @@ export function EntityForm({ node }: NodeProps) {
       const data = JSON.parse(raw) as {
         values?: Row;
         items?: Record<string, Row[]> | Row[];
+        /** 提案字段（标签+展示值）：回读比对的意图来源，写入端见运行态 AssistantPanel */
+        expect?: { label: string; value: unknown }[];
+        /** 提案来源的助手消息 id：随回读结果事件带出，供留痕回报接点使用 */
+        sourceMessageId?: string;
       };
       if (data.values && typeof data.values === "object") {
         setValues((prev) => ({ ...prev, ...data.values }));
@@ -1336,6 +1353,137 @@ export function EntityForm({ node }: NodeProps) {
           setChildRows((prev) => ({ ...prev, ...byChild }));
         }
       }
+
+      // —— 回读断言（片三）：提案有值而表单落空 = 执行未完全成功，逐字段核对 ——
+      // 意图优先取 expect（确认卡字段，标签口径）；缺省时退到 values 键集。
+      // 「已落」判据按字段类型分：空值未落；enum 须命中选项值；ref 须命中
+      // 引用选项 id（选项拉取失败不下结论）；日期须可解析；hidden 字段不渲染
+      // 视为未落；总额类字段由子表汇总驱动（rollup），不在此断言。
+      const merged: Row = { ...valuesRef.current, ...(data.values ?? {}) };
+      const missed: { key: string | null; label: string }[] = [];
+      const pushMissed = (key: string | null, label: string) => {
+        if (label && !missed.some((m) => m.label === label)) {
+          missed.push({ key, label });
+        }
+      };
+      const checkField = async (
+        field: Field,
+        displayLabel: string,
+      ): Promise<void> => {
+        if (ctx.access?.[entity.key]?.fields?.[field.key] === "hidden") {
+          pushMissed(field.key, displayLabel);
+          return;
+        }
+        const actual = merged[field.key];
+        if (actual === null || actual === undefined || actual === "") {
+          pushMissed(field.key, displayLabel);
+          return;
+        }
+        if (field.type === "enum") {
+          const ok = (field.options ?? []).some(
+            (o) => o.value === String(actual),
+          );
+          if (!ok) pushMissed(field.key, displayLabel);
+          return;
+        }
+        if (field.type === "ref" && field.refEntity) {
+          try {
+            const opts = await ctx.adapter.options(field.refEntity);
+            if (
+              opts.length > 0 &&
+              !opts.some((o) => o.value === String(actual))
+            ) {
+              pushMissed(field.key, displayLabel);
+            }
+          } catch {
+            // 选项拉取失败时不下未落结论（非空即按已落宽口径处理）
+          }
+          return;
+        }
+        if (field.type === "date" || field.type === "datetime") {
+          if (!dayjs(String(actual)).isValid()) {
+            pushMissed(field.key, displayLabel);
+          }
+        }
+      };
+      const isRollupField = (field: Field): boolean =>
+        field.type === "decimal" &&
+        /total/i.test(field.key) &&
+        children.some((c) => c.fields.some((cf) => cf.key === "amount"));
+      const intent: { label: string; value: unknown }[] = [];
+      if (Array.isArray(data.expect)) {
+        for (const e of data.expect) {
+          if (
+            e &&
+            typeof e.label === "string" &&
+            e.label &&
+            e.value !== null &&
+            e.value !== undefined &&
+            e.value !== ""
+          ) {
+            intent.push({ label: e.label, value: e.value });
+          }
+        }
+      }
+      if (intent.length > 0) {
+        for (const it of intent) {
+          let field = entity.fields.find((f) => f.label === it.label);
+          if (!field) {
+            // 标签近似匹配（唯一命中才采信）：容忍提案标签与字段标签的包含关系
+            const cands = entity.fields.filter(
+              (f) => f.label.includes(it.label) || it.label.includes(f.label),
+            );
+            if (cands.length === 1) field = cands[0];
+          }
+          if (!field) {
+            pushMissed(null, it.label);
+            continue;
+          }
+          if (isRollupField(field)) continue;
+          await checkField(field, it.label);
+        }
+      } else if (data.values) {
+        for (const [k, v] of Object.entries(data.values)) {
+          if (v === null || v === undefined || v === "") continue;
+          const field = entity.fields.find((f) => f.key === k);
+          if (!field || isRollupField(field)) continue;
+          await checkField(field, field.label);
+        }
+      }
+      // 明细意图核对：意图行指向非本实体子表（或本实体根本无子表）时，
+      // 那些行不会出现在任何 ChildEditor 中——按「明细行」整体记未落
+      if (data.items) {
+        if (Array.isArray(data.items)) {
+          if (data.items.length > 0 && children.length === 0) {
+            pushMissed(null, "明细行");
+          }
+        } else {
+          const childKeys = new Set(children.map((c) => c.key));
+          const hasUnknown = Object.entries(data.items).some(
+            ([k, rows]) =>
+              Array.isArray(rows) && rows.length > 0 && !childKeys.has(k),
+          );
+          if (hasUnknown) pushMissed(null, "明细行");
+        }
+      }
+      setFillMissed(missed);
+      // 回读结果留痕的接点（片三②）：服务端的 pending_action.handled 在
+      // 确认时即已落盘，回填发生在确认之后，当前无回報端点可写——结果先
+      // 经本事件带出（entity / 来源消息 id / 未落标签清单），待 platform 补
+      // 回報端点后由宿主监听回報（见第 84 步片三施工报告的接口契约建议）。
+      try {
+        window.dispatchEvent(
+          new CustomEvent("lcdp:fill-outcome", {
+            detail: {
+              entity: entity.key,
+              messageId: data.sourceMessageId ?? null,
+              missed: missed.map((m) => m.label),
+            },
+          }),
+        );
+      } catch {
+        // 事件派发失败不影响回填本身
+      }
     } catch {
       // 预填数据损坏时忽略，保持空表单
     }
@@ -1344,13 +1492,13 @@ export function EntityForm({ node }: NodeProps) {
   }, [entity?.key, isEdit, ctx.design]);
 
   useEffect(() => {
-    applyAssistantFill();
+    void applyAssistantFill();
   }, [applyAssistantFill]);
 
   useEffect(() => {
     const onFill = (e: Event) => {
       const ent = (e as CustomEvent<{ entity?: string }>).detail?.entity;
-      if (!ent || ent === entity?.key) applyAssistantFill();
+      if (!ent || ent === entity?.key) void applyAssistantFill();
     };
     window.addEventListener("lcdp:fill-form", onFill);
     return () => window.removeEventListener("lcdp:fill-form", onFill);
@@ -1624,10 +1772,30 @@ export function EntityForm({ node }: NodeProps) {
     zIndex: 5,
   };
 
+  // 回填未落提示的可见集（片三）：字段被用户补齐（当前值非空）即不再提示；
+  // key 为 null 的（标签无对应字段/明细类）无从按值消解，常驻至下次回填
+  const visibleFillMissed = fillMissed.filter(
+    (m) =>
+      m.key === null ||
+      values[m.key] === null ||
+      values[m.key] === undefined ||
+      values[m.key] === "",
+  );
+
   return (
     <div style={singleMode ? { maxWidth: "100%" } : styles.form}>
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 12 }} />
+      )}
+      {visibleFillMissed.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`以下字段未能自动填入，请手动补齐：${visibleFillMissed
+            .map((m) => m.label)
+            .join("、")}`}
+          style={{ marginBottom: 12 }}
+        />
       )}
       {isEdit && node.props?.showId === true && (
         <div style={singleMode ? singleRowStyle : styles.formRow}>

@@ -3857,6 +3857,8 @@ function AppView({
           appId={activeLoaded.app.id}
           context={assistantContext}
           navigate={goPage}
+          staffName={activeLoaded.snapshot.agents?.staff?.name ?? null}
+          staffEnabled={activeLoaded.snapshot.agents?.staff?.enabled}
         />
         {supportWidget}
       </ConfigProvider>
@@ -3908,6 +3910,8 @@ function AppView({
           appId={activeLoaded.app.id}
           context={assistantContext}
           navigate={goPage}
+          staffName={activeLoaded.snapshot.agents?.staff?.name ?? null}
+          staffEnabled={activeLoaded.snapshot.agents?.staff?.enabled}
         />
         {supportWidget}
       </ConfigProvider>
@@ -4041,6 +4045,8 @@ function AppView({
         appId={activeLoaded.app.id}
         context={assistantContext}
         navigate={goPage}
+        staffName={activeLoaded.snapshot.agents?.staff?.name ?? null}
+        staffEnabled={activeLoaded.snapshot.agents?.staff?.enabled}
       />
       {supportWidget}
     </ConfigProvider>
