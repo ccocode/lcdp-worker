@@ -32,12 +32,13 @@ type SnapshotEnvelope = {
   status: number;
   contentType: string | null;
   body: string;
-  /** 写入时刻（epoch ms），用于 60 秒写合并判定 */
+  /** 写入时刻（epoch ms），用于写合并判定 */
   at: number;
 };
 
-/** KV 写合并窗口：同键 60 秒内不重复写（免费额度 1000 写/天） */
-const WRITE_COALESCE_MS = 60_000;
+/** KV 写合并窗口：同键 10 分钟内不重复写（免费额度 1000 写/天；
+ * 60 秒窗口曾因键分散几乎不命中、写量≈读量冲破日限，2026-10-22 拉长） */
+const WRITE_COALESCE_MS = 600_000;
 /** 快照副本自清 TTL：24 小时 */
 const SNAPSHOT_TTL_SECONDS = 86_400;
 /** 视为「源站不可达」的回源状态（触发降级读） */
@@ -112,14 +113,35 @@ function isDegradable(pathname: string): boolean {
  * 陈旧性无窗口：发布必须经 api，api 停机期间不可能有新发布；api 在线时
  * 一律实时回源、从不读缓存。
  */
+/**
+ * 站点解析键归一化：部署预览子域（<哈希>.lcdp-runtime.pages.dev）解析的
+ * 是同一个默认站点，host 逐字入键会让每次部署各成一键、写合并形同虚
+ * 设（2026-10-22 KV 写超限的键分散来源之一）。只折叠部署哈希子域，
+ * 真实域名与 seg（应用维度）保持不动；非站点路径原样返回。
+ */
+function normalizeSiteKey(pathWithQuery: string): string {
+  const q = pathWithQuery.indexOf("?");
+  if (q < 0) return pathWithQuery;
+  const path = pathWithQuery.slice(0, q);
+  if (path !== "/site/current" && path !== "/public/site") return pathWithQuery;
+  const params = new URLSearchParams(pathWithQuery.slice(q + 1));
+  const host = params.get("host");
+  if (host && /^[a-z0-9-]+\.lcdp-runtime\.pages\.dev$/i.test(host)) {
+    params.set("host", "lcdp-runtime.pages.dev");
+    return `${path}?${params.toString()}`;
+  }
+  return pathWithQuery;
+}
+
 async function cacheKey(req: Request, pathWithQuery: string): Promise<string> {
+  const p = normalizeSiteKey(pathWithQuery);
   const auth = req.headers.get("Authorization");
   if (auth) {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(auth));
     const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-    return `auth:${hex}:${pathWithQuery}`;
+    return `auth:${hex}:${p}`;
   }
-  return `anon:${pathWithQuery}`;
+  return `anon:${p}`;
 }
 
 function originUrl(req: Request, originBase: string): string {
@@ -127,7 +149,7 @@ function originUrl(req: Request, originBase: string): string {
   return originBase.replace(/\/$/, "") + u.pathname + u.search;
 }
 
-/** 白名单 200 应答后顺手写 KV（先读同键做 60 秒写合并；失败不阻断） */
+/** 白名单 200 应答后顺手写 KV（先读同键做写合并；失败不阻断） */
 async function maybeWriteSnapshot(kv: KVNamespace, key: string, res: Response): Promise<void> {
   try {
     const prev = await kv.get<SnapshotEnvelope>(key, "json");
