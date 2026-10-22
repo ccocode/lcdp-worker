@@ -133,7 +133,8 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     void api.audit
       // 平台动态：只取无应用归属的平台级事件（scope=platform），各应用明细不混显
       .list({ page: 1, pageSize: 5, scope: "platform" })
-      .then((r) => alive && setAuditFeed(r.rows))
+      // 口径：服务端 pageOf 固定每页 50 条、未采信 pageSize，行数上限在客户端截断
+      .then((r) => alive && setAuditFeed(r.rows.slice(0, 5)))
       .catch(statFail("wb-audit", "平台动态"));
     return () => {
       alive = false;
