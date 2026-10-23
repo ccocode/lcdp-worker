@@ -486,9 +486,8 @@ export interface AdminAssistantSuggestion {
  */
 export interface AdminPlatformSuggestionAppCount {
   appId: string;
-  taskCount: number;
-  claimCount: number;
-  latestAt?: string | null;
+  stalledOrFailedTasks: number;
+  unverifiedClaims: number;
 }
 
 /** 主动建议处置三态（第 95 步）：去办 / 忽略 / 延后 */

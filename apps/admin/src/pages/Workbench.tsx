@@ -605,7 +605,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       // 平台提醒（第 95 步线 B · B3）：事件逐条带处置；按应用计数只给
       // 数字（应用名借健康表映射，缺失回落 id），无正文、无处置按钮。
       const counts = pSuggestions.appCounts.filter(
-        (c) => c.taskCount > 0 || c.claimCount > 0,
+        (c) => c.stalledOrFailedTasks > 0 || c.unverifiedClaims > 0,
       );
       if (pSuggestions.events.length === 0 && counts.length === 0) return null;
       const appNameOf = (id: string) =>
@@ -629,8 +629,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
               style={{ display: "block", fontSize: 12, marginTop: 4 }}
             >
               {asText(appNameOf(c.appId) ?? c.appId)}：悬置/未过任务{" "}
-              {c.taskCount} 张 · 未核实声称 {c.claimCount} 次
-              {c.latestAt ? ` · 最近 ${fmtTime(c.latestAt)}` : ""}
+              {c.stalledOrFailedTasks} 张 · 未核实声称 {c.unverifiedClaims} 次
             </Typography.Text>
           ))}
         </Card>
