@@ -55,7 +55,7 @@ const STEP_DEFS: { key: WizardStepKey; title: string; desc: string }[] = [
 ];
 
 const CHOICE_LABELS: Record<string, string> = {
-  templates: "样板选择",
+  templates: "单据选择",
   roleNames: "角色名称",
   memberScope: "会员域",
   theme: "主题方向",
@@ -748,7 +748,7 @@ export default function WizardDrawer({
                           type="secondary"
                           style={{ fontSize: 13 }}
                         >
-                          创建后将按已定案的领域与样板生成初始草稿，然后分三步逐步生成。
+                          创建后将按已定案的领域与所选单据生成初始草稿，然后分三步逐步生成。
                         </Typography.Paragraph>
                         <Space direction="vertical" style={{ display: "flex" }} size={10}>
                           <span>
@@ -996,7 +996,7 @@ function DecisionItemCard({
             );
           })}
           {item.options.length === 0 && (
-            <Typography.Text type="secondary">本领域暂无可选样板。</Typography.Text>
+            <Typography.Text type="secondary">本领域单据仓库暂无可选单据。</Typography.Text>
           )}
         </Space>
       )}

@@ -119,7 +119,7 @@ export default function CreateAppModal({
           </Typography.Text>
         </Form.Item>
         {templateGroups.length > 0 && (
-          <Form.Item label="单据样板（勾选的样板将整套加入应用：实体 + 审批流 + 页面 + 权限；未勾选不加入）">
+          <Form.Item label="单据仓库（勾选的单据将整套加入应用：实体 + 审批流 + 页面 + 权限；未勾选不加入）">
             {templateGroups.map((g) => (
               <div key={g.category} style={{ marginBottom: 8 }}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
