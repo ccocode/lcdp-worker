@@ -440,13 +440,71 @@ export interface AdminAssistantPayload {
   data?: Record<string, unknown>;
 }
 
-/** 助手任务卡速览行（第 90 步线 B tasks 端点：本人、应用上下文、进行中） */
+/** 助手任务卡行（第 90 步线 B tasks 端点；第 91 步线 A 工作台补全详情字段，皆可选、缺失即不展示） */
 export interface AdminAssistantTask {
   id: string;
   title: string;
   status: string;
-  checklist: { label: string; status: string }[];
+  checklist: { label: string; status: string; evidence?: string }[];
   updatedAt: string | null;
+  /** 目标一句话（设计 6.3 状态卡字段，二期详情透出） */
+  goal?: string | null;
+  /** 产物（如主题 id@版本、记录 id 集；形状随任务类型，界面防御式呈现） */
+  artifacts?: unknown;
+  /** 已定决定（字符串或字符串数组，界面防御式呈现） */
+  decisions?: unknown;
+  /** 下一步 */
+  nextStep?: string | null;
+  conversationId?: string | null;
+  createdAt?: string | null;
+}
+
+/**
+ * 回合内工具调用行（第 91 步线 B · B2 透出 tool_calls 既有数据）：
+ * 工具名、对象摘要、状态、起止。落点有两处——消息自带或会话详情
+ * 顶层（按 messageId 归属），字段别名由 ChatPane 的适配点归一，
+ * 此处保持宽松形状、全部可选。
+ */
+export interface AdminAssistantToolCall {
+  id?: string;
+  messageId?: string;
+  tool?: string;
+  name?: string;
+  summary?: string;
+  /** 线 B 详情 toolCalls 的对象摘要字段名 */
+  argsSummary?: string;
+  target?: string;
+  status?: string;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  createdAt?: string | null;
+}
+
+/** 助手长期记忆类别（第 91 步线 B · B1：偏好 / 决定 / 长期事项 / 事实） */
+export type AdminAssistantMemoryCategory =
+  | "preference"
+  | "decision"
+  | "longterm"
+  | "fact";
+
+/**
+ * 助手长期记忆条目（第 91 步线 B · B1，platform_assistant_memories）：
+ * scope 为 "platform" 或应用 id；writeMode 为 explicit（用户明示直写）
+ * 或 proposed_confirmed（助手提议经确认）；助手提议未确认的候选以
+ * status="pending"（或 writeMode="proposed"）标识，进待确认区。
+ */
+export interface AdminAssistantMemory {
+  id: string;
+  owner?: string;
+  scope: string;
+  category: string;
+  content: string;
+  sourceConversationId?: string | null;
+  writeMode?: string | null;
+  status?: string | null;
+  expiresAt?: string | null;
+  createdAt: string | null;
+  updatedAt?: string | null;
 }
 
 /** 管理台助手消息（会话详情形状，与员工面同构） */
@@ -459,6 +517,8 @@ export interface AdminAssistantMessage {
   pendingAction?: AdminAssistantPendingAction | null;
   /** 结构化结果载荷（协议 v2，可空；旧消息与普通回复无此字段） */
   payload?: AdminAssistantPayload | null;
+  /** 本回合工具调用（第 91 步线 B · B2 过程可见；也可能挂在会话详情顶层） */
+  toolCalls?: AdminAssistantToolCall[] | null;
   /** generating / done / failed */
   status: string;
   createdAt: string | null;
@@ -1579,14 +1639,17 @@ export const api = {
     ): Promise<{
       conversation: AdminAssistantConversation;
       messages: AdminAssistantMessage[];
+      toolCalls: AdminAssistantToolCall[];
     }> {
       const res = await apiFetch<{
         conversation: AdminAssistantConversation;
         messages: AdminAssistantMessage[];
+        toolCalls?: AdminAssistantToolCall[];
       }>(`/admin/assistant/conversations/${encodeURIComponent(cid)}`);
       return {
         conversation: res.conversation,
         messages: Array.isArray(res.messages) ? res.messages : [],
+        toolCalls: Array.isArray(res.toolCalls) ? res.toolCalls : [],
       };
     },
     async confirm(
@@ -1597,6 +1660,16 @@ export const api = {
         `/admin/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
         { method: "POST", body: JSON.stringify({ decision }) },
       );
+    },
+    /**
+     * 中止本会话进行中的回合（第 91 步线 B · B2）：服务端置生成中
+     * 消息 failed 并停后续工具步。端点未就绪时调用方静默降级。
+     */
+    async cancel(cid: string): Promise<{ ok: boolean }> {
+      return apiFetch(`/admin/assistant/conversations/${encodeURIComponent(cid)}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
     },
     /** 应用组：同一组四件，路径挂在当前应用下（运营助手） */
     app: {
@@ -1627,16 +1700,19 @@ export const api = {
       ): Promise<{
         conversation: AdminAssistantConversation;
         messages: AdminAssistantMessage[];
+        toolCalls: AdminAssistantToolCall[];
       }> {
         const res = await apiFetch<{
           conversation: AdminAssistantConversation;
           messages: AdminAssistantMessage[];
+          toolCalls?: AdminAssistantToolCall[];
         }>(
           `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations/${encodeURIComponent(cid)}`,
         );
         return {
           conversation: res.conversation,
           messages: Array.isArray(res.messages) ? res.messages : [],
+          toolCalls: Array.isArray(res.toolCalls) ? res.toolCalls : [],
         };
       },
       async confirm(
@@ -1649,12 +1725,92 @@ export const api = {
           { method: "POST", body: JSON.stringify({ decision }) },
         );
       },
-      /** 进行中任务卡速览（第 90 步线 A5；端点由线 B 新建，失败由调用方静默） */
-      async tasks(appId: string): Promise<AdminAssistantTask[]> {
+      /** 中止本应用会话进行中的回合（第 91 步线 B · B2，口径同平台组 cancel） */
+      async cancel(appId: string, cid: string): Promise<{ ok: boolean }> {
+        return apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations/${encodeURIComponent(cid)}/cancel`,
+          { method: "POST", body: JSON.stringify({}) },
+        );
+      },
+      /**
+       * 任务卡列表（第 90 步线 A5 速览 + 第 91 步工作台）：缺省只取
+       * 进行中（status=active，与一期口径一致）；传 status 取对应
+       * 状态；status 传 "all" 或空串时不带该参数（约定为全部）。
+       * 端点由线 B 提供，失败由调用方静默。
+       */
+      async tasks(
+        appId: string,
+        opts?: { status?: string },
+      ): Promise<AdminAssistantTask[]> {
+        const status = opts?.status;
+        const qs =
+          status === undefined || status === "active"
+            ? "?status=active"
+            : status === "all" || status === ""
+              ? ""
+              : `?status=${encodeURIComponent(status)}`;
         const res = await apiFetch<{ tasks: AdminAssistantTask[] }>(
-          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks?status=active`,
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks${qs}`,
         );
         return Array.isArray(res.tasks) ? res.tasks : [];
+      },
+    },
+    /**
+     * 助手长期记忆（第 91 步线 B · B1，本人作用域）：记忆归用户所有、
+     * 以 scope 区分平台级与应用级，故走平台组路径一组端点，应用内
+     * 页面以 scope 参数取本应用条目。待确认候选与正式条目同表，
+     * 以 status=pending 区分（线 A 的 isPendingMemory 归一）。
+     * 端点未就绪时各调用方静默降级（管理区呈空态）。
+     */
+    memories: {
+      async list(opts?: {
+        scope?: string;
+        status?: string;
+      }): Promise<AdminAssistantMemory[]> {
+        const params = new URLSearchParams();
+        if (opts?.scope) params.set("scope", opts.scope);
+        if (opts?.status) params.set("status", opts.status);
+        const qs = params.toString();
+        const res = await apiFetch<{ memories: AdminAssistantMemory[] }>(
+          `/admin/assistant/memories${qs ? `?${qs}` : ""}`,
+        );
+        return Array.isArray(res.memories) ? res.memories : [];
+      },
+      /** 新增（用户明示直写，writeMode 由服务端定为 explicit） */
+      async create(body: {
+        scope: string;
+        category: string;
+        content: string;
+        expiresAt?: string | null;
+      }): Promise<AdminAssistantMemory | null> {
+        const res = await apiFetch<{ memory?: AdminAssistantMemory }>(
+          "/admin/assistant/memories",
+          { method: "POST", body: JSON.stringify(body) },
+        );
+        return res?.memory ?? null;
+      },
+      async update(
+        id: string,
+        body: { category?: string; content?: string; expiresAt?: string | null },
+      ): Promise<AdminAssistantMemory | null> {
+        const res = await apiFetch<{ memory?: AdminAssistantMemory }>(
+          `/admin/assistant/memories/${encodeURIComponent(id)}`,
+          { method: "PATCH", body: JSON.stringify(body) },
+        );
+        return res?.memory ?? null;
+      },
+      async remove(id: string): Promise<void> {
+        await apiFetch(`/admin/assistant/memories/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+        });
+      },
+      /** 确认助手提议的候选：pending → 正式条目（writeMode 转 proposed_confirmed） */
+      async confirm(id: string): Promise<AdminAssistantMemory | null> {
+        const res = await apiFetch<{ memory?: AdminAssistantMemory }>(
+          `/admin/assistant/memories/${encodeURIComponent(id)}/confirm`,
+          { method: "POST", body: JSON.stringify({}) },
+        );
+        return res?.memory ?? null;
       },
     },
   },

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -25,6 +25,8 @@ import {
   type AgentOverrideRow,
 } from "../api";
 import { fmtTime } from "../helpers";
+import AssistantWorkbench from "../components/assistant/AssistantWorkbench";
+import AssistantMemoryPanel from "../components/assistant/AssistantMemoryPanel";
 
 /**
  * 应用内「智能服务」页（第 83 步片二第 3 点）：本应用三位助手的
@@ -35,6 +37,8 @@ import { fmtTime } from "../helpers";
  * 管理台既有分档：领域角色身份只读，管理员与应用管理员可改。
  * 下半部分为运营助手会话记录（只读；监督视图——本应用管理员档位
  * 看本应用全部运营会话，领域角色档位只看本人会话）。
+ * 第 91 步线 A 起页首另挂两区（本人面，不随档位只读）：助手全页
+ * 工作台（A1）与助手记忆管理区（A3），组件在 components/assistant/。
  */
 
 const FACES: { key: AgentFaceKey; label: string; hint: string }[] = [
@@ -71,6 +75,9 @@ export default function AppAgentService({ appId }: { appId: string }) {
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [editingFace, setEditingFace] = useState<AgentFaceKey | null>(null);
+  /** 第 91 步线 A：工作台/记忆区展示用的应用名（随站点属性一并读） */
+  const [appName, setAppName] = useState<string | null>(null);
+  const memorySectionRef = useRef<HTMLDivElement | null>(null);
 
   const readOnly = tier === "t2";
 
@@ -101,6 +108,7 @@ export default function AppAgentService({ appId }: { appId: string }) {
       ]);
       applyRows(ov);
       setTier(site.accessTier);
+      setAppName(site.app?.name ?? null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "加载失败");
     } finally {
@@ -315,6 +323,27 @@ export default function AppAgentService({ appId }: { appId: string }) {
           message="当前身份可查看本页，不可调整"
         />
       )}
+      {/* 第 91 步线 A · A1：助手全页工作台（本页内三栏，不新增一级菜单） */}
+      <Card title="助手工作台" style={{ marginBottom: 16 }}>
+        <AssistantWorkbench
+          appId={appId}
+          appName={appName}
+          onManageMemories={() =>
+            memorySectionRef.current?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            })
+          }
+        />
+      </Card>
+
+      {/* 第 91 步线 A · A3：助手记忆（本人作用域，可查改删 + 待确认区） */}
+      <div ref={memorySectionRef} style={{ scrollMarginTop: 16 }}>
+        <Card title="助手记忆" style={{ marginBottom: 16 }}>
+          <AssistantMemoryPanel appId={appId} appName={appName} />
+        </Card>
+      </div>
+
       <Card title="智能助手">
         <Table
           rowKey="key"

@@ -71,6 +71,7 @@ const KEY_LABELS: Record<string, string> = {
   "pay.paypalClientSecret": "PayPal Client Secret",
   "pay.paypalMode": "PayPal 模式（sandbox / live）",
   "sso.enabledScopes": "启用 SSO 的会员域（逗号分隔会员域标识，留空 = 全关）",
+  "assistant.memoryEnabled": "助手长期记忆（true / false）",
 };
 
 const GROUPS: {
@@ -85,6 +86,7 @@ const GROUPS: {
   { title: "邮件服务", prefix: "mail.", channel: "mail" },
   { title: "支付渠道", prefix: "pay." },
   { title: "会员 SSO", prefix: "sso." },
+  { title: "智能助手", prefix: "assistant." },
   { title: "LLM 全局", prefix: "llm." },
 ];
 
