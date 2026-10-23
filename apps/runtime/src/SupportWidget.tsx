@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Badge,
   Button,
   Card,
   Drawer,
@@ -14,21 +15,34 @@ import {
 } from "antd";
 import type {
   SupportConfig,
+  SupportMemberMemory,
   SupportMessage,
   SupportSessionDetail,
 } from "./api.js";
-import { api } from "./api.js";
+import { api, loadMemberSession } from "./api.js";
 
 /**
  * 访客客服咨询窗（M12）：外壳级悬浮按钮 + 对话面板，交互模式对齐 AssistantPanel
  * （发送立即返回、助手消息经 1.2s 轮询会话详情取回、generating 占位）。
  * 与登录态助手的区别：匿名能力凭证 = sessionId + X-Visitor-Key（创建会话时一次性下发），
  * 访客身份与会话恢复信息存 localStorage `lcdp.support.visitor`，刷新/断线后恢复同一会话。
+ * 第 94 步会员面记忆：建会话时若本机有该应用的会员会话，令牌只在建会话请求里
+ * 带一次（绝不落任何本地存储），服务端绑定成功后会话详情带 memberBound，咨询窗
+ * 才在头部显示「记忆」入口并在 Drawer 内切换出记忆视图（待确认确认/忽略、已记住删除）；
+ * memberBound 为假/缺省时不渲染记忆 UI、不调记忆端点，界面与此前逐字一致。
  * config.enabled=false（应用未发布客服智能体）时不渲染任何东西；
  * config.turnstileSiteKey 非空时渲染 Cloudflare Turnstile 官方 widget，建会话时取 token 传入。
  */
 
 const VISITOR_STORE_KEY = "lcdp.support.visitor";
+
+/** 会员记忆四分类的中文标签（与员工面 L4 同分类口径） */
+const MEMORY_CATEGORY_TEXT: Record<string, string> = {
+  preference: "偏好",
+  decision: "决定",
+  longterm: "长期",
+  fact: "事实",
+};
 
 interface VisitorStore {
   visitorId: string;
@@ -178,6 +192,12 @@ export default function SupportWidget({
   const [rateValue, setRateValue] = useState(5);
   const [ratedScore, setRatedScore] = useState<number | null>(null);
   const [rateBusy, setRateBusy] = useState(false);
+  /** 会员记忆（第 94 步）：仅 memberBound 会话才有数据；视图在 Drawer 内与聊天切换 */
+  const [view, setView] = useState<"chat" | "memory">("chat");
+  const [memories, setMemories] = useState<SupportMemberMemory[]>([]);
+  const [memLoading, setMemLoading] = useState(false);
+  const [memError, setMemError] = useState<string | null>(null);
+  const [memoryBusyId, setMemoryBusyId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** 轮询代次：新发送/新会话/卸载时自增，旧轮询自停 */
   const pollGenRef = useRef(0);
@@ -187,6 +207,10 @@ export default function SupportWidget({
   const sessionStatus = detail?.session.status;
   const ticketId = detail?.session.ticketId ?? null;
   const title = config?.title || fallbackTitle || "在线咨询";
+  /** 会员绑定以会话详情为唯一事实源；未绑时记忆状态恒为空、不渲染入口 */
+  const memberBound = detail?.session.memberBound === true;
+  const pendingMemories = memories.filter((m) => m.status === "pending");
+  const activeMemories = memories.filter((m) => m.status !== "pending");
 
   // 挂载时拉咨询窗配置：enabled=false 不渲染（失败同样不渲染，不打扰访客）
   useEffect(() => {
@@ -228,6 +252,9 @@ export default function SupportWidget({
         setDetail(null);
         setMessages([]);
         setRatedScore(null);
+        setView("chat");
+        setMemories([]);
+        setMemError(null);
       }
       return null;
     }
@@ -299,10 +326,14 @@ export default function SupportWidget({
     setStartBusy(true);
     setStartError(null);
     try {
+      // 本机已登录会员时把会员令牌带入建会话请求（只用这一次，不落任何存储）；
+      // 服务端校验不过会静默降级为匿名会话，不挡咨询。
+      const memberSession = loadMemberSession(window.location.host, appId);
       const res = await api.support.createSession(appId, {
         turnstileToken: tsToken ?? undefined,
         visitorName: visitorName.trim() || undefined,
         contact: contact.trim() || undefined,
+        memberToken: memberSession?.token || undefined,
       });
       const next: VisitorStore = {
         visitorId: store.visitorId,
@@ -314,6 +345,9 @@ export default function SupportWidget({
       setDetail(null);
       setMessages([]);
       setRatedScore(null);
+      setView("chat");
+      setMemories([]);
+      setMemError(null);
       await refreshDetail(res.sessionId, res.visitorKey);
     } catch (err) {
       const status = (err as { status?: number })?.status;
@@ -412,6 +446,61 @@ export default function SupportWidget({
     }
   };
 
+  /* ---------- 会员记忆（第 94 步）：仅 memberBound 会话调用，归属由服务端按会话行取 ---------- */
+
+  const loadMemories = async (sid: string, key: string) => {
+    setMemLoading(true);
+    try {
+      const res = await api.support.memories(appId, sid, key);
+      setMemories(res.memories);
+      setMemError(null);
+    } catch {
+      setMemError("记忆加载失败，请稍后重试");
+    } finally {
+      setMemLoading(false);
+    }
+  };
+
+  const openMemoryView = () => {
+    setView("memory");
+    if (sessionId && visitorKey) void loadMemories(sessionId, visitorKey);
+  };
+
+  const actOnMemory = async (
+    m: SupportMemberMemory,
+    action: "confirm" | "ignore" | "delete",
+  ) => {
+    if (!sessionId || !visitorKey || memoryBusyId) return;
+    setMemoryBusyId(m.id);
+    try {
+      if (action === "confirm") {
+        await api.support.confirmMemory(appId, sessionId, visitorKey, m.id);
+        antdMessage.success("已确认记住");
+      } else if (action === "ignore") {
+        await api.support.ignoreMemory(appId, sessionId, visitorKey, m.id);
+        antdMessage.success("已忽略这条待确认记忆");
+      } else {
+        await api.support.deleteMemory(appId, sessionId, visitorKey, m.id);
+        antdMessage.success("已删除这条记忆");
+      }
+      await loadMemories(sessionId, visitorKey);
+    } catch {
+      antdMessage.error("操作失败，请稍后重试");
+    } finally {
+      setMemoryBusyId(null);
+    }
+  };
+
+  // 待确认条数角标刷新：绑定态确立、或新消息到达后拉一次列表（不做实时推送）；
+  // memberBound 为假时绝不调用记忆端点。
+  useEffect(() => {
+    if (memberBound && sessionId && visitorKey) {
+      void loadMemories(sessionId, visitorKey);
+    }
+    // loadMemories 仅依赖入参，身份稳定
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberBound, messages.length, sessionId, visitorKey]);
+
   const startNewSession = () => {
     pollGenRef.current += 1;
     const next: VisitorStore = { visitorId: store.visitorId };
@@ -422,6 +511,9 @@ export default function SupportWidget({
     setTurnError(null);
     setSending(false);
     setRatedScore(null);
+    setView("chat");
+    setMemories([]);
+    setMemError(null);
     setTsToken(null);
     setTsNonce((n) => n + 1);
     setStartError(null);
@@ -436,6 +528,62 @@ export default function SupportWidget({
     handoffDone &&
     !ratedScore &&
     !detail?.session.rating;
+
+  const renderMemoryRow = (m: SupportMemberMemory, pending: boolean) => (
+    <Card key={m.id} size="small">
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <Typography.Text style={{ fontSize: 14 }}>{m.content}</Typography.Text>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <Tag style={{ marginInlineEnd: 0 }}>
+            {MEMORY_CATEGORY_TEXT[m.category ?? ""] ?? "其他"}
+          </Tag>
+          {pending ? <Tag color="orange">待确认</Tag> : null}
+          {m.createdAt ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {m.createdAt.slice(0, 10)}
+            </Typography.Text>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {pending ? (
+            <>
+              <Button
+                type="primary"
+                size="small"
+                loading={memoryBusyId === m.id}
+                onClick={() => void actOnMemory(m, "confirm")}
+              >
+                确认记住
+              </Button>
+              <Button
+                size="small"
+                disabled={memoryBusyId === m.id}
+                onClick={() => void actOnMemory(m, "ignore")}
+              >
+                忽略
+              </Button>
+            </>
+          ) : (
+            <Button
+              danger
+              size="small"
+              loading={memoryBusyId === m.id}
+              onClick={() => void actOnMemory(m, "delete")}
+            >
+              删除
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
 
   const renderMessage = (msg: SupportMessage) => {
     const isVisitor = msg.role === "visitor" || msg.role === "user";
@@ -562,9 +710,26 @@ export default function SupportWidget({
         onClose={() => setOpen(false)}
         extra={
           inSession ? (
-            <Button size="small" onClick={startNewSession}>
-              新会话
-            </Button>
+            memberBound ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <Badge
+                  count={pendingMemories.length}
+                  size="small"
+                  offset={[-2, 2]}
+                >
+                  <Button size="small" onClick={openMemoryView}>
+                    记忆
+                  </Button>
+                </Badge>
+                <Button size="small" onClick={startNewSession}>
+                  新会话
+                </Button>
+              </div>
+            ) : (
+              <Button size="small" onClick={startNewSession}>
+                新会话
+              </Button>
+            )
           ) : undefined
         }
         styles={{
@@ -616,6 +781,80 @@ export default function SupportWidget({
             >
               开始咨询
             </Button>
+          </div>
+        ) : view === "memory" ? (
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: 16,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Button size="small" onClick={() => setView("chat")}>
+                ← 返回聊天
+              </Button>
+              <Typography.Text strong style={{ fontSize: 15 }}>
+                我的记忆
+              </Typography.Text>
+            </div>
+            <Typography.Paragraph
+              type="secondary"
+              style={{ marginBottom: 0, fontSize: 13 }}
+            >
+              这里是客服记住的、关于您的长期信息，后续咨询时会作为参考。待确认的条目经您确认后才生效；已记住的条目可随时删除。
+            </Typography.Paragraph>
+            {memError ? (
+              <Typography.Text type="danger" style={{ fontSize: 13 }}>
+                {memError}
+              </Typography.Text>
+            ) : null}
+            {memLoading && memories.length === 0 ? (
+              <div style={{ textAlign: "center", marginTop: 48 }}>
+                <Spin />
+              </div>
+            ) : memories.length === 0 ? (
+              memError ? null : (
+                <Empty
+                  description="还没有记住任何内容。在对话里说「请记住……」，客服就会把您的偏好记下来。"
+                  style={{ marginTop: 32 }}
+                />
+              )
+            ) : (
+              <>
+                {pendingMemories.length > 0 ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    <Typography.Text strong>
+                      待确认（{pendingMemories.length}）
+                    </Typography.Text>
+                    {pendingMemories.map((m) => renderMemoryRow(m, true))}
+                  </div>
+                ) : null}
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 8 }}
+                >
+                  <Typography.Text strong>
+                    已记住（{activeMemories.length}）
+                  </Typography.Text>
+                  {activeMemories.length === 0 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                      暂无已生效的记忆。
+                    </Typography.Text>
+                  ) : (
+                    activeMemories.map((m) => renderMemoryRow(m, false))
+                  )}
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <>

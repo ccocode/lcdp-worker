@@ -326,6 +326,32 @@ export interface SupportSessionInfo {
   visitorName?: string | null;
   updatedAt?: string;
   messageCount?: number;
+  /**
+   * 会话是否已绑定会员身份（第 94 步）：建会话时带入的会员令牌经服务端
+   * 校验通过才为真；缺省/假时咨询窗不渲染任何记忆 UI、不调记忆端点。
+   */
+  memberBound?: boolean;
+}
+
+/** 会员长期记忆行（第 94 步，咨询窗记忆视图的前端视图；归属由会话行决定） */
+export interface SupportMemberMemory {
+  id: string;
+  /** preference 偏好 / decision 决定 / longterm 长期 / fact 事实 */
+  category?: string;
+  content: string;
+  /** active 已生效 / pending 待会员确认 */
+  status?: string;
+  /** explicit 明示直写 / inferred 模型推断待确认 */
+  writeMode?: string;
+  sourceAppId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** 会话下会员记忆列表响应 */
+export interface SupportMemoriesResult {
+  memberBound: boolean;
+  memories: SupportMemberMemory[];
 }
 
 export interface SupportSessionDetail {
@@ -1325,6 +1351,41 @@ function normalizeSupportSessionInfo(raw: RawRecord): SupportSessionInfo {
           ? raw.updated_at
           : undefined,
     messageCount: numOrNull(raw.messageCount ?? raw.message_count) ?? undefined,
+    memberBound:
+      raw.memberBound === true || raw.member_bound === true ? true : undefined,
+  };
+}
+
+function normalizeSupportMemberMemory(raw: RawRecord): SupportMemberMemory {
+  return {
+    id: typeof raw.id === "string" ? raw.id : "",
+    category: typeof raw.category === "string" ? raw.category : undefined,
+    content: typeof raw.content === "string" ? raw.content : "",
+    status: typeof raw.status === "string" ? raw.status : undefined,
+    writeMode:
+      typeof raw.writeMode === "string"
+        ? raw.writeMode
+        : typeof raw.write_mode === "string"
+          ? raw.write_mode
+          : undefined,
+    sourceAppId:
+      typeof raw.sourceAppId === "string"
+        ? raw.sourceAppId
+        : typeof raw.source_app_id === "string"
+          ? raw.source_app_id
+          : undefined,
+    createdAt:
+      typeof raw.createdAt === "string"
+        ? raw.createdAt
+        : typeof raw.created_at === "string"
+          ? raw.created_at
+          : undefined,
+    updatedAt:
+      typeof raw.updatedAt === "string"
+        ? raw.updatedAt
+        : typeof raw.updated_at === "string"
+          ? raw.updated_at
+          : undefined,
   };
 }
 
@@ -1711,10 +1772,19 @@ export const api = {
         ),
       };
     },
-    /** 创建访客会话：Turnstile 启用时须带 turnstileToken；响应含一次性 visitorKey */
+    /**
+     * 创建访客会话：Turnstile 启用时须带 turnstileToken；响应含一次性 visitorKey。
+     * memberToken 可选（第 94 步）：本机已登录会员时由咨询窗带入，服务端校验
+     * 通过才绑定会员身份，验不过静默降级匿名——令牌只在本请求用一次、不落存储。
+     */
     async createSession(
       appId: string,
-      body: { turnstileToken?: string; visitorName?: string; contact?: string },
+      body: {
+        turnstileToken?: string;
+        visitorName?: string;
+        contact?: string;
+        memberToken?: string;
+      },
     ): Promise<{ sessionId: string; visitorKey: string }> {
       const raw = await supportFetch<RawRecord>(
         `/apps/${encodeURIComponent(appId)}/support/sessions`,
@@ -1797,6 +1867,69 @@ export const api = {
         visitorKey,
         { method: "POST", body: JSON.stringify({ score }) },
       );
+    },
+    /**
+     * 会员记忆列表（第 94 步）：仅已绑定会员的会话可调（未绑服务端回 403），
+     * 归属由服务端按会话行 member_id 取，客户端不传任何会员标识。
+     */
+    async memories(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+    ): Promise<SupportMemoriesResult> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/memories`,
+        visitorKey,
+      );
+      return {
+        memberBound: raw.memberBound === true || raw.member_bound === true,
+        memories: Array.isArray(raw.memories)
+          ? (raw.memories as RawRecord[]).map(normalizeSupportMemberMemory)
+          : [],
+      };
+    },
+    /** 确认一条待确认记忆（确认后才生效注入后续对话） */
+    async confirmMemory(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+      memoryId: string,
+    ): Promise<{ memory: SupportMemberMemory | null }> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/memories/${encodeURIComponent(memoryId)}/confirm`,
+        visitorKey,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      const m = raw.memory as RawRecord | undefined;
+      return { memory: m ? normalizeSupportMemberMemory(m) : null };
+    },
+    /** 忽略一条待确认记忆（忽略即删，不生效） */
+    async ignoreMemory(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+      memoryId: string,
+    ): Promise<{ ok: boolean }> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/memories/${encodeURIComponent(memoryId)}/ignore`,
+        visitorKey,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      return { ok: raw.ok !== false };
+    },
+    /** 删除一条已记住的记忆 */
+    async deleteMemory(
+      appId: string,
+      sessionId: string,
+      visitorKey: string,
+      memoryId: string,
+    ): Promise<{ ok: boolean }> {
+      const raw = await supportFetch<RawRecord>(
+        `/apps/${encodeURIComponent(appId)}/support/sessions/${encodeURIComponent(sessionId)}/memories/${encodeURIComponent(memoryId)}`,
+        visitorKey,
+        { method: "DELETE" },
+      );
+      return { ok: raw.ok !== false };
     },
     /** 坐席组：访客会话列表（可按 status 过滤） */
     async sessions(
