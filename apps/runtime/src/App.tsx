@@ -239,37 +239,49 @@ export default function App() {
 
   return (
     <ConfigProvider locale={zhCN} theme={desktopTheme}>
-      {!user ? (
-        <AnonGate
-          route={route}
-          device={device}
-          onLoggedIn={(u) => {
-            setUser(u);
-            // 登录后保留当前路径：站点引导按当前域名 + 首段路径解析作用域
-            // （路径作用域应用如 www/<应用ID> 登录后须仍落在该应用内；
-            // 预览深链同理保留 /app/<id> 前缀）
-          }}
-        />
-      ) : previewAppId ? (
-        <AppView
-          apps={[{ id: previewAppId, name: "", scenario: null }]}
-          inPath={previewInPath}
-          params={route.params}
-          user={user}
-          onLogout={logout}
-          device={device}
-          preview
-          entryName={null}
-        />
-      ) : (
-        <EntryView
-          inPath={route.path}
-          params={route.params}
-          user={user}
-          onLogout={logout}
-          device={device}
-        />
-      )}
+      {/* 站点主题兜底（第 93 步线 B2）：边缘注入的 :root 变量 --lcdp-background /
+          --lcdp-text 在此落到 SPA 根——非 antd 区域（加载屏、空白态）也垫站点
+          底色与文字色、不跳色。无注入时回退值与现行为等效（透明=不涂、
+          inherit=原继承链），零回归。 */}
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "var(--lcdp-background, transparent)",
+          color: "var(--lcdp-text, inherit)",
+        }}
+      >
+        {!user ? (
+          <AnonGate
+            route={route}
+            device={device}
+            onLoggedIn={(u) => {
+              setUser(u);
+              // 登录后保留当前路径：站点引导按当前域名 + 首段路径解析作用域
+              // （路径作用域应用如 www/<应用ID> 登录后须仍落在该应用内；
+              // 预览深链同理保留 /app/<id> 前缀）
+            }}
+          />
+        ) : previewAppId ? (
+          <AppView
+            apps={[{ id: previewAppId, name: "", scenario: null }]}
+            inPath={previewInPath}
+            params={route.params}
+            user={user}
+            onLogout={logout}
+            device={device}
+            preview
+            entryName={null}
+          />
+        ) : (
+          <EntryView
+            inPath={route.path}
+            params={route.params}
+            user={user}
+            onLogout={logout}
+            device={device}
+          />
+        )}
+      </div>
     </ConfigProvider>
   );
 }
@@ -3461,6 +3473,68 @@ function resolveCurrentPage(
   return pages.find((p) => p.route === inPath);
 }
 
+/**
+ * 站点主题注入（第 93 步线 B）：边缘分发在 SPA 壳 <head> 后注入
+ * window.__LCDP_THEME__ = { themeId, version, tokens }，tokens 为主题包
+ * theme.json 声明的站点品牌令牌（词表见执行单定案语义 1，全部可选）。
+ * 这是用户侧站点品牌层，只经此通道消费——不写回 @lcdp/ui 令牌源
+ * （第 73 步纪律：ui 仍是 B 端唯一事实源）。
+ */
+interface SiteThemeTokens {
+  primary?: string;
+  accent?: string;
+  background?: string;
+  surface?: string;
+  text?: string;
+  textSecondary?: string;
+  border?: string;
+  radius?: number;
+  fontFamily?: string;
+}
+
+declare global {
+  interface Window {
+    __LCDP_THEME__?: unknown;
+  }
+}
+
+let siteThemeCache: SiteThemeTokens | null | undefined;
+
+/** 宽松解析注入的站点令牌：形状非法/缺失视为无（逐键按类型收取，脏键丢弃） */
+function siteThemeTokensOf(): SiteThemeTokens | null {
+  if (siteThemeCache !== undefined) return siteThemeCache;
+  let parsed: SiteThemeTokens | null = null;
+  if (typeof window !== "undefined") {
+    const raw = window.__LCDP_THEME__;
+    if (raw !== null && typeof raw === "object") {
+      const rawTokens = (raw as { tokens?: unknown }).tokens;
+      if (rawTokens !== null && typeof rawTokens === "object") {
+        const src = rawTokens as Record<string, unknown>;
+        const out: SiteThemeTokens = {};
+        const strKeys = [
+          "primary",
+          "accent",
+          "background",
+          "surface",
+          "text",
+          "textSecondary",
+          "border",
+          "fontFamily",
+        ] as const;
+        for (const k of strKeys) {
+          if (typeof src[k] === "string" && src[k] !== "") out[k] = src[k];
+        }
+        if (typeof src.radius === "number" && Number.isFinite(src.radius)) {
+          out.radius = src.radius;
+        }
+        if (Object.keys(out).length > 0) parsed = out;
+      }
+    }
+  }
+  siteThemeCache = parsed;
+  return parsed;
+}
+
 /** 主题令牌：应用配置里的 colorPrimary / borderRadius 注入 antd 主题 */
 function themeTokenOf(appConfig: {
   theme: Record<string, unknown>;
@@ -3468,6 +3542,11 @@ function themeTokenOf(appConfig: {
   colorPrimary?: string;
   borderRadius?: number;
   colorBorder?: string;
+  colorBgLayout?: string;
+  colorBgContainer?: string;
+  colorText?: string;
+  colorTextSecondary?: string;
+  fontFamily?: string;
 } {
   const themeCfg = appConfig?.theme ?? {};
   // B 端视觉基线默认值（第 49 步立、现由 @lcdp/ui 令牌源统一供值，第 73 步）：
@@ -3476,6 +3555,11 @@ function themeTokenOf(appConfig: {
     colorPrimary?: string;
     borderRadius?: number;
     colorBorder?: string;
+    colorBgLayout?: string;
+    colorBgContainer?: string;
+    colorText?: string;
+    colorTextSecondary?: string;
+    fontFamily?: string;
   } = {
     colorPrimary: tokens.colorPrimary,
     borderRadius: tokens.borderRadius,
@@ -3486,6 +3570,21 @@ function themeTokenOf(appConfig: {
   }
   if (typeof themeCfg.borderRadius === "number") {
     token.borderRadius = themeCfg.borderRadius;
+  }
+  // 第三层（第 93 步）：站点主题令牌优先于 appConfig.theme——功能页须与
+  // 访客刚离开的主题页同品牌，消除桥接跳转的视觉断裂。accent 无 antd
+  // 对应令牌，只经 :root 的 --lcdp-accent 变量供 functional.css 等消费，
+  // 不在此映射。
+  const site = siteThemeTokensOf();
+  if (site) {
+    if (site.primary) token.colorPrimary = site.primary;
+    if (site.background) token.colorBgLayout = site.background;
+    if (site.surface) token.colorBgContainer = site.surface;
+    if (site.text) token.colorText = site.text;
+    if (site.textSecondary) token.colorTextSecondary = site.textSecondary;
+    if (site.border) token.colorBorder = site.border;
+    if (site.radius !== undefined) token.borderRadius = site.radius;
+    if (site.fontFamily) token.fontFamily = site.fontFamily;
   }
   return token;
 }
