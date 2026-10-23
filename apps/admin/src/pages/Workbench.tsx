@@ -22,10 +22,14 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
+  type AdminAssistantSuggestion,
+  type AdminPlatformSuggestionAppCount,
   type FlowTaskView,
   type Row as DataRow,
   type SubmissionItem,
+  type SuggestionDispositionKind,
 } from "../api";
+import SuggestionList from "../components/assistant/SuggestionList";
 import type { MetricDecl, PageContext, PageKey } from "../registry";
 import { templateForDomain } from "../templates";
 import { asText, fmtTime } from "../helpers";
@@ -38,7 +42,8 @@ import { asText, fmtTime } from "../helpers";
  *   也不设页内标题（页面定位由外壳头部承担）。顺序 = 平台统计卡（一排
  *   六张、渐变色，色值在 @lcdp/ui 的 statCardGradients）→ 近 12 小时
  *   Token 用量柱状图（groupBy=hour，空小时补零）→ 应用健康与平台动态
- *   并排（限高、限行数；平台动态只取无应用归属的平台级事件）。
+ *   并排（限高、限行数；平台动态只取无应用归属的平台级事件）→ 平台
+ *   提醒（第 95 步：平台级事件逐条 + 按应用计数、只给数字，为空不渲染）。
  * - 运营者（有当前应用）：当前应用的对象区块（待办/指标/快捷入口/动态，
  *   APP_LAYOUT）。领域关键指标由领域模版声明（templates），本页只消费。
  * 计数一律取服务端 total——唯一例外是待审提交：submissions 端点无分页与
@@ -52,6 +57,7 @@ type BlockKey =
   | "usage-chart"
   | "app-health"
   | "recent-audit"
+  | "platform-suggestions"
   | "task-metrics"
   | "quick-links"
   | "app-activity";
@@ -67,7 +73,7 @@ interface FeedItem {
 }
 
 export default function Workbench({ ctx }: { ctx: PageContext }) {
-  const { isAdmin, appId, appMeta, user, go, visibleKeys } = ctx;
+  const { isAdmin, appId, appMeta, user, go, switchApp, visibleKeys } = ctx;
   const appForm = appId !== null;
 
   // ---------- 平台形态数据 ----------
@@ -93,6 +99,15 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     { app: DataRow; pending: number | null }[] | null
   >(null);
   const [auditFeed, setAuditFeed] = useState<DataRow[] | null>(null);
+  // 平台提醒（第 95 步线 B · B3）：平台级事件候选 + 按应用计数；
+  // 加载失败静默呈空（整区不渲染），不影响工作台其余区块。
+  const [pSuggestions, setPSuggestions] = useState<{
+    events: AdminAssistantSuggestion[];
+    appCounts: AdminPlatformSuggestionAppCount[];
+  }>({ events: [], appCounts: [] });
+  const [busySuggestionFp, setBusySuggestionFp] = useState<string | null>(
+    null,
+  );
 
   // 静默 catch 清零（第 73 步片二）：统计类加载失败以同 key toast 呈现，
   // 同区块多路失败只弹一条，不刷屏。
@@ -169,6 +184,20 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       // 口径：服务端 pageOf 固定每页 50 条、未采信 pageSize，行数上限在客户端截断
       .then((r) => alive && setAuditFeed(r.rows.slice(0, 10)))
       .catch(statFail("wb-audit", "平台动态"));
+    // 平台提醒（第 95 步线 B）：独立静默读，失败即空、不弹 toast
+    void api.assistant.suggestions
+      .getPlatformSuggestions()
+      .then((r) => {
+        if (alive) {
+          setPSuggestions({
+            events: [...r.events].sort((a, b) => b.severity - a.severity),
+            appCounts: r.appCounts,
+          });
+        }
+      })
+      .catch(() => {
+        if (alive) setPSuggestions({ events: [], appCounts: [] });
+      });
     return () => {
       alive = false;
     };
@@ -293,6 +322,50 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
       return true;
     });
   }, [template, visibleKeys]);
+
+  // ---------- 平台提醒处置（第 95 步线 B · B3） ----------
+  /** 处置回写（平台作用域）：成功才移除该条；失败留条并提示 */
+  const applyPlatformDisposition = async (
+    item: AdminAssistantSuggestion,
+    disposition: SuggestionDispositionKind,
+  ): Promise<void> => {
+    setBusySuggestionFp(item.fingerprint);
+    try {
+      await api.assistant.suggestions.postSuggestionDisposition(
+        { platform: true },
+        item.fingerprint,
+        { disposition },
+      );
+      setPSuggestions((s) => ({
+        ...s,
+        events: s.events.filter((e) => e.fingerprint !== item.fingerprint),
+      }));
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setBusySuggestionFp(null);
+    }
+  };
+
+  /**
+   * 平台事件「去办」：记 acted 后深链——A2 熔断与配额页；A 类带应用
+   * 归属的切到对应应用对应页（A1 审计日志 / A3 客服工单 / A4 应用
+   * 设置），切应用后外壳地址对齐 effect 会把 ?app= 修正到新应用。
+   */
+  const goPlatformSuggestion = async (item: AdminAssistantSuggestion) => {
+    await applyPlatformDisposition(item, "acted");
+    const rule = item.rule || item.fingerprint.split(":")[0] || "";
+    const targetApp = item.appId ?? item.subject?.appId ?? null;
+    if (rule === "A2" || !targetApp) {
+      go("switches");
+      return;
+    }
+    switchApp(targetApp);
+    if (rule === "A1") go("app-audit");
+    else if (rule === "A3") go("support-tickets");
+    else if (rule === "A4") go("appsettings");
+    else go("appagentsvc");
+  };
 
   // ---------- 区块渲染（注册表） ----------
   const v = (n: number | null | undefined) => (n === null || n === undefined ? "—" : n);
@@ -528,6 +601,40 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
         </Card>
       ) : null;
     },
+    "platform-suggestions": () => {
+      // 平台提醒（第 95 步线 B · B3）：事件逐条带处置；按应用计数只给
+      // 数字（应用名借健康表映射，缺失回落 id），无正文、无处置按钮。
+      const counts = pSuggestions.appCounts.filter(
+        (c) => c.stalledOrFailedTasks > 0 || c.unverifiedClaims > 0,
+      );
+      if (pSuggestions.events.length === 0 && counts.length === 0) return null;
+      const appNameOf = (id: string) =>
+        (health ?? []).find((h) => String(h.app.id) === id)?.app.name;
+      return (
+        <Card title="平台提醒" style={{ marginTop: 16 }}>
+          {pSuggestions.events.length > 0 && (
+            <SuggestionList
+              items={pSuggestions.events}
+              busyFingerprint={busySuggestionFp}
+              onGo={(item) => void goPlatformSuggestion(item)}
+              onDispose={(item, d) =>
+                void applyPlatformDisposition(item, d)
+              }
+            />
+          )}
+          {counts.map((c) => (
+            <Typography.Text
+              key={c.appId}
+              type="secondary"
+              style={{ display: "block", fontSize: 12, marginTop: 4 }}
+            >
+              {asText(appNameOf(c.appId) ?? c.appId)}：悬置/未过任务{" "}
+              {c.stalledOrFailedTasks} 张 · 未核实声称 {c.unverifiedClaims} 次
+            </Typography.Text>
+          ))}
+        </Card>
+      );
+    },
     "task-metrics": () => (
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
@@ -631,6 +738,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
               {blocks["recent-audit"]()}
             </Col>
           </Row>
+          {blocks["platform-suggestions"]()}
         </>
       )}
     </div>

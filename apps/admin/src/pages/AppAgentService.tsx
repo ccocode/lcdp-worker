@@ -20,13 +20,17 @@ import {
   api,
   type AdminAssistantConversation,
   type AdminAssistantMessage,
+  type AdminAssistantSuggestion,
   type AgentFaceKey,
   type AgentOverrideFields,
   type AgentOverrideRow,
+  type SuggestionDispositionKind,
 } from "../api";
+import type { PageKey } from "../registry";
 import { fmtTime } from "../helpers";
 import AssistantWorkbench from "../components/assistant/AssistantWorkbench";
 import AssistantMemoryPanel from "../components/assistant/AssistantMemoryPanel";
+import SuggestionList from "../components/assistant/SuggestionList";
 
 /**
  * 应用内「智能服务」页（第 83 步片二第 3 点）：本应用三位助手的
@@ -39,6 +43,8 @@ import AssistantMemoryPanel from "../components/assistant/AssistantMemoryPanel";
  * 看本应用全部运营会话，领域角色档位只看本人会话）。
  * 第 91 步线 A 起页首另挂两区（本人面，不随档位只读）：助手全页
  * 工作台（A1）与助手记忆管理区（A3），组件在 components/assistant/。
+ * 第 95 步线 B 起工作台之上再增「主动建议」区（本人任务卡 + 本应用
+ * 审计读时派生，处置三态回写；为空或加载失败整区不渲染）。
  */
 
 const FACES: { key: AgentFaceKey; label: string; hint: string }[] = [
@@ -55,7 +61,14 @@ interface FaceForm {
 
 const emptyForm = (): FaceForm => ({ prompt: "", scope: "", enabled: true });
 
-export default function AppAgentService({ appId }: { appId: string }) {
+export default function AppAgentService({
+  appId,
+  go,
+}: {
+  appId: string;
+  /** 外壳导航（第 95 步线 B：主动建议 A 类深链用；缺省时深链降级为仅记处置） */
+  go?: (key: PageKey) => void;
+}) {
   const [rows, setRows] = useState<AgentOverrideRow[]>([]);
   const [forms, setForms] = useState<Record<AgentFaceKey, FaceForm>>({
     staff: emptyForm(),
@@ -78,6 +91,19 @@ export default function AppAgentService({ appId }: { appId: string }) {
   /** 第 91 步线 A：工作台/记忆区展示用的应用名（随站点属性一并读） */
   const [appName, setAppName] = useState<string | null>(null);
   const memorySectionRef = useRef<HTMLDivElement | null>(null);
+  /** 第 95 步线 B：主动建议（独立静默加载，失败/为空整区不渲染） */
+  const [suggestions, setSuggestions] = useState<AdminAssistantSuggestion[]>(
+    [],
+  );
+  const [busySuggestionFp, setBusySuggestionFp] = useState<string | null>(
+    null,
+  );
+  /** T 类建议「去办」的任务定位信号（透传工作台选中并放宽筛选） */
+  const [focusTask, setFocusTask] = useState<{
+    taskId: string;
+    nonce: number;
+  } | null>(null);
+  const workbenchSectionRef = useRef<HTMLDivElement | null>(null);
 
   const readOnly = tier === "t2";
 
@@ -127,6 +153,88 @@ export default function AppAgentService({ appId }: { appId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 主动建议（第 95 步线 B）：与主加载解耦的独立静默读——失败即空，
+  // 不阻塞调整面与工作台；按 severity 降序呈现（服务端同口径，客户端再稳一手）。
+  useEffect(() => {
+    let alive = true;
+    void api.assistant.suggestions
+      .getAppSuggestions(appId)
+      .then((list) => {
+        if (alive) {
+          setSuggestions(
+            [...list].sort((a, b) => b.severity - a.severity),
+          );
+        }
+      })
+      .catch(() => {
+        if (alive) setSuggestions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [appId]);
+
+  /** 建议处置回写：成功才移除该条；失败留条并提示（不静默吞处置） */
+  const applyDisposition = useCallback(
+    async (
+      item: AdminAssistantSuggestion,
+      disposition: SuggestionDispositionKind,
+    ): Promise<boolean> => {
+      setBusySuggestionFp(item.fingerprint);
+      try {
+        await api.assistant.suggestions.postSuggestionDisposition(
+          { appId },
+          item.fingerprint,
+          { disposition },
+        );
+        setSuggestions((prev) =>
+          prev.filter((s) => s.fingerprint !== item.fingerprint),
+        );
+        return true;
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : "操作失败");
+        return false;
+      } finally {
+        setBusySuggestionFp(null);
+      }
+    },
+    [appId],
+  );
+
+  const disposeSuggestion = useCallback(
+    (item: AdminAssistantSuggestion, disposition: "dismissed" | "snoozed") => {
+      void applyDisposition(item, disposition);
+    },
+    [applyDisposition],
+  );
+
+  /**
+   * 建议「去办」（第 95 步线 B · B2）：记 acted 后按类别深链——
+   * T 类定位本页工作台对应任务卡；A1 本应用审计页；A3 客服工单页；
+   * A4 本应用应用设置页。回写失败不拦导航（条目留待下次呈现）。
+   */
+  const goSuggestion = useCallback(
+    async (item: AdminAssistantSuggestion) => {
+      await applyDisposition(item, "acted");
+      const rule = item.rule || item.fingerprint.split(":")[0] || "";
+      if (rule.startsWith("T")) {
+        const taskId = item.subject?.taskId;
+        if (taskId) setFocusTask({ taskId, nonce: Date.now() });
+        workbenchSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      } else if (rule === "A1") {
+        go?.("app-audit");
+      } else if (rule === "A3") {
+        go?.("support-tickets");
+      } else if (rule === "A4") {
+        go?.("appsettings");
+      }
+    },
+    [applyDisposition, go],
+  );
 
   const patchForm = (face: AgentFaceKey, p: Partial<FaceForm>) =>
     setForms((prev) => ({ ...prev, [face]: { ...prev[face], ...p } }));
@@ -323,19 +431,34 @@ export default function AppAgentService({ appId }: { appId: string }) {
           message="当前身份可查看本页，不可调整"
         />
       )}
+      {/* 第 95 步线 B：主动建议（工作台之上；为空整区不渲染） */}
+      {suggestions.length > 0 && (
+        <Card title="主动建议" style={{ marginBottom: 16 }}>
+          <SuggestionList
+            items={suggestions}
+            busyFingerprint={busySuggestionFp}
+            onGo={(item) => void goSuggestion(item)}
+            onDispose={disposeSuggestion}
+          />
+        </Card>
+      )}
+
       {/* 第 91 步线 A · A1：助手全页工作台（本页内三栏，不新增一级菜单） */}
-      <Card title="助手工作台" style={{ marginBottom: 16 }}>
-        <AssistantWorkbench
-          appId={appId}
-          appName={appName}
-          onManageMemories={() =>
-            memorySectionRef.current?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            })
-          }
-        />
-      </Card>
+      <div ref={workbenchSectionRef} style={{ scrollMarginTop: 16 }}>
+        <Card title="助手工作台" style={{ marginBottom: 16 }}>
+          <AssistantWorkbench
+            appId={appId}
+            appName={appName}
+            focusTask={focusTask}
+            onManageMemories={() =>
+              memorySectionRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              })
+            }
+          />
+        </Card>
+      </div>
 
       {/* 第 91 步线 A · A3：助手记忆（本人作用域，可查改删 + 待确认区） */}
       <div ref={memorySectionRef} style={{ scrollMarginTop: 16 }}>

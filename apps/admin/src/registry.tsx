@@ -324,7 +324,7 @@ const APP_DEFS: PageDef[] = [
     segment: "app",
     section: "运营管理",
     render: (ctx) => (
-      <AppAgentService key={ctx.appId!} appId={ctx.appId!} />
+      <AppAgentService key={ctx.appId!} appId={ctx.appId!} go={ctx.go} />
     ),
   },
   {
