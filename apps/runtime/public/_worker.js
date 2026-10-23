@@ -41,6 +41,14 @@
  * _redirects 回落：资产服务对静态资产响应应用 _redirects（/* → index.html）；
  * 若某路径资产服务回 404（高级模式下规则未生效的情形），本文件在 worker 内
  * 对页面路径补回 /index.html，等价实现 SPA 回退语义。
+ *
+ * 功能页主题化（第 93 步线 A）：theme.json 可声明 tokens（品牌令牌词表）
+ * 与包内 functional.css；resolveSlotTheme 解析时形状过滤后随已解析主题
+ * 下发。落到 SPA 壳的页面路径应答（直出 200 与 404 补回两条路径）在
+ * 当前作用域槽主题（含移动回退桌面）声明了主题化时，于 <head> 后注入
+ * __LCDP_THEME__ 脚本、:root 变量与 functional.css link，使平台功能页
+ * （桥接页）视觉跟随主题；未声明的主题零注入、壳逐字不变。预览下桥接
+ * 路径同样套用预览主题的注入（no-store + 预览头 + 角标）。
  */
 
 const API_BASE = "https://api.coode.cc.cd";
@@ -83,6 +91,145 @@ function isPagePath(pathname) {
 }
 
 const THEME_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+// ------------------------------------------------- 功能页主题化（第 93 步线 A）
+
+/**
+ * 主题化令牌词表（定案 1）：theme.json 可选字段 tokens——颜色键与
+ * fontFamily 为字符串、radius 为数字 px（0–32 钳制）。颜色/字体串走
+ * 保守白名单：禁 < > ; { } 与 url(（可突破 style/script 上下文的字符），
+ * 形状不合法的键逐项丢弃、绝不抛错（分发 fail-open 口径一致）。
+ */
+const THEME_TOKEN_COLOR_KEYS = [
+  "primary",
+  "accent",
+  "background",
+  "surface",
+  "text",
+  "textSecondary",
+  "border",
+];
+const THEME_TOKEN_FORBIDDEN_RE = /[<>;{}]|url\(/i;
+
+function sanitizeThemeTokenString(v) {
+  return typeof v === "string" && v.length > 0 && !THEME_TOKEN_FORBIDDEN_RE.test(v)
+    ? v
+    : null;
+}
+
+/** tokens 形状过滤：只收词表内形状合法的键；无一合法返回 null */
+function sanitizeThemeTokens(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out = {};
+  for (const key of THEME_TOKEN_COLOR_KEYS) {
+    const v = sanitizeThemeTokenString(raw[key]);
+    if (v !== null) out[key] = v;
+  }
+  const ff = sanitizeThemeTokenString(raw.fontFamily);
+  if (ff !== null) out.fontFamily = ff;
+  if (typeof raw.radius === "number" && Number.isFinite(raw.radius)) {
+    out.radius = Math.min(32, Math.max(0, raw.radius));
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** tokens 键 → :root CSS 变量名（映射定死，输出顺序即数组顺序） */
+const THEME_TOKEN_CSS_VARS = [
+  ["primary", "--lcdp-primary"],
+  ["accent", "--lcdp-accent"],
+  ["background", "--lcdp-background"],
+  ["surface", "--lcdp-surface"],
+  ["text", "--lcdp-text"],
+  ["textSecondary", "--lcdp-text-secondary"],
+  ["border", "--lcdp-border"],
+  ["radius", "--lcdp-radius"],
+  ["fontFamily", "--lcdp-font-family"],
+];
+
+/** 已解析主题是否声明功能页主题化：tokens 非空或 functional.css 存在 */
+function themeHasTheming(theme) {
+  if (!theme) return false;
+  if (theme.functionalCss === true) return true;
+  const t = sanitizeThemeTokens(theme.tokens);
+  return !!t && Object.keys(t).length > 0;
+}
+
+/**
+ * 功能页主题化注入片段（脚本 + :root 变量 + functional.css link）：
+ * 未声明主题化返回 null（调用方逐字透传、零改动）。__LCDP_THEME__
+ * 的 JSON 转义与 __LCDP__ 同口径（<>& 转义防 </script> 突破）；
+ * style 只出已声明键，radius 出 <n>px。
+ */
+function functionalThemingSnippet(theme) {
+  if (!themeHasTheming(theme)) return null;
+  const tokens = sanitizeThemeTokens(theme.tokens) ?? {};
+  const json = JSON.stringify({
+    themeId: theme.id,
+    version: theme.version,
+    tokens,
+  })
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
+  let out = `<script>window.__LCDP_THEME__=${json};</script>`;
+  const decls = [];
+  for (const [key, varName] of THEME_TOKEN_CSS_VARS) {
+    if (!(key in tokens)) continue;
+    decls.push(
+      `${varName}:${key === "radius" ? `${tokens[key]}px` : tokens[key]}`,
+    );
+  }
+  if (decls.length > 0) out += `<style>:root{${decls.join(";")}}</style>`;
+  if (theme.functionalCss === true) {
+    out += `<link rel="stylesheet" href="/functional.css?v=${theme.id}@${theme.version}">`;
+  }
+  return out;
+}
+
+/**
+ * 把主题化片段注入 SPA 壳 HTML：注入点为 <head> 之后（与 __LCDP__
+ * 同位；无 head 则置于文首）。opts.badge 为真时同注入预览角标（A3）。
+ */
+function injectFunctionalTheming(html, theme, opts = {}) {
+  const snippet = functionalThemingSnippet(theme);
+  if (snippet === null) return html;
+  const m = /<head[^>]*>/i.exec(html);
+  let out = m
+    ? html.slice(0, m.index + m[0].length) +
+      snippet +
+      html.slice(m.index + m[0].length)
+    : snippet + html;
+  if (opts.badge) out = injectPreviewBadge(out);
+  return out;
+}
+
+/**
+ * 对 SPA 壳应答执行主题化注入并重建 Response：门槛 = 状态 200 +
+ * text/html + 无内容编码（编码体读出非原文，跳过注入保逐字）。
+ * 注入改变正文长度/指纹：删 content-length 与 etag（与主题层注入后
+ * 不回 etag 同口径），状态码与其余头逐字保留。opts.preview 为真时
+ * 追加 no-store 与 x-lcdp-theme-preview 头（A3 明示口径）。
+ * 未实际注入（门槛不过/未声明主题化）时原样返回入参 res。
+ */
+async function injectSpaTheming(res, theme, opts = {}) {
+  if (functionalThemingSnippet(theme) === null) return res;
+  if (res.status !== 200) return res;
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("text/html")) return res;
+  const ce = res.headers.get("content-encoding");
+  if (ce && ce !== "identity") return res;
+  const html = await res.text();
+  const out = injectFunctionalTheming(html, theme, opts);
+  if (out === html) return res;
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  headers.delete("etag");
+  if (opts.preview) {
+    headers.set("cache-control", "no-store");
+    headers.set("x-lcdp-theme-preview", `${theme.id}@${theme.version}`);
+  }
+  return new Response(out, { status: res.status, headers });
+}
 
 /**
  * 单槽指针归一：形状合法返回 { id, version, values }，否则 null。
@@ -130,6 +277,7 @@ async function resolveSlotTheme(env, ptr, meta) {
   if (!ptr) return null;
   const config = {};
   let routes = null;
+  let tokens = null;
   try {
     const mObj = await env.STATIC_R2.get(
       `themes/${ptr.id}/${ptr.version}/theme.json`,
@@ -155,9 +303,23 @@ async function resolveSlotTheme(env, ptr, meta) {
         );
         if (list.length > 0) routes = list;
       }
+      // 功能页主题化（第 93 步线 A1）：tokens 只收形状合法项
+      tokens = sanitizeThemeTokens(manifest?.tokens);
     }
   } catch {
     // 清单读失败：config 只用绑定 values，不阻断主题分发
+  }
+  // functional.css 存在性（第 93 步线 A1）：R2 head 探包内根目录，
+  // 探失败按不存在（不阻断分发）
+  let functionalCss = false;
+  try {
+    if (typeof env.STATIC_R2.head === "function") {
+      functionalCss = !!(await env.STATIC_R2.head(
+        `themes/${ptr.id}/${ptr.version}/functional.css`,
+      ));
+    }
+  } catch {
+    functionalCss = false;
   }
   Object.assign(config, ptr.values);
   return {
@@ -168,6 +330,8 @@ async function resolveSlotTheme(env, ptr, meta) {
     appId: meta.appId,
     config,
     ...(routes ? { routes } : {}),
+    ...(tokens ? { tokens } : {}),
+    ...(functionalCss ? { functionalCss: true } : {}),
   };
 }
 
@@ -179,7 +343,16 @@ function cachedSlotTheme(raw) {
     typeof raw.id === "string" &&
     typeof raw.version === "string"
   ) {
-    return raw;
+    // 第 93 步线 A1：新字段 tokens / functionalCss 同步过形状过滤后
+    // 放行（信封由 resolveSlotTheme 写入、形状本已合法，此处再滤一遍
+    // 防旧信封/异常内容把非法值带进注入），其余字段逐字沿用信封内容
+    const out = { ...raw };
+    const tokens = sanitizeThemeTokens(raw.tokens);
+    if (tokens) out.tokens = tokens;
+    else delete out.tokens;
+    if (raw.functionalCss === true) out.functionalCss = true;
+    else delete out.functionalCss;
+    return out;
   }
   return null;
 }
@@ -533,6 +706,45 @@ function previewTokenOf(url, request) {
 }
 
 /**
+ * 预览桥接路径的 SPA 壳应答（第 93 步线 A3）：serveTheme 未命中
+ * （路径归属平台页）时，预览主题声明了功能页主题化才接管——取
+ * SPA 壳（ASSETS 直出或 404 补回 /index.html，与 dispatch 回落同
+ * 路径）做同一注入，并带预览口径（no-store + x-lcdp-theme-preview
+ * 头 + 预览角标）。未声明主题化 / 非页面路径 / 壳不可得一律返回
+ * null，调用方落回正常分发（现行行为逐字不变）。
+ */
+async function previewSpaShell(request, env, method, url, theme) {
+  if (!env.ASSETS) return null;
+  if (!isPagePath(url.pathname)) return null;
+  if (functionalThemingSnippet(theme) === null) return null;
+  let res = await env.ASSETS.fetch(request);
+  if (res.status === 404 && (method === "GET" || method === "HEAD")) {
+    const indexRes = await env.ASSETS.fetch(
+      new Request(new URL("/index.html", url.origin), { method: "GET" }),
+    );
+    if (!indexRes.ok) return null;
+    res =
+      method === "HEAD"
+        ? new Response(null, { status: 200, headers: indexRes.headers })
+        : new Response(indexRes.body, {
+            status: 200,
+            headers: indexRes.headers,
+          });
+  }
+  if (res.status !== 200) return null;
+  if (method === "HEAD") {
+    // 无正文可注入：仅带预览头与 no-store（与主题层预览口径一致）
+    const headers = new Headers(res.headers);
+    headers.set("cache-control", "no-store");
+    headers.set("x-lcdp-theme-preview", `${theme.id}@${theme.version}`);
+    return new Response(null, { status: 200, headers });
+  }
+  const out = await injectSpaTheming(res, theme, { preview: true, badge: true });
+  // 注入未实际发生（如壳非 HTML）→ 不接管，落回正常分发
+  return out === res ? null : out;
+}
+
+/**
  * 预览分发：命中返回 Response，未命中/不适用返回 null（调用方落回
  * 正常分发）。仅 GET/HEAD 且 R2 绑定存在时尝试，与主题层同条件。
  */
@@ -586,8 +798,14 @@ async function tryThemePreview(request, env, ctx, url) {
   );
   if (!theme) return null;
   const themed = await serveTheme(env, theme, url, method, { preview: true });
-  if (!themed) return null;
-  return found.fromParam ? withPreviewCookie(themed, found.token) : themed;
+  if (themed) {
+    return found.fromParam ? withPreviewCookie(themed, found.token) : themed;
+  }
+  // 第 93 步线 A3：桥接路径（serveTheme 未命中）——预览主题声明了
+  // 主题化时把预览主题带入 SPA 回落注入；未声明则维持现行落回
+  const spaRes = await previewSpaShell(request, env, method, url, theme);
+  if (!spaRes) return null;
+  return found.fromParam ? withPreviewCookie(spaRes, found.token) : spaRes;
 }
 
 /** 在最终响应上固化槽位 Cookie（参数逃生在主题/快照/SPA 任一层应答都要落下） */
@@ -624,6 +842,9 @@ async function dispatch(request, env, ctx) {
     const method = request.method.toUpperCase();
     const special =
       url.pathname === "/sitemap.xml" || url.pathname === "/robots.txt";
+    // 功能页主题化（第 93 步线 A2）：回落 SPA 段注入用的已解析槽主题，
+    // 在主题层判定处赋值（未绑主题/无 R2 时恒 null → 回落逐字不变）
+    let spaTheme = null;
     if ((method === "GET" || method === "HEAD") && env.STATIC_R2) {
       // 站点模型：首段路径定位作用域应用，配置随作用域而变（68.2）
       const rawSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
@@ -636,9 +857,16 @@ async function dispatch(request, env, ctx) {
       const entryCfg = await loadEntryConfig(url.host, seg, ctx, env);
       // 1. 主题层（M14 线二 + 第⑤步双槽）：按槽尝试，未命中/异常落回下一层
       const slots = entryCfg.themeSlots;
+      const slotPick = requestedSlot(url, request);
+      // 回落注入的主题与主题层同判定：选桌面只取桌面槽；选移动取
+      // 移动槽、空缺回退桌面槽（与页面请求尝试顺序一致）
+      spaTheme =
+        slotPick.slot === "mobile"
+          ? (slots.mobile ?? slots.desktop)
+          : slots.desktop;
       if (slots.desktop || slots.mobile) {
         try {
-          const { slot, source } = requestedSlot(url, request);
+          const { slot, source } = slotPick;
           const page = isPagePath(url.pathname);
           const order = !page
             ? slot === "mobile"
@@ -693,7 +921,10 @@ async function dispatch(request, env, ctx) {
       }
     }
     // 回落 SPA：原样透传资产服务（保留 _redirects 的 SPA 回退语义）
-    const res = await env.ASSETS.fetch(request);
+    let res = await env.ASSETS.fetch(request);
+    // 落到 SPA 壳的两种形态（第 93 步线 A2 注入的覆盖面）：ASSETS
+    // 直出 200（_redirects 已把页面路径回退到壳）、404 补回 /index.html
+    let isShell = res.status === 200;
     if (
       res.status === 404 &&
       (method === "GET" || method === "HEAD") &&
@@ -704,17 +935,24 @@ async function dispatch(request, env, ctx) {
         new Request(new URL("/index.html", url.origin), { method: "GET" }),
       );
       if (indexRes.ok) {
+        isShell = true;
         if (method === "HEAD") {
-          return new Response(null, {
+          res = new Response(null, {
+            status: 200,
+            headers: indexRes.headers,
+          });
+        } else {
+          res = new Response(indexRes.body, {
             status: 200,
             headers: indexRes.headers,
           });
         }
-        return new Response(indexRes.body, {
-          status: 200,
-          headers: indexRes.headers,
-        });
       }
+    }
+    // 功能页主题化注入：页面路径 + GET + 落到壳 + 槽主题有声明才动，
+    // 任一不满足逐字透传（injectSpaTheming 内部再核壳的 HTML 形状）
+    if (isShell && spaTheme && method === "GET" && isPagePath(url.pathname)) {
+      res = await injectSpaTheming(res, spaTheme);
     }
     return res;
   } catch {
