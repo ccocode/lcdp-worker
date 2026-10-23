@@ -66,12 +66,19 @@ export default function AssistantDrawer({
   /** 新对话代次：自增即让对话面重挂载、开一段新会话（fresh 语义见文件头） */
   const [seed, setSeed] = useState(0);
   const title = appId ? `运营助手 · ${appName ?? appId}` : "平台助手";
+  // 关闭即复位代次：抽屉组件在 AppShell 里常驻，seed 若跨开关保留，
+  // 点过一次「新对话」后每次打开都会 fresh 跳过恢复（第 90 步验收实证）。
+  // 语义锚点：打开 = 恢复最近会话；只有刚点过「新对话」的当次挂载才空白。
+  const handleClose = () => {
+    setSeed(0);
+    onClose();
+  };
   return (
     <Drawer
       title={title}
       width={"min(480px, 100vw)"}
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       extra={
         <Button size="small" onClick={() => setSeed((s) => s + 1)}>
           新对话
@@ -85,7 +92,7 @@ export default function AssistantDrawer({
           appId={appId}
           fresh={seed > 0}
           pageContext={context}
-          onClose={onClose}
+          onClose={handleClose}
         />
       )}
     </Drawer>
