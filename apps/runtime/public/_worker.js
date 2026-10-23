@@ -4,8 +4,10 @@
  * 判定序（自上而下，任一层未命中/异常都落回下一层，最终回落 SPA）：
  * 0. 预览前置（第 83 步片五，路线 A）：请求带 lcdp_preview 令牌
  *    （参数或 lcdp-preview Cookie）且 api 校验端点确认其作用域的
- *    应用与本站点一致时，以令牌指针强制对应槽渲染主题（跳过快照
- *    层、routes 不限、响应 no-store 并注入预览角标）；参数值为
+ *    应用与本站点一致时，以令牌指针覆盖对应槽渲染主题（跳过快照
+ *    层；路径归属与正常分发一致——声明了 routes 的主题在预览中
+ *    同样只接管清单内路径，清单外落回平台页，使桥接页在预览中
+ *    可达可验，第 90 步修正；响应 no-store 并注入预览角标）；参数值为
  *    off 时清除固化 Cookie 回正常分发。任何不适用一律落回下序，
  *    无令牌时本层不存在、以下判定逐字不变。
  * 1. 主题层（M14 线二 + M15 第⑤步双槽）：站点绑定了主题（/public/site 的
@@ -378,8 +380,9 @@ function themeRouteMatches(routes, pathname) {
  *   但主题声明了 routes 时，仅清单内路径回退，清单外返回 null（修法 D）；
  * - 文件型路径未命中、或主题 index.html 本身缺失 → null。
  * opts.viewCheck 为真且本次由 index 应答时，追加移动槽自检脚本（第⑤步）。
- * opts.preview 为真时（第 83 步片五预览模式）：routes 限制不适用
- * （主题自理路径全开）；全部应答改 no-store 并加 x-lcdp-theme-preview
+ * opts.preview 为真时（第 83 步片五预览模式）：仅覆盖主题指针，
+ * routes 归属与正常分发一致（第 90 步修正，原「routes 不限」使桥接
+ * 页在预览中被吞）；全部应答改 no-store 并加 x-lcdp-theme-preview
  * 头；index 应答的 __LCDP__ 追加 preview: true 并注入预览角标。
  * 正常分发不传 preview，行为逐字不变。
  */
@@ -419,10 +422,11 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     if (obj) return respond(rel, obj, rel === "index.html");
   }
   if (!rel || isPagePath(url.pathname)) {
-    // 修法 D：声明了 routes 的主题只接管清单内路径，清单外落回快照/SPA
-    //（预览模式不适用此限制：预览要看主题在任意路径下的效果）
+    // 修法 D：声明了 routes 的主题只接管清单内路径，清单外落回快照/SPA。
+    // 预览模式同样适用（第 90 步修正）：预览只覆盖主题指针、路径归属
+    // 与正常分发一致，否则桥接页（购物车/结算等）在预览中被主题吞掉、
+    // 点击链永远验不了（1.1.8 预览实证）。
     if (
-      !opts.preview &&
       Array.isArray(theme.routes) &&
       theme.routes.length > 0 &&
       !themeRouteMatches(theme.routes, url.pathname)
@@ -478,7 +482,7 @@ function requestedSlot(url, request) {
  * lcdp_preview 优先，其次同名 cookie 固化）时，先向 api 校验端点
  * 换取指针覆盖——仅当校验返回的应用与本站点配置解析出的应用
  * 一致时生效：以返回指针覆盖对应槽并强制该槽（不读 view 参数/
- * cookie 选槽）、跳过快照层、routes 限制不适用，主题文件直出与
+ * cookie 选槽）、跳过快照层、routes 归属与正常分发一致，主题文件直出与
  * index 回退同主题层既有逻辑。校验失败 / 应用不一致 / 主题文件
  * 缺失等任何不适用情形一律返回 null 落回正常分发（fail-open），
  * 无令牌时本层整体不触发、正常分发路径逐字不变。
