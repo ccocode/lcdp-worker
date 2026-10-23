@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Empty,
@@ -96,11 +96,18 @@ export default function AssistantWorkbench({
   appId,
   appName,
   onManageMemories,
+  focusTask,
 }: {
   appId: string;
   appName?: string | null;
   /** 右栏记忆速览「管理记忆」点击：父页滚动到记忆管理区 */
   onManageMemories?: () => void;
+  /**
+   * 主动建议深链定位（第 95 步线 B）：父页点 T 类建议「去办」时置入
+   * 目标任务 id；工作台据此把任务筛选放宽到全部并选中该卡（右栏
+   * 详情即其详情）。nonce 仅作触发信号，同 id 再次点击亦生效。
+   */
+  focusTask?: { taskId: string; nonce: number } | null;
 }) {
   const [conversations, setConversations] = useState<AdminAssistantConversation[]>([]);
   const [tasks, setTasks] = useState<AdminAssistantTask[]>([]);
@@ -116,6 +123,8 @@ export default function AssistantWorkbench({
   const [draftSignal, setDraftSignal] = useState<{ text: string; nonce: number } | null>(null);
   const [memories, setMemories] = useState<AdminAssistantMemory[]>([]);
   const [memoriesOk, setMemoriesOk] = useState(true);
+  /** 待定位的任务 id（第 95 步线 B）：任务列表下一次加载时优先选中它 */
+  const pendingFocusTaskRef = useRef<string | null>(null);
 
   const loadConversations = useCallback(async () => {
     try {
@@ -129,6 +138,17 @@ export default function AssistantWorkbench({
     try {
       const list = await api.assistant.app.tasks(appId, { status: taskStatus });
       setTasks(list);
+      const focusId = pendingFocusTaskRef.current;
+      if (focusId && list.some((t) => t.id === focusId)) {
+        // 定位命中：选中目标卡并清记（后续加载回归缺省选中口径）
+        pendingFocusTaskRef.current = null;
+        setSelectedTaskId(focusId);
+        return;
+      }
+      if (focusId && taskStatus === "all") {
+        // 已放宽到全部仍不在列（卡已消失等）：放弃定位，不留残记
+        pendingFocusTaskRef.current = null;
+      }
       setSelectedTaskId((prev) =>
         prev && list.some((t) => t.id === prev) ? prev : (list[0]?.id ?? null),
       );
@@ -136,6 +156,21 @@ export default function AssistantWorkbench({
       setTasks([]);
     }
   }, [appId, taskStatus]);
+
+  // 主动建议定位（第 95 步线 B）：已在当前列表则直接选中；不在则
+  // 记下目标并放宽筛选到「全部」，由 loadTasks 在新列表里命中选中。
+  useEffect(() => {
+    if (!focusTask) return;
+    const { taskId } = focusTask;
+    if (tasks.some((t) => t.id === taskId)) {
+      setSelectedTaskId(taskId);
+      return;
+    }
+    pendingFocusTaskRef.current = taskId;
+    setTaskStatus("all");
+    // 仅以 focusTask 为触发信号：tasks/taskStatus 的变化由上述路径自理
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTask]);
 
   const loadMemories = useCallback(async () => {
     try {

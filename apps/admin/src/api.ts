@@ -460,6 +460,41 @@ export interface AdminAssistantTask {
 }
 
 /**
+ * 主动建议候选（第 95 步线 B · B1）：服务端按任务卡与审计读时派生，
+ * title/evidence 均为服务端规则模板拼装的中文；fingerprint 只作
+ * 处置寻址、rule 为内部枚举——两者界面均不渲染。subject 供前端
+ * 拼深链（T 类带 taskId、A 类带 appId/latestAuditId）。
+ */
+export interface AdminAssistantSuggestion {
+  fingerprint: string;
+  rule: string;
+  appId: string | null;
+  severity: number;
+  title: string;
+  evidence: string;
+  subject?: {
+    taskId?: string;
+    appId?: string;
+    latestAuditId?: string;
+  } | null;
+  derivedAt?: string | null;
+}
+
+/**
+ * 平台面按应用计数（第 95 步线 B · B1）：只有计数与最近时间，
+ * 绝不含任务卡正文/标题/owner（平台维度只给统计数字）。
+ */
+export interface AdminPlatformSuggestionAppCount {
+  appId: string;
+  taskCount: number;
+  claimCount: number;
+  latestAt?: string | null;
+}
+
+/** 主动建议处置三态（第 95 步）：去办 / 忽略 / 延后 */
+export type SuggestionDispositionKind = "acted" | "dismissed" | "snoozed";
+
+/**
  * 回合内工具调用行（第 91 步线 B · B2 透出 tool_calls 既有数据）：
  * 工具名、对象摘要、状态、起止。落点有两处——消息自带或会话详情
  * 顶层（按 messageId 归属），字段别名由 ChatPane 的适配点归一，
@@ -1811,6 +1846,49 @@ export const api = {
           { method: "POST", body: JSON.stringify({}) },
         );
         return res?.memory ?? null;
+      },
+    },
+    /**
+     * 主动建议（第 95 步线 B · B1）：应用面取本应用候选（服务端按
+     * 本人任务卡 + 本应用审计读时派生），平台面取平台级事件候选 +
+     * 按应用计数；处置三态以 fingerprint 寻址回写（snoozed 缺省
+     * 延后时长由服务端定为 24h）。端点未就绪时调用方静默降级。
+     */
+    suggestions: {
+      async getAppSuggestions(
+        appId: string,
+      ): Promise<AdminAssistantSuggestion[]> {
+        const res = await apiFetch<{ suggestions: AdminAssistantSuggestion[] }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/suggestions`,
+        );
+        return Array.isArray(res.suggestions) ? res.suggestions : [];
+      },
+      async getPlatformSuggestions(): Promise<{
+        events: AdminAssistantSuggestion[];
+        appCounts: AdminPlatformSuggestionAppCount[];
+      }> {
+        const res = await apiFetch<{
+          events?: AdminAssistantSuggestion[];
+          appCounts?: AdminPlatformSuggestionAppCount[];
+        }>("/admin/assistant/suggestions");
+        return {
+          events: Array.isArray(res.events) ? res.events : [],
+          appCounts: Array.isArray(res.appCounts) ? res.appCounts : [],
+        };
+      },
+      async postSuggestionDisposition(
+        scope: { appId: string } | { platform: true },
+        fingerprint: string,
+        body: { disposition: SuggestionDispositionKind; snoozeHours?: number },
+      ): Promise<void> {
+        const base =
+          "appId" in scope
+            ? `/admin/apps/${encodeURIComponent(scope.appId)}/assistant/suggestions`
+            : "/admin/assistant/suggestions";
+        await apiFetch(
+          `${base}/${encodeURIComponent(fingerprint)}/disposition`,
+          { method: "POST", body: JSON.stringify(body) },
+        );
       },
     },
   },
