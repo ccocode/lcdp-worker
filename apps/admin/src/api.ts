@@ -420,6 +420,35 @@ export interface AdminAssistantPendingAction {
   handled?: { decision: string; at: string; outcome?: string } | null;
 }
 
+/** 助手消息结构化结果里的动作控件（第 90 步协议 v2 最小集）：href 外链新开、route 站内跳转 */
+export interface AdminAssistantPayloadAction {
+  label: string;
+  href?: string;
+  route?: string;
+  primary?: boolean;
+}
+
+/**
+ * 助手消息结构化结果载荷（第 90 步线 B 协议）：服务端在特定直执结果
+ * （如 theme_create 成功）时给最终助手消息附带；data 只放非敏感展示
+ * 字段。界面按 kind 渲染结果卡，未知 kind 回落通用卡，不阻塞文本呈现。
+ */
+export interface AdminAssistantPayload {
+  kind: string;
+  title?: string;
+  actions?: AdminAssistantPayloadAction[];
+  data?: Record<string, unknown>;
+}
+
+/** 助手任务卡速览行（第 90 步线 B tasks 端点：本人、应用上下文、进行中） */
+export interface AdminAssistantTask {
+  id: string;
+  title: string;
+  status: string;
+  checklist: { label: string; status: string }[];
+  updatedAt: string | null;
+}
+
 /** 管理台助手消息（会话详情形状，与员工面同构） */
 export interface AdminAssistantMessage {
   id: string;
@@ -428,6 +457,8 @@ export interface AdminAssistantMessage {
   text: string;
   citations?: { docTitle: string; snippet: string }[] | null;
   pendingAction?: AdminAssistantPendingAction | null;
+  /** 结构化结果载荷（协议 v2，可空；旧消息与普通回复无此字段） */
+  payload?: AdminAssistantPayload | null;
   /** generating / done / failed */
   status: string;
   createdAt: string | null;
@@ -1617,6 +1648,13 @@ export const api = {
           `/admin/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
           { method: "POST", body: JSON.stringify({ decision }) },
         );
+      },
+      /** 进行中任务卡速览（第 90 步线 A5；端点由线 B 新建，失败由调用方静默） */
+      async tasks(appId: string): Promise<AdminAssistantTask[]> {
+        const res = await apiFetch<{ tasks: AdminAssistantTask[] }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks?status=active`,
+        );
+        return Array.isArray(res.tasks) ? res.tasks : [];
       },
     },
   },

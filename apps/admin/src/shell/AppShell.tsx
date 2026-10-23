@@ -743,6 +743,17 @@ export default function AppShell() {
             ? currentApp.name
             : null
         }
+        context={{
+          // 第 90 步线 A4：页面上下文带入——与上方 appId 同口径
+          // （平台段归平台），实体只在数据页且已定位时带、不硬造
+          path: window.location.pathname + window.location.search,
+          pageName: effectiveDef.label,
+          appId: effectiveDef.segment === "platform" ? null : appId,
+          segment: effectiveDef.segment,
+          ...(effectivePage === "data" && dataEntity
+            ? { entityKey: dataEntity }
+            : {}),
+        }}
       />
     </Layout>
   );
