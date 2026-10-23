@@ -23,8 +23,8 @@
 
   <g>
     <rect x="528" y="25" width="224" height="126" rx="12" fill="#f2f6ff" stroke="#3b82c4" stroke-width="1.5"/>
-    <text x="640" y="63" text-anchor="middle" font-size="20" font-weight="700" fill="#14467c">3. 发布</text>
-    <text x="640" y="95" text-anchor="middle" font-size="15" fill="#33424f">草稿确认无误即刻上线</text>
+    <text x="640" y="63" text-anchor="middle" font-size="20" font-weight="700" fill="#14467c">3. 预览发布</text>
+    <text x="640" y="95" text-anchor="middle" font-size="15" fill="#33424f">预览确认无误后发布</text>
     <text x="640" y="119" text-anchor="middle" font-size="15" fill="#33424f">可回滚到任何历史版本</text>
   </g>
   <line x1="756" y1="88" x2="786" y2="88" stroke="#3b82c4" stroke-width="2.5" marker-end="url(#arr)"/>
