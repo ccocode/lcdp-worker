@@ -557,6 +557,34 @@ export interface ApiRequestError extends Error {
   body?: (Record<string, unknown> & { message?: string; error?: string }) | null;
 }
 
+/**
+ * 带有限重试的 apiFetch（客户端重试口径）：仅对服务端明确拒绝/不可用
+ * （429/502/503/504）退避重试，这类响应意味着请求未被业务处理，重发不会
+ * 造成重复提交；业务错误（4xx 其余）与网络中断不重试、原样上抛。
+ * 目前只用于助手发送——回合本身在服务端异步执行，受理 POST 不应因边缘
+ * 瞬时抖动就让用户手动重发。
+ */
+async function apiFetchWithRetry<T>(
+  path: string,
+  init?: RequestInit,
+  delays: number[] = [800, 2000],
+): Promise<T> {
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      return await apiFetch<T>(path, init);
+    } catch (err) {
+      lastErr = err;
+      const status = (err as ApiRequestError)?.status;
+      const retryable =
+        status === 429 || status === 502 || status === 503 || status === 504;
+      if (!retryable || attempt === delays.length) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+  throw lastErr ?? new Error("请求失败");
+}
+
 function qs(params: Record<string, string | number | undefined | null>): string {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -1504,7 +1532,7 @@ export const api = {
       text: string;
       context?: unknown;
     }): Promise<{ conversationId: string; messageId: string }> {
-      return apiFetch("/admin/assistant/chat", {
+      return apiFetchWithRetry("/admin/assistant/chat", {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -1545,7 +1573,7 @@ export const api = {
         appId: string,
         body: { conversationId?: string; text: string; context?: unknown },
       ): Promise<{ conversationId: string; messageId: string }> {
-        return apiFetch(
+        return apiFetchWithRetry(
           `/admin/apps/${encodeURIComponent(appId)}/assistant/chat`,
           { method: "POST", body: JSON.stringify(body) },
         );
