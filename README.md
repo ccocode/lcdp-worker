@@ -27,12 +27,10 @@
 
 **平台测试地址**
 
-| 入口 | 地址 |
-| --- | --- |
-| 应用运行端 | [www.coode.cc.cd](https://www.coode.cc.cd) |
-| 管理台 | [admin.coode.cc.cd](https://admin.coode.cc.cd) |
-
-管理员账号：`admin`　密码：`AdminDemo@26`
+| 入口 | 地址 | 管理员账号 / 密码 |
+| --- | --- | --- |
+| 应用运行 | [www.coode.cc.cd](https://www.coode.cc.cd) | `admin` / `AdminDemo@26` |
+| 应用管理 | [admin.coode.cc.cd](https://admin.coode.cc.cd) | `admin` / `AdminDemo@26` |
 
 ## 从想法到上线的五步
 
