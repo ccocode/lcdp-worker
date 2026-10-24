@@ -114,8 +114,49 @@ function migrateLegacyHash(): void {
   }
 }
 
-/** 站内导航统一写侧：pushState 后派发 popstate 让路由钩子重解析（pushState 本身不触发 popstate） */
+/**
+ * 主题自理路由（边缘注入 __LCDP_THEME__.routes，与分发层 themeRouteMatches
+ * 同口径）：命中这些路径的页面由主题外壳出、SPA 壳不得在客户端路由内
+ * 渲染——否则从桥接页（购物车等）点站内链接会停在壳的框架页、主题丢失。
+ */
+let siteThemeRoutesCache: string[] | undefined;
+
+function siteThemeRoutesOf(): string[] {
+  if (siteThemeRoutesCache !== undefined) return siteThemeRoutesCache;
+  let routes: string[] = [];
+  if (typeof window !== "undefined") {
+    const raw = window.__LCDP_THEME__;
+    if (raw !== null && typeof raw === "object") {
+      const list = (raw as { routes?: unknown }).routes;
+      if (Array.isArray(list)) {
+        routes = list.filter(
+          (r): r is string => typeof r === "string" && r.startsWith("/"),
+        );
+      }
+    }
+  }
+  siteThemeRoutesCache = routes;
+  return routes;
+}
+
+function normalizeThemeRoutePath(p: string): string {
+  return p.replace(/\/+$/, "") || "/";
+}
+
+function isThemeRoutePath(pathname: string): boolean {
+  const routes = siteThemeRoutesOf();
+  if (routes.length === 0) return false;
+  const p = normalizeThemeRoutePath(pathname);
+  return routes.some((r) => normalizeThemeRoutePath(r) === p);
+}
+
+/** 站内导航统一写侧：命中主题自理路由改整页跳（交边缘主题层出页）；其余 pushState 后派发 popstate 让路由钩子重解析（pushState 本身不触发 popstate） */
 function navigateTo(to: string): void {
+  const pathname = to.split(/[?#]/)[0] || "/";
+  if (isThemeRoutePath(pathname)) {
+    window.location.assign(to);
+    return;
+  }
   window.history.pushState(null, "", to);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -168,7 +209,15 @@ function useHistoryRoute(): Route {
     return parseRoute();
   });
   useEffect(() => {
-    const onChange = () => setRoute(parseRoute());
+    const onChange = () => {
+      const r = parseRoute();
+      // 历史前进/后退落到主题自理路径：整页重载交边缘主题层出页，不在壳内渲染
+      if (isThemeRoutePath(r.path)) {
+        window.location.replace(window.location.href);
+        return;
+      }
+      setRoute(r);
+    };
     window.addEventListener("popstate", onChange);
     return () => window.removeEventListener("popstate", onChange);
   }, []);
@@ -3475,7 +3524,7 @@ function resolveCurrentPage(
 
 /**
  * 站点主题注入（第 93 步线 B）：边缘分发在 SPA 壳 <head> 后注入
- * window.__LCDP_THEME__ = { themeId, version, tokens }，tokens 为主题包
+ * window.__LCDP_THEME__ = { themeId, version, tokens, routes? }，tokens 为主题包
  * theme.json 声明的站点品牌令牌（词表见执行单定案语义 1，全部可选）。
  * 这是用户侧站点品牌层，只经此通道消费——不写回 @lcdp/ui 令牌源
  * （第 73 步纪律：ui 仍是 B 端唯一事实源）。

@@ -156,17 +156,23 @@ function themeHasTheming(theme) {
 
 /**
  * 功能页主题化注入片段（脚本 + :root 变量 + functional.css link）：
- * 未声明主题化返回 null（调用方逐字透传、零改动）。__LCDP_THEME__
+ * 未声明主题化且未声明 routes 返回 null（调用方逐字透传、零改动）；
+ * 仅声明 routes 时只出脚本（壳据 routes 把主题自理路径导航改走整页跳，
+ * 避免客户端路由在壳内渲染主题路径、主题被「绕过」）。__LCDP_THEME__
  * 的 JSON 转义与 __LCDP__ 同口径（<>& 转义防 </script> 突破）；
  * style 只出已声明键，radius 出 <n>px。
  */
 function functionalThemingSnippet(theme) {
-  if (!themeHasTheming(theme)) return null;
+  const routes = Array.isArray(theme?.routes)
+    ? theme.routes.filter((r) => typeof r === "string" && r.startsWith("/"))
+    : [];
+  if (!themeHasTheming(theme) && routes.length === 0) return null;
   const tokens = sanitizeThemeTokens(theme.tokens) ?? {};
   const json = JSON.stringify({
     themeId: theme.id,
     version: theme.version,
     tokens,
+    ...(routes.length > 0 ? { routes } : {}),
   })
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
