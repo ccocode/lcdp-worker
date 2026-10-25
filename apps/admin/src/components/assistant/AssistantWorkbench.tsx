@@ -34,6 +34,8 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   active: "进行中",
   done: "已完成",
   abandoned: "已放弃",
+  // 第 103 步步骤 3：计划收尾终态（清单办结后 close 动作转入）
+  closed: "已收尾",
 };
 
 const CHECK_PASSED = new Set([
@@ -310,6 +312,7 @@ export default function AssistantWorkbench({
             options={[
               { value: "active", label: "进行中" },
               { value: "done", label: "已完成" },
+              { value: "closed", label: "已收尾" },
               { value: "all", label: "全部" },
             ]}
           />
