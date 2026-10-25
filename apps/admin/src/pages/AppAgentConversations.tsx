@@ -2,7 +2,8 @@
  * 应用内「智能服务 · 会话记录」页（由原 AppAgentService 拆出）：
  * 运营助手会话记录（只读；监督视图——本应用管理员档位看本应用
  * 全部运营会话，领域角色档位只看本人会话）。列表为分页表格，
- * 点「查看」在抽屉里回放该会话的全部消息。
+ * 点「查看」在抽屉里回放该会话的全部消息。子代理会话不在此
+ * 列（与助手面板左栏同口径：子会话只在派发卡的右侧详情里看）。
  */
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -38,9 +39,26 @@ export default function AppAgentConversations({ appId }: { appId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setConversations(
-        await api.assistant.app.conversations(appId, { scope: "all" }),
-      );
+      const [list, tasks] = await Promise.all([
+        api.assistant.app.conversations(appId, { scope: "all" }),
+        // 子会话 id 集：全部任务行的派发记录（与左栏同口径）
+        api.assistant.app
+          .tasks(appId, { status: "all" })
+          .catch(() => []),
+      ]);
+      const childIds = new Set<string>();
+      for (const t of tasks) {
+        const arts = t.artifacts as { delegations?: unknown } | null | undefined;
+        const deps = arts?.delegations;
+        if (!Array.isArray(deps)) continue;
+        for (const d of deps) {
+          const rec = d as { childConversationId?: unknown } | null;
+          if (rec && typeof rec.childConversationId === "string") {
+            childIds.add(rec.childConversationId);
+          }
+        }
+      }
+      setConversations(list.filter((c) => !childIds.has(c.id)));
     } catch {
       // 会话记录读取失败呈空态，不阻塞页面
       setConversations([]);
