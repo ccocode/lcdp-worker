@@ -99,9 +99,19 @@ export default function AssistantWorkbench({
   appName,
   onManageMemories,
   focusTask,
+  leftCollapsed,
+  rightCollapsed,
+  activePane,
+  style,
 }: {
   appId: string;
   appName?: string | null;
+  /** 第 103 步步骤 6：弹窗壳的收起与窄屏控制（页内工作台不用，默认全展开） */
+  leftCollapsed?: boolean;
+  rightCollapsed?: boolean;
+  /** 窄屏下只显一栏（null = 三栏全显） */
+  activePane?: "left" | "chat" | "right" | null;
+  style?: React.CSSProperties;
   /** 右栏记忆速览「管理记忆」点击：父页滚动到记忆管理区 */
   onManageMemories?: () => void;
   /**
@@ -221,6 +231,18 @@ export default function AssistantWorkbench({
 
   const highlightCid = currentCid ?? session.cid;
 
+  const leftHidden =
+    leftCollapsed === true ||
+    (activePane !== null &&
+      activePane !== undefined &&
+      activePane !== "left");
+  const rightHidden =
+    rightCollapsed === true ||
+    (activePane !== null &&
+      activePane !== undefined &&
+      activePane !== "right");
+  const chatHidden =
+    activePane !== null && activePane !== undefined && activePane !== "chat";
   return (
     <div
       style={{
@@ -230,6 +252,7 @@ export default function AssistantWorkbench({
         borderRadius: 8,
         overflow: "hidden",
         background: tokens.colorBgContainer,
+        ...style,
       }}
     >
       {/* 左栏：会话 + 任务 */}
@@ -238,7 +261,7 @@ export default function AssistantWorkbench({
           width: 264,
           flexShrink: 0,
           borderRight: `1px solid ${tokens.colorDivider}`,
-          display: "flex",
+          display: leftHidden ? "none" : "flex",
           flexDirection: "column",
           minHeight: 0,
         }}
@@ -387,7 +410,7 @@ export default function AssistantWorkbench({
         style={{
           flex: 1,
           minWidth: 0,
-          display: "flex",
+          display: chatHidden ? "none" : "flex",
           flexDirection: "column",
           minHeight: 0,
         }}
@@ -422,7 +445,7 @@ export default function AssistantWorkbench({
           overflowY: "auto",
           minHeight: 0,
           padding: 12,
-          display: "flex",
+          display: rightHidden ? "none" : "flex",
           flexDirection: "column",
           gap: 16,
         }}

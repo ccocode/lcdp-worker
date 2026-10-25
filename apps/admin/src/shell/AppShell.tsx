@@ -7,6 +7,7 @@ import {
   Input,
   Layout,
   Menu,
+  Modal,
   Select,
   Space,
   Spin,
@@ -24,7 +25,8 @@ import {
 import type { MenuProps } from "antd";
 import { PageHelp, tokens } from "@lcdp/ui";
 import { HELP } from "../help";
-import AssistantDrawer from "../components/AssistantDrawer";
+import AssistantModal from "../components/AssistantModal";
+import { hasRunningAssistantTask } from "../components/assistant/assistantRunning";
 import {
   api,
   consumeExpiredFlag,
@@ -696,7 +698,34 @@ export default function AppShell() {
               placeholder="选择应用"
               value={appId ?? undefined}
               onChange={(v) => {
-                if (v) switchApp(v);
+                if (!v) return;
+                // 第 103 步步骤 6：弹窗打开且旧应用有任务在跑时，切应用
+                // 前先提示（确认后切上下文、任务留在旧应用任务卡；取消
+                // 则不切换，Select 受控值保持旧应用）。查不到任务状态
+                // 时不拦切换。
+                void (async () => {
+                  if (assistantOpen && appId) {
+                    try {
+                      const list = await api.assistant.app.tasks(appId, {
+                        status: "active",
+                      });
+                      if (hasRunningAssistantTask(list)) {
+                        Modal.confirm({
+                          title: "助手正在执行任务",
+                          content:
+                            "切换应用后任务留在旧应用任务卡、可回旧应用续跑，是否切换？",
+                          okText: "切换",
+                          cancelText: "取消",
+                          onOk: () => switchApp(v),
+                        });
+                        return;
+                      }
+                    } catch {
+                      // 静默：不拦切换
+                    }
+                  }
+                  switchApp(v);
+                })();
               }}
               onClear={() => {
                 window.history.pushState(null, "", `/${page}`);
@@ -730,9 +759,11 @@ export default function AppShell() {
       </Layout>
       {/* 助手上下文按当前页所在区划分（第 83 步片四）：平台区页
           （segment=platform，如工作台/智能服务）传 null → 平台助手；
-          应用内页传当前应用 → 运营助手。上下文切换时 AssistantDrawer
-          内部按 appId 给 ChatPane 定 key，换上下文即换新会话面。 */}
-      <AssistantDrawer
+          应用内页传当前应用 → 运营助手。上下文切换时 AssistantModal
+          内部按 appId 重挂载内容，换上下文即换新会话面。
+          第 103 步步骤 6：顶栏按钮改开弹窗壳，抽屉组件保留在仓内
+          作回退（不再挂载）。 */}
+      <AssistantModal
         open={assistantOpen}
         onClose={() => setAssistantOpen(false)}
         appId={effectiveDef.segment === "platform" ? null : appId}
