@@ -29,6 +29,7 @@ import {
 import {
   DelegationMessageCard,
   PlanMessageCard,
+  type DelegationViewTarget,
 } from "./MessageTaskCards";
 
 /**
@@ -82,8 +83,8 @@ export interface ChatPaneProps {
   draftSignal?: { text: string; nonce: number } | null;
   /** 工作台：隐藏 A5 任务卡横条（右栏已有任务详情） */
   hideTaskBar?: boolean;
-  /** 工作台：消息内派发卡片的“查看子代理会话”（打开子会话）；平台面不传 */
-  onOpenConversation?: (cid: string) => void;
+  /** 工作台：消息内派发卡片的“查看详情”（右侧打开子代理详情）；平台面不传 */
+  onOpenDelegation?: (target: DelegationViewTarget) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -397,7 +398,7 @@ export default function ChatPane({
   onConversationChange,
   draftSignal,
   hideTaskBar,
-  onOpenConversation,
+  onOpenDelegation,
 }: ChatPaneProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
@@ -781,7 +782,7 @@ export default function ChatPane({
             appId={appId}
             taskId={msg.payload.delegationCard.taskId}
             index={msg.payload.delegationCard.index}
-            onOpenConversation={onOpenConversation}
+            onOpenDelegation={onOpenDelegation}
           />
         )}
         {!isUser && msg.pendingAction && (

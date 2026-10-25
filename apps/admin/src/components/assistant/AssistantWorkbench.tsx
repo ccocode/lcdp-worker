@@ -12,10 +12,12 @@ import {
   api,
   type AdminAssistantConversation,
   type AdminAssistantMemory,
+  type AdminAssistantMessage,
   type AdminAssistantTask,
 } from "../../api";
 import { fmtTime } from "../../helpers";
 import ChatPane from "./ChatPane";
+import type { DelegationViewTarget } from "./MessageTaskCards";
 import { MEMORY_CATEGORY_LABELS } from "./AssistantMemoryPanel";
 import { isPendingMemory } from "./turnSteps";
 
@@ -101,10 +103,91 @@ interface PaneSession {
   fresh: boolean;
 }
 
+/** 右侧子代理详情：顶部 = 任务名称 + 目标，下方 = 子代理对话记录（只读） */
+function DelegationDetail({
+  appId,
+  target,
+  onBack,
+}: {
+  appId: string;
+  target: DelegationViewTarget;
+  onBack: () => void;
+}) {
+  const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const detail = await api.assistant.app.conversation(
+          appId,
+          target.childConversationId,
+        );
+        if (alive) setMessages(detail.messages);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [appId, target.childConversationId]);
+  const roleLabel = (role: string) =>
+    role === "user" ? "用户" : role === "system" ? "系统" : "助手";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div>
+        <Button
+          size="small"
+          type="link"
+          style={{ padding: 0, height: "auto", fontSize: 12 }}
+          onClick={onBack}
+        >
+          ← 返回任务详情
+        </Button>
+      </div>
+      <Typography.Text strong style={{ fontSize: 13 }}>
+        {target.stepLabel}
+      </Typography.Text>
+      {target.goal && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          目标：{target.goal}
+        </Typography.Text>
+      )}
+      <Typography.Text strong style={{ fontSize: 13 }}>
+        对话记录
+      </Typography.Text>
+      {failed ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          子代理对话记录暂不可用
+        </Typography.Text>
+      ) : messages.length === 0 ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          暂无对话记录
+        </Typography.Text>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {messages.map((m) => (
+            <div key={m.id}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {roleLabel(m.role)}
+              </Typography.Text>
+              <div style={{ fontSize: 12, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {m.text}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AssistantWorkbench({
   appId,
   appName,
   onManageMemories,
+  onExpandRight,
   focusTask,
   leftCollapsed,
   rightCollapsed,
@@ -113,6 +196,8 @@ export default function AssistantWorkbench({
 }: {
   appId: string;
   appName?: string | null;
+  /** 弹窗壳：打开子代理详情时把右侧展开（默认收起时否则点后无可见变化） */
+  onExpandRight?: () => void;
   /** 第 103 步步骤 6：弹窗壳的收起与窄屏控制（页内工作台不用，默认全展开） */
   leftCollapsed?: boolean;
   rightCollapsed?: boolean;
@@ -146,6 +231,15 @@ export default function AssistantWorkbench({
   const [draftSignal, setDraftSignal] = useState<{ text: string; nonce: number } | null>(null);
   const [memories, setMemories] = useState<AdminAssistantMemory[]>([]);
   const [memoriesOk, setMemoriesOk] = useState(true);
+  /** 右侧正在查看的子代理详情（null = 任务详情 + 记忆速览） */
+  const [delegationView, setDelegationView] =
+    useState<DelegationViewTarget | null>(null);
+  /**
+   * 子会话 id 集：左栏会话列表据此滤掉子代理会话。来源 = 全部任务行
+   * artifacts.delegations 的 childConversationId（任务行本身不删除，
+   * 故“全部”口径下集合完备，不受任务状态筛选影响）。
+   */
+  const [childCids, setChildCids] = useState<Set<string>>(new Set());
   /** 待定位的任务 id（第 95 步线 B）：任务列表下一次加载时优先选中它 */
   const pendingFocusTaskRef = useRef<string | null>(null);
 
@@ -154,6 +248,27 @@ export default function AssistantWorkbench({
       setConversations(await api.assistant.app.conversations(appId));
     } catch {
       // 静默：左栏保持空
+    }
+  }, [appId]);
+
+  const loadChildCids = useCallback(async () => {
+    try {
+      const list = await api.assistant.app.tasks(appId, { status: "all" });
+      const ids = new Set<string>();
+      for (const t of list) {
+        const arts = t.artifacts as { delegations?: unknown } | null | undefined;
+        const deps = arts?.delegations;
+        if (!Array.isArray(deps)) continue;
+        for (const d of deps) {
+          const rec = d as { childConversationId?: unknown } | null;
+          if (rec && typeof rec.childConversationId === "string") {
+            ids.add(rec.childConversationId);
+          }
+        }
+      }
+      setChildCids(ids);
+    } catch {
+      // 静默：不过滤
     }
   }, [appId]);
 
@@ -210,6 +325,9 @@ export default function AssistantWorkbench({
     void loadConversations();
   }, [loadConversations]);
   useEffect(() => {
+    void loadChildCids();
+  }, [loadChildCids]);
+  useEffect(() => {
     void loadTasks();
   }, [loadTasks]);
   useEffect(() => {
@@ -225,6 +343,18 @@ export default function AssistantWorkbench({
     setCurrentCid(cid);
     setSession({ key: `conv:${cid}`, cid, fresh: false });
   };
+
+  /** 派发卡片“查看详情”：右侧切到子代理详情（并把右侧展开） */
+  const openDelegation = (target: DelegationViewTarget) => {
+    setDelegationView(target);
+    onExpandRight?.();
+  };
+
+  /** 左栏会话列表：滤掉子代理会话（子会话只在右侧详情里看） */
+  const visibleConversations = useMemo(
+    () => conversations.filter((c) => !childCids.has(c.id)),
+    [conversations, childCids],
+  );
 
   const startNew = () => {
     setCurrentCid(null);
@@ -302,12 +432,12 @@ export default function AssistantWorkbench({
         </div>
         {leftTab === "conversations" ? (
         <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
-          {conversations.length === 0 ? (
+          {visibleConversations.length === 0 ? (
             <div style={{ padding: "12px", color: tokens.colorTextTertiary, fontSize: 12 }}>
               暂无会话
             </div>
           ) : (
-            conversations.map((c) => (
+            visibleConversations.map((c) => (
               <div
                 key={c.id}
                 onClick={() => openConversation(c.id)}
@@ -455,16 +585,17 @@ export default function AssistantWorkbench({
           }}
           hideTaskBar
           draftSignal={draftSignal}
-          onOpenConversation={openConversation}
+          onOpenDelegation={openDelegation}
           onConversationChange={(cid) => {
             setCurrentCid(cid);
             void loadConversations();
             void loadTasks();
+            void loadChildCids();
           }}
         />
       </div>
 
-      {/* 右栏：任务详情 + 记忆速览 */}
+      {/* 右栏：任务详情 + 记忆速览（子代理详情打开时整栏切过去） */}
       <div
         style={{
           width: 300,
@@ -478,6 +609,14 @@ export default function AssistantWorkbench({
           gap: 16,
         }}
       >
+        {delegationView ? (
+          <DelegationDetail
+            appId={appId}
+            target={delegationView}
+            onBack={() => setDelegationView(null)}
+          />
+        ) : (
+        <>
         <div>
           <Typography.Text strong style={{ fontSize: 13 }}>
             任务详情
@@ -598,6 +737,8 @@ export default function AssistantWorkbench({
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );

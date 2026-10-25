@@ -123,9 +123,10 @@ function ChecklistRows({ task }: { task: AdminAssistantTask }) {
 
 /**
  * 对话记录里的计划卡片（去重方案 A）：默认只显示标题 + 状态 +
- * 进度 + 下一步，目标与全部步骤收在“展开清单”之后——完整清单
- * 只在右侧详情里常驻，消息区不再与详情重复展开同一份清单。
- * 清单为空时无可折叠内容，目标直接显示。
+ * 下一步，目标与全部步骤收在“展开清单”之后——完整清单只在
+ * 右侧详情里常驻，消息区不再与详情重复展开同一份清单；清单
+ * 进度并入展开按钮（已过/总数），不再单列一行。清单为空时
+ * 无可折叠内容，目标直接显示。
  */
 export function PlanMessageCard({
   appId,
@@ -174,11 +175,6 @@ export function PlanMessageCard({
         <Typography.Text strong style={{ fontSize: 13 }}>
           {task.title}
         </Typography.Text>
-        {list.length > 0 && (
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            清单 {passed}/{list.length}
-          </Typography.Text>
-        )}
         {task.nextStep && (
           <Typography.Text style={{ fontSize: 13 }}>
             下一步：{task.nextStep}
@@ -197,7 +193,7 @@ export function PlanMessageCard({
             style={{ padding: 0, alignSelf: "flex-start" }}
             onClick={() => setExpanded((v) => !v)}
           >
-            {expanded ? "收起清单" : `展开清单（${list.length} 步）`}
+            {expanded ? "收起清单" : `展开清单（${passed}/${list.length}）`}
           </Button>
         )}
       </div>
@@ -205,17 +201,30 @@ export function PlanMessageCard({
   );
 }
 
-/** 对话记录里的派发卡片：步骤 + 目标 + 执行状态 + 指针 + 子会话入口 */
+/** 子代理详情在右侧打开时所需的信息（卡片从任务行读到后上递） */
+export interface DelegationViewTarget {
+  taskId: string;
+  index: number;
+  stepLabel: string;
+  goal: string;
+  childConversationId: string;
+}
+
+/**
+ * 对话记录里的派发卡片：步骤 + 目标 + 执行状态 + 右侧详情入口。
+ * 产物指针只留任务行数据、不在卡片上显示；子代理对话记录改在
+ * 右侧详情里呈现，不再把子会话载入中栏对话面。
+ */
 export function DelegationMessageCard({
   appId,
   taskId,
   index,
-  onOpenConversation,
+  onOpenDelegation,
 }: {
   appId: string;
   taskId: string;
   index: number;
-  onOpenConversation?: (cid: string) => void;
+  onOpenDelegation?: (target: DelegationViewTarget) => void;
 }) {
   const { task, missing } = useTaskCard(appId, taskId);
   if (missing) {
@@ -286,24 +295,21 @@ export function DelegationMessageCard({
             目标：{dep.goal}
           </Typography.Text>
         )}
-        {dep.resultPointer && (
-          <Typography.Text
-            style={{ fontSize: 12 }}
-            ellipsis
-            title={dep.resultPointer}
-          >
-            产物指针：{dep.resultPointer}
-          </Typography.Text>
-        )}
-        {dep.childConversationId && onOpenConversation && (
+        {dep.childConversationId && onOpenDelegation && (
           <div>
             <Button
               size="small"
               onClick={() =>
-                onOpenConversation(dep.childConversationId as string)
+                onOpenDelegation({
+                  taskId,
+                  index,
+                  stepLabel: dep.stepLabel ?? `第 ${index + 1} 步`,
+                  goal: dep.goal ?? "",
+                  childConversationId: dep.childConversationId as string,
+                })
               }
             >
-              查看子代理会话
+              查看详情
             </Button>
           </div>
         )}

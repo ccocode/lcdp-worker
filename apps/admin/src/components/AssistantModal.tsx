@@ -365,6 +365,10 @@ export default function AssistantModal({
             leftCollapsed={leftCollapsed}
             rightCollapsed={rightCollapsed}
             activePane={narrow ? narrowTab : null}
+            onExpandRight={() => {
+              setRightCollapsed(false);
+              setNarrowTab("right");
+            }}
             style={{ height: "100%", border: "none", borderRadius: 0 }}
           />
         ) : (
