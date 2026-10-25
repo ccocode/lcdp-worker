@@ -271,11 +271,16 @@ export default function AssistantModal({
             ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
             : undefined,
       }}
-      // 无遮罩：弹窗打开时页面仍可操作，切应用与页内跳转才能发生，
-      // 切应用提示与“弹窗不受页面跳转影响”才可达（有遮罩时切换器
-      // 被遮罩挡住、切应用提示永远触发不了，线上实测已证实）
+      // 无遮罩 + wrap 层点击穿透：弹窗打开时页面仍可操作，切应用
+      // 与页内跳转才能发生。只去遮罩不够——rc-dialog 的 wrap 层整屏
+      // 覆盖且默认 maskClosable 会把 wrap 层点击转为关闭（线上实测
+      // 两度证实：点切换器弹出的总是关闭确认框），故 wrap 层设
+      // pointerEvents none、对话框本体恢复 auto，并关掉遮罩点击关闭。
       mask={false}
+      maskClosable={false}
       styles={{
+        wrapper: { pointerEvents: "none" },
+        content: { pointerEvents: "auto" },
         body: {
           height: "min(70vh, 720px)",
           padding: 0,
