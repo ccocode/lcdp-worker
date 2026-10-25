@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Alert,
   Button,
@@ -27,6 +33,7 @@ import { PageHelp, tokens } from "@lcdp/ui";
 import { HELP } from "../help";
 import AssistantModal from "../components/AssistantModal";
 import { hasRunningAssistantTask } from "../components/assistant/assistantRunning";
+import { AssistantShellContext } from "./assistantShellContext";
 import {
   api,
   consumeExpiredFlag,
@@ -172,6 +179,20 @@ export default function AppShell() {
   const [page, setPage] = useState<PageKey>(route0.page);
   /** 管理台助手抽屉开合（第 83 步片四）：上下文跟随当前应用 */
   const [assistantOpen, setAssistantOpen] = useState(false);
+  /** 页内入口带来的任务定位信号（开弹窗时透传工作台，关弹窗即清） */
+  const [modalFocusTask, setModalFocusTask] = useState<{
+    taskId: string;
+    nonce: number;
+  } | null>(null);
+  const assistantShell = useMemo(
+    () => ({
+      openAssistant: (ft?: { taskId: string; nonce: number }) => {
+        if (ft) setModalFocusTask(ft);
+        setAssistantOpen(true);
+      },
+    }),
+    [],
+  );
   const [auditTabSeed, setAuditTabSeed] = useState<string | null>(route0.auditTab);
   const [settingsTabSeed, setSettingsTabSeed] = useState<string | null>(
     route0.settingsTab,
@@ -754,7 +775,9 @@ export default function AppShell() {
           </Space>
         </Header>
         <Content style={{ padding: 24, background: tokens.colorBgLayout }}>
-          {effectiveDef.needsMeta ? appPageShell(pageNode) : pageNode}
+          <AssistantShellContext.Provider value={assistantShell}>
+            {effectiveDef.needsMeta ? appPageShell(pageNode) : pageNode}
+          </AssistantShellContext.Provider>
         </Content>
       </Layout>
       {/* 助手上下文按当前页所在区划分（第 83 步片四）：平台区页
@@ -765,7 +788,11 @@ export default function AppShell() {
           作回退（不再挂载）。 */}
       <AssistantModal
         open={assistantOpen}
-        onClose={() => setAssistantOpen(false)}
+        onClose={() => {
+          setAssistantOpen(false);
+          setModalFocusTask(null);
+        }}
+        focusTask={modalFocusTask}
         appId={effectiveDef.segment === "platform" ? null : appId}
         appName={
           effectiveDef.segment !== "platform" &&

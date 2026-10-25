@@ -15,6 +15,7 @@ import {
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import { RobotOutlined } from "@ant-design/icons";
 import { tokens } from "@lcdp/ui";
 import {
   api,
@@ -28,8 +29,8 @@ import {
 } from "../api";
 import type { PageKey } from "../registry";
 import { fmtTime } from "../helpers";
-import AssistantWorkbench from "../components/assistant/AssistantWorkbench";
 import AssistantMemoryPanel from "../components/assistant/AssistantMemoryPanel";
+import { useAssistantShell } from "../shell/assistantShellContext";
 import SuggestionList from "../components/assistant/SuggestionList";
 
 /**
@@ -98,12 +99,8 @@ export default function AppAgentService({
   const [busySuggestionFp, setBusySuggestionFp] = useState<string | null>(
     null,
   );
-  /** T 类建议「去办」的任务定位信号（透传工作台选中并放宽筛选） */
-  const [focusTask, setFocusTask] = useState<{
-    taskId: string;
-    nonce: number;
-  } | null>(null);
-  const workbenchSectionRef = useRef<HTMLDivElement | null>(null);
+  /** 外壳助手弹窗入口（第 103 步步骤 6：页内工作台改由弹窗承载） */
+  const { openAssistant } = useAssistantShell();
 
   const readOnly = tier === "t2";
 
@@ -211,7 +208,7 @@ export default function AppAgentService({
 
   /**
    * 建议「去办」（第 95 步线 B · B2）：记 acted 后按类别深链——
-   * T 类定位本页工作台对应任务卡；A1 本应用审计页；A3 客服工单页；
+   * T 类开助手弹窗并定位对应任务卡；A1 本应用审计页；A3 客服工单页；
    * A4 本应用应用设置页。回写失败不拦导航（条目留待下次呈现）。
    */
   const goSuggestion = useCallback(
@@ -220,11 +217,7 @@ export default function AppAgentService({
       const rule = item.rule || item.fingerprint.split(":")[0] || "";
       if (rule.startsWith("T")) {
         const taskId = item.subject?.taskId;
-        if (taskId) setFocusTask({ taskId, nonce: Date.now() });
-        workbenchSectionRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+        if (taskId) openAssistant({ taskId, nonce: Date.now() });
       } else if (rule === "A1") {
         go?.("app-audit");
       } else if (rule === "A3") {
@@ -233,7 +226,7 @@ export default function AppAgentService({
         go?.("appsettings");
       }
     },
-    [applyDisposition, go],
+    [applyDisposition, go, openAssistant],
   );
 
   const patchForm = (face: AgentFaceKey, p: Partial<FaceForm>) =>
@@ -443,22 +436,23 @@ export default function AppAgentService({
         </Card>
       )}
 
-      {/* 第 91 步线 A · A1：助手全页工作台（本页内三栏，不新增一级菜单） */}
-      <div ref={workbenchSectionRef} style={{ scrollMarginTop: 16 }}>
-        <Card title="助手工作台" style={{ marginBottom: 16 }}>
-          <AssistantWorkbench
-            appId={appId}
-            appName={appName}
-            focusTask={focusTask}
-            onManageMemories={() =>
-              memorySectionRef.current?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-              })
-            }
-          />
-        </Card>
-      </div>
+      {/* 第 103 步步骤 6：页内工作台改由顶栏助手弹窗承载，本页只留
+          入口（人设调整、记忆管理、会话记录等管理面全部不动） */}
+      <Card title="助手工作台" style={{ marginBottom: 16 }}>
+        <Typography.Paragraph
+          type="secondary"
+          style={{ marginBottom: 12 }}
+        >
+          助手对话已统一到页面顶部的“助手”弹窗（含会话、任务与记忆速览），点下面按钮打开。
+        </Typography.Paragraph>
+        <Button
+          type="primary"
+          icon={<RobotOutlined />}
+          onClick={() => openAssistant()}
+        >
+          打开助手弹窗
+        </Button>
+      </Card>
 
       {/* 第 91 步线 A · A3：助手记忆（本人作用域，可查改删 + 待确认区） */}
       <div ref={memorySectionRef} style={{ scrollMarginTop: 16 }}>

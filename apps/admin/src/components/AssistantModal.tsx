@@ -38,12 +38,15 @@ export default function AssistantModal({
   appId,
   appName,
   context,
+  focusTask,
 }: {
   open: boolean;
   onClose: () => void;
   appId: string | null;
   appName: string | null;
   context?: AssistantPageContext;
+  /** 页内入口带来的任务定位信号（透传工作台选中对应任务卡） */
+  focusTask?: { taskId: string; nonce: number } | null;
 }) {
   /** 新对话代次（仅平台对话面用；应用侧工作台自带新对话控制） */
   const [seed, setSeed] = useState(0);
@@ -256,6 +259,7 @@ export default function AssistantModal({
             key={appId}
             appId={appId}
             appName={appName}
+            focusTask={focusTask}
             leftCollapsed={leftCollapsed}
             rightCollapsed={rightCollapsed}
             activePane={narrow ? narrowTab : null}
