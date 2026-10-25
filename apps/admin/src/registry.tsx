@@ -453,9 +453,12 @@ export const DEF_BY_KEY: Map<PageKey, PageDef> = new Map(
 const PLATFORM_SECTION_ORDER: string[] = ["组织与权限", "平台运营", "审计追溯"];
 
 /** 应用区分区呈现顺序（对象形态归正：模版段 → 运营管理 → 数据维护 → 应用设置） */
+/** 注意：groupBySection 按此表过滤，不在表里的 section 会被静默丢掉
+ *  菜单入口——新增独立分类必须同步加进这张表（智能服务即前例）。 */
 const APP_SECTION_ORDER: string[] = [
   ...TEMPLATES.map((t) => t.section),
   "运营管理",
+  "智能服务",
   "数据维护",
   "应用设置",
 ];
