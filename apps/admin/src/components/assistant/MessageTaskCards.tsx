@@ -131,9 +131,12 @@ function ChecklistRows({ task }: { task: AdminAssistantTask }) {
 export function PlanMessageCard({
   appId,
   taskId,
+  onOpenTask,
 }: {
   appId: string;
   taskId: string;
+  /** 工作台：卡片“查看详情”（右侧打开该任务详情）；不传则不渲染 */
+  onOpenTask?: (taskId: string) => void;
 }) {
   const { task, missing } = useTaskCard(appId, taskId);
   const [expanded, setExpanded] = useState(false);
@@ -186,16 +189,28 @@ export function PlanMessageCard({
           </Typography.Text>
         )}
         {expanded && <ChecklistRows task={task} />}
-        {list.length > 0 && (
-          <Button
-            type="link"
-            size="small"
-            style={{ padding: 0, alignSelf: "flex-start" }}
-            onClick={() => setExpanded((v) => !v)}
-          >
-            {expanded ? "收起清单" : `展开清单（${passed}/${list.length}）`}
-          </Button>
-        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          {list.length > 0 && (
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? "收起清单" : `展开清单（${passed}/${list.length}）`}
+            </Button>
+          )}
+          {onOpenTask && (
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={() => onOpenTask(taskId)}
+            >
+              查看详情
+            </Button>
+          )}
+        </div>
       </div>
     </Card>
   );

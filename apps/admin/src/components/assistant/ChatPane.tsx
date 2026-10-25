@@ -34,7 +34,7 @@ import {
 
 /**
  * 管理台助手对话面（第 83 步片四起，第 90 步线 A 升级，第 91 步线 A
- * 抽为共用组件）：抽屉（AssistantDrawer）与智能服务页全页工作台
+ * 抽为共用组件）：弹窗（AssistantModal）与智能服务页全页工作台
  * （AssistantWorkbench）双形态复用同一组件，行为逐字一致、状态
  * 不互串（各自挂载、各自 key）。回合制异步：发送只受理，助手回复
  * 经 1.2s 轮询会话详情取回（上限 180s）；写操作以待确认卡片挂在
@@ -85,6 +85,8 @@ export interface ChatPaneProps {
   hideTaskBar?: boolean;
   /** 工作台：消息内派发卡片的“查看详情”（右侧打开子代理详情）；平台面不传 */
   onOpenDelegation?: (target: DelegationViewTarget) => void;
+  /** 工作台：消息内计划卡片的“查看详情”（右侧打开该任务详情）；平台面不传 */
+  onOpenTask?: (taskId: string) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -399,6 +401,7 @@ export default function ChatPane({
   draftSignal,
   hideTaskBar,
   onOpenDelegation,
+  onOpenTask,
 }: ChatPaneProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
@@ -775,6 +778,7 @@ export default function ChatPane({
           <PlanMessageCard
             appId={appId}
             taskId={msg.payload.planCard.taskId}
+            onOpenTask={onOpenTask}
           />
         )}
         {!isUser && appId && msg.payload?.delegationCard && (

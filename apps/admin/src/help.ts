@@ -238,6 +238,17 @@ export const HELP: Partial<Record<PageKey, PageHelpEntry>> = {
       },
     ],
   },
+  "appagentsvc-tasks": {
+    title: "任务记录说明",
+    sections: [
+      {
+        heading: "这是什么",
+        body: [
+          "运营助手的任务记录（只读）：计划、主题与子代理派发的任务总览；点查看看任务详情，点去助手查看在助手弹窗里打开该任务。",
+        ],
+      },
+    ],
+  },
   agentsvc: {
     title: "智能服务说明",
     sections: [

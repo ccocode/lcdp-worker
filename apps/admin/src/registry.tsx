@@ -15,6 +15,7 @@ import {
   SettingOutlined,
   StopOutlined,
   TeamOutlined,
+  UnorderedListOutlined,
 } from "@ant-design/icons";
 import { Alert } from "antd";
 import type {
@@ -47,6 +48,7 @@ import AppAgentSuggestions from "./pages/AppAgentSuggestions";
 import AppAgentMemory from "./pages/AppAgentMemory";
 import AppAgentFaces from "./pages/AppAgentFaces";
 import AppAgentConversations from "./pages/AppAgentConversations";
+import AppAgentTasks from "./pages/AppAgentTasks";
 
 /**
  * 页面注册表（第 57 步）：页面定义单点——key / 组件 / 所属段
@@ -79,6 +81,7 @@ export type PageKey =
   | "appagentsvc-memory"
   | "appagentsvc-faces"
   | "appagentsvc-conversations"
+  | "appagentsvc-tasks"
   | "app-audit"
   | "appsettings"
   // 领域模版段（内容领域，见 templates/content）
@@ -324,8 +327,9 @@ const APP_DEFS: PageDef[] = [
     render: (ctx) => <AppAssets key={ctx.appId!} appId={ctx.appId!} />,
   },
   {
-    // 智能服务独立分类（原 AppAgentService 一页四卡拆为四页）：
-    // 主动建议 / 助手记忆 / 智能助手（人设调整）/ 会话记录（分页表）。
+    // 智能服务独立分类（原 AppAgentService 一页四卡拆为五页）：
+    // 主动建议 / 助手记忆 / 智能助手（人设调整）/ 会话记录（分页表）
+    // / 任务记录（分页表，工作台改版后左栏任务列表的总览落点）。
     // 助手工作台不再单设页——对话统一由顶栏助手弹窗承载。
     key: "appagentsvc-suggestions",
     label: "主动建议",
@@ -364,6 +368,16 @@ const APP_DEFS: PageDef[] = [
     section: "智能服务",
     render: (ctx) => (
       <AppAgentConversations key={ctx.appId!} appId={ctx.appId!} />
+    ),
+  },
+  {
+    key: "appagentsvc-tasks",
+    label: "任务记录",
+    icon: <UnorderedListOutlined />,
+    segment: "app",
+    section: "智能服务",
+    render: (ctx) => (
+      <AppAgentTasks key={ctx.appId!} appId={ctx.appId!} />
     ),
   },
   {

@@ -30,7 +30,7 @@ export type { AssistantPageContext };
  * （状态不持久化）；关闭 / 切换应用 / 刷新时若有任务在跑先提示，
  * 文案只讲后果，不讲机制。关闭与切换取实时任务值，刷新取最近
  * 一次轮询值（30 秒内）。
- * 迁移：AssistantDrawer 组件保留在仓内作回退，本文件接管顶栏入口。
+ * 迁移：原 AssistantDrawer 抽屉壳已随工作台改版删除，本文件为顶栏唯一入口。
  */
 export default function AssistantModal({
   open,
