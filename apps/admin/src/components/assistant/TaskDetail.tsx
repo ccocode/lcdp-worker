@@ -1,17 +1,16 @@
 /**
  * 任务详情体（工作台右栏与任务记录页抽屉共用）：
- * 统一壳 = 标题 + 种类标 + 状态标 + 目标；正文按种类分体——
- * 计划：步骤清单 + 已定决定 + 下一步；主题：主题 id@版本行 +
- * 步骤清单 + 产物；派发记录统一列在“子代理”区（点查看详情进
- * 右侧子代理详情，任务记录页不传该回调时只作 plain 行展示）。
+ * 只展示本实体自己的数据，不跨实体取数——统一壳 = 标题 +
+ * 种类标 + 状态标 + 目标；正文按种类分体：计划是步骤清单 +
+ * 已定决定 + 下一步，主题是主题 id@版本行 + 步骤清单 + 产物。
+ * 派发记录不在此汇总（只从消息内的派发卡进入子代理详情）。
  * 底部操作由调用方以 footer 注入（工作台：继续 / 查看对话；
  * 任务记录页：去助手查看）。
  */
 import type { ReactNode } from "react";
-import { Button, Tag, Typography } from "antd";
+import { Tag, Typography } from "antd";
 import type { AdminAssistantTask } from "../../api";
 import { fmtTime } from "../../helpers";
-import type { DelegationViewTarget } from "./MessageTaskCards";
 
 export const TASK_STATUS_LABELS: Record<string, string> = {
   active: "进行中",
@@ -52,24 +51,6 @@ export function countPassed(task: AdminAssistantTask): number {
     .length;
 }
 
-/** 派发记录（任务行 artifacts.delegations 的元素，防御式读取） */
-export interface DelegationRecord {
-  childConversationId?: string;
-  stepLabel?: string;
-  goal?: string;
-  status?: string;
-  resultPointer?: string | null;
-}
-
-export function readTaskDelegations(task: AdminAssistantTask): DelegationRecord[] {
-  const arts = task.artifacts as { delegations?: unknown } | null | undefined;
-  const list = arts?.delegations;
-  if (!Array.isArray(list)) return [];
-  return list.filter(
-    (d): d is DelegationRecord => !!d && typeof d === "object",
-  ) as DelegationRecord[];
-}
-
 /** 防御式呈现：有什么显示什么，形状不合不造；skip 键不展开 */
 function renderLoose(value: unknown, skip: Set<string>): string[] {
   if (value === null || value === undefined) return [];
@@ -97,27 +78,13 @@ function renderLoose(value: unknown, skip: Set<string>): string[] {
   return [];
 }
 
-function depStatusLabel(status?: string): string {
-  return status === "running"
-    ? "执行中"
-    : status === "done"
-      ? "已完成"
-      : status === "failed"
-        ? "失败"
-        : (status ?? "未知");
-}
-
 export default function TaskDetail({
   task,
-  onOpenDelegation,
   footer,
 }: {
   task: AdminAssistantTask;
-  /** 派发卡片“查看详情”（工作台传；任务记录页不传则只展示行） */
-  onOpenDelegation?: (target: DelegationViewTarget) => void;
   footer?: ReactNode;
 }) {
-  const deps = readTaskDelegations(task);
   const arts = task.artifacts as Record<string, unknown> | null | undefined;
   const themeLine =
     task.kind === "theme_build" && typeof arts?.themeId === "string"
@@ -189,69 +156,6 @@ export default function TaskDetail({
                   >
                     证据
                   </a>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {deps.length > 0 && (
-        <div>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            子代理
-          </Typography.Text>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              marginTop: 4,
-            }}
-          >
-            {deps.map((d, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 12,
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  {d.stepLabel ?? `第 ${i + 1} 步`}
-                </span>
-                <Tag
-                  style={{ marginInlineEnd: 0 }}
-                  color={
-                    d.status === "done"
-                      ? "success"
-                      : d.status === "failed"
-                        ? "error"
-                        : d.status === "running"
-                          ? "processing"
-                          : undefined
-                  }
-                >
-                  {depStatusLabel(d.status)}
-                </Tag>
-                {d.childConversationId && onOpenDelegation && (
-                  <Button
-                    size="small"
-                    type="link"
-                    style={{ padding: 0, height: "auto", fontSize: 12 }}
-                    onClick={() =>
-                      onOpenDelegation({
-                        taskId: task.id,
-                        index: i,
-                        stepLabel: d.stepLabel ?? `第 ${i + 1} 步`,
-                        goal: d.goal ?? "",
-                        childConversationId: d.childConversationId as string,
-                      })
-                    }
-                  >
-                    查看详情
-                  </Button>
                 )}
               </div>
             ))}

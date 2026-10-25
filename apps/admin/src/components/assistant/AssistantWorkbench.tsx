@@ -23,12 +23,15 @@ import { isPendingMemory } from "./turnSteps";
 /**
  * 助手全页工作台（第 91 步线 A · A1，设计 8.4 双形态的主场）：
  * 挂应用「智能服务」页内（Q2 定案，不新增一级菜单）。三栏——
- * 左：本人会话列表（子代理会话已滤掉）；中：对话（与抽屉同一
+ * 左：本人会话列表（子代理会话已滤掉）；中：对话（与弹窗同一
  * ChatPane 共用组件，上下文 = 当前应用）；右：任务详情（消息
  * 内任务卡 / 建议深链 / 任务记录页定位进入，按计划、主题、
  * 子代理三类分体）与长期记忆速览（无任务打开时显示）。
+ * 展开逻辑严格从左到右：左列选会话 → 中栏展开对话记录 →
+ * 右栏展开卡片详情；右栏只放当前展开那一个实体的数据，不跨
+ * 实体取数、不设回链（切会话重置右栏，返回靠中栏重选卡片）。
  * 任务列表不再放左栏：总览改走智能服务「任务记录」页，左栏
- * 只留会话。抽屉行为不受影响（两形态各自挂载、状态不互串）。
+ * 只留会话。弹窗与全页工作台双形态复用同一 ChatPane，状态不互串。
  *
  * 数据全部来自既有一期/线 B 端点（会话、任务、记忆），任一读取
  * 失败静默呈空态，不拖垮整页。
@@ -40,15 +43,15 @@ interface PaneSession {
   fresh: boolean;
 }
 
-/** 右侧子代理详情：顶部 = 任务名称 + 目标，下方 = 子代理对话记录（只读） */
+/** 右侧子代理详情：顶部 = 步骤名 + 目标，下方 = 子代理对话记录
+ * （只读）。只展示派发自己的数据，不回链父任务；返回靠中栏
+ * 重选卡片（左到右展开，不设回链）。 */
 function DelegationDetail({
   appId,
   target,
-  onBack,
 }: {
   appId: string;
   target: DelegationViewTarget;
-  onBack: () => void;
 }) {
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
   const [failed, setFailed] = useState(false);
@@ -73,16 +76,6 @@ function DelegationDetail({
     role === "user" ? "用户" : role === "system" ? "系统" : "助手";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div>
-        <Button
-          size="small"
-          type="link"
-          style={{ padding: 0, height: "auto", fontSize: 12 }}
-          onClick={onBack}
-        >
-          ← 返回任务详情
-        </Button>
-      </div>
       <Typography.Text strong style={{ fontSize: 13 }}>
         {target.stepLabel}
       </Typography.Text>
@@ -212,14 +205,25 @@ export default function AssistantWorkbench({
     }
   }, [appId]);
 
-  // 主动建议定位（第 95 步线 B）：选中目标任务并展开右侧详情；
-  // 缓存里没有则重拉一次（选中态 sticky，重拉后派生即命中）。
+  // 主动建议定位（第 95 步线 B）：深链打开任务详情时，中栏一并
+  // 切到该任务所属会话、右栏打开其详情（左到右层级一致）；缓存
+  // 里没有则重拉一次，选中态 sticky，重拉后派生即命中。
   useEffect(() => {
     if (!focusTask) return;
     const { taskId } = focusTask;
+    const found = tasks.find((t) => t.id === taskId);
+    if (found?.conversationId) {
+      setCurrentCid(found.conversationId);
+      setSession({
+        key: `conv:${found.conversationId}`,
+        cid: found.conversationId,
+        fresh: false,
+      });
+    }
     setSelectedTaskId(taskId);
+    setDelegationView(null);
     onExpandRight?.();
-    if (!tasks.some((t) => t.id === taskId)) void loadAllTasks();
+    if (!found) void loadAllTasks();
     // 仅以 focusTask 为触发信号：缓存变化由派生自理
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTask]);
@@ -250,13 +254,26 @@ export default function AssistantWorkbench({
     [tasks, selectedTaskId],
   );
 
+  /**
+   * 左栏选会话（左到右展开的起点）：中栏切到该会话，右栏重置
+   * （详情属于旧会话的卡片，不跟到新会话）；详情自带的“查看
+   * 对话”走 viewTaskConversation，不重置。
+   */
   const openConversation = (cid: string) => {
+    setCurrentCid(cid);
+    setSession({ key: `conv:${cid}`, cid, fresh: false });
+    setDelegationView(null);
+    setSelectedTaskId(null);
+  };
+
+  /** 详情自带的“查看对话”：中栏切到该任务所属会话，右栏详情保留 */
+  const viewTaskConversation = (cid: string) => {
     setCurrentCid(cid);
     setSession({ key: `conv:${cid}`, cid, fresh: false });
   };
 
   /** 派发卡片“查看详情”：右侧切到子代理详情（并把右侧展开；
-   * 返回时落到父任务详情，故父任务一并选中，缓存缺失则重拉） */
+   * 父任务一并选中，点中栏计划卡可回到计划详情；缓存缺失则重拉） */
   const openDelegation = (target: DelegationViewTarget) => {
     setSelectedTaskId(target.taskId);
     if (!tasks.some((t) => t.id === target.taskId)) void loadAllTasks();
@@ -264,9 +281,11 @@ export default function AssistantWorkbench({
     onExpandRight?.();
   };
 
-  /** 计划卡片“查看详情”：右侧打开该任务详情（并把右侧展开） */
+  /** 计划卡片“查看详情”：右侧打开该任务详情（并把右侧展开；
+   * 子代理详情中点计划卡即由此回到计划详情） */
   const openTask = (taskId: string) => {
     setSelectedTaskId(taskId);
+    setDelegationView(null);
     if (!tasks.some((t) => t.id === taskId)) void loadAllTasks();
     onExpandRight?.();
   };
@@ -280,6 +299,8 @@ export default function AssistantWorkbench({
   const startNew = () => {
     setCurrentCid(null);
     setSession({ key: `new:${Date.now()}`, cid: null, fresh: true });
+    setDelegationView(null);
+    setSelectedTaskId(null);
   };
 
   /** 任务卡「继续」：选中该卡 + 把续办草稿灌进对话面输入框 */
@@ -429,12 +450,10 @@ export default function AssistantWorkbench({
           <DelegationDetail
             appId={appId}
             target={delegationView}
-            onBack={() => setDelegationView(null)}
           />
         ) : selectedTask ? (
           <TaskDetail
             task={selectedTask}
-            onOpenDelegation={openDelegation}
             footer={
               <>
                 {selectedTask.status === "active" && (
@@ -450,7 +469,7 @@ export default function AssistantWorkbench({
                   <Button
                     size="small"
                     onClick={() =>
-                      openConversation(selectedTask.conversationId as string)
+                      viewTaskConversation(selectedTask.conversationId as string)
                     }
                   >
                     查看对话

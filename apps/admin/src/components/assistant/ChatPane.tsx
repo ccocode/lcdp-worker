@@ -75,7 +75,7 @@ export interface ChatPaneProps {
   fresh: boolean;
   pageContext?: AssistantPageContext;
   onClose?: () => void;
-  /** 工作台：打开指定会话（左栏点选）；抽屉不传 */
+  /** 工作台：打开指定会话（左栏点选） */
   initialConversationId?: string | null;
   /** 工作台：当前会话 id 变化时回告（父级刷新左栏列表用） */
   onConversationChange?: (cid: string | null) => void;
