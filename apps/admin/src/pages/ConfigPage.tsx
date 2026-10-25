@@ -38,6 +38,8 @@ const KEY_LABELS: Record<string, string> = {
   "chat.apiKey": "对话网关密钥",
   "chat.modelStrong": "强模型",
   "chat.modelFast": "快模型",
+  "chat.thinkingStrong": "强模型思考等级",
+  "chat.thinkingFast": "快模型思考等级",
   "chat.timeoutMs": "超时（毫秒）",
   "chat.maxRetries": "最大重试次数",
   "embedding.baseUrl": "向量网关地址",
