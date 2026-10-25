@@ -3,6 +3,8 @@ import {
   ApartmentOutlined,
   AuditOutlined,
   BookOutlined,
+  BulbOutlined,
+  MessageOutlined,
   DashboardOutlined,
   DollarOutlined,
   FileTextOutlined,
@@ -41,7 +43,10 @@ import AppKb from "./pages/AppKb";
 import Submissions from "./pages/Submissions";
 import AppSettings from "./pages/AppSettings";
 import AgentService from "./pages/AgentService";
-import AppAgentService from "./pages/AppAgentService";
+import AppAgentSuggestions from "./pages/AppAgentSuggestions";
+import AppAgentMemory from "./pages/AppAgentMemory";
+import AppAgentFaces from "./pages/AppAgentFaces";
+import AppAgentConversations from "./pages/AppAgentConversations";
 
 /**
  * 页面注册表（第 57 步）：页面定义单点——key / 组件 / 所属段
@@ -70,7 +75,10 @@ export type PageKey =
   | "members"
   | "appkb"
   | "submissions"
-  | "appagentsvc"
+  | "appagentsvc-suggestions"
+  | "appagentsvc-memory"
+  | "appagentsvc-faces"
+  | "appagentsvc-conversations"
   | "app-audit"
   | "appsettings"
   // 领域模版段（内容领域，见 templates/content）
@@ -316,15 +324,46 @@ const APP_DEFS: PageDef[] = [
     render: (ctx) => <AppAssets key={ctx.appId!} appId={ctx.appId!} />,
   },
   {
-    // 第 83 步片二第 3 点：本应用三位助手的日常调整（人设/启停/
-    // 知识范围，保存即生效）+ 运营助手会话记录只读。
-    key: "appagentsvc",
-    label: "智能服务",
+    // 智能服务独立分类（原 AppAgentService 一页四卡拆为四页）：
+    // 主动建议 / 助手记忆 / 智能助手（人设调整）/ 会话记录（分页表）。
+    // 助手工作台不再单设页——对话统一由顶栏助手弹窗承载。
+    key: "appagentsvc-suggestions",
+    label: "主动建议",
+    icon: <BulbOutlined />,
+    segment: "app",
+    section: "智能服务",
+    render: (ctx) => (
+      <AppAgentSuggestions key={ctx.appId!} appId={ctx.appId!} go={ctx.go} />
+    ),
+  },
+  {
+    key: "appagentsvc-memory",
+    label: "助手记忆",
+    icon: <BookOutlined />,
+    segment: "app",
+    section: "智能服务",
+    render: (ctx) => (
+      <AppAgentMemory key={ctx.appId!} appId={ctx.appId!} />
+    ),
+  },
+  {
+    key: "appagentsvc-faces",
+    label: "智能助手",
     icon: <RobotOutlined />,
     segment: "app",
-    section: "运营管理",
+    section: "智能服务",
     render: (ctx) => (
-      <AppAgentService key={ctx.appId!} appId={ctx.appId!} go={ctx.go} />
+      <AppAgentFaces key={ctx.appId!} appId={ctx.appId!} />
+    ),
+  },
+  {
+    key: "appagentsvc-conversations",
+    label: "会话记录",
+    icon: <MessageOutlined />,
+    segment: "app",
+    section: "智能服务",
+    render: (ctx) => (
+      <AppAgentConversations key={ctx.appId!} appId={ctx.appId!} />
     ),
   },
   {

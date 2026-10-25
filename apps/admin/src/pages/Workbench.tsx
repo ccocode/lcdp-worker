@@ -364,7 +364,7 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     if (rule === "A1") go("app-audit");
     else if (rule === "A3") go("support-tickets");
     else if (rule === "A4") go("appsettings");
-    else go("appagentsvc");
+    else go("appagentsvc-suggestions");
   };
 
   // ---------- 区块渲染（注册表） ----------

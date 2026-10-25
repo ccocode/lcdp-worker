@@ -186,8 +186,8 @@ export const HELP: Partial<Record<PageKey, PageHelpEntry>> = {
       },
     ],
   },
-  appagentsvc: {
-    title: "智能服务说明",
+  "appagentsvc-faces": {
+    title: "智能助手说明",
     sections: [
       {
         heading: "本页调整什么",
@@ -201,7 +201,39 @@ export const HELP: Partial<Record<PageKey, PageHelpEntry>> = {
         body: [
           "助手能使用哪些工具、能处理哪些业务，由应用的设计决定，在设计台修改并随发布生效，本页不能扩大。",
           "设计台能看到本页存在调整及其时间，但看不到具体内容；发布新版本不会清掉本页的调整。",
-          "运营助手的会话记录只在本页查看本人会话；每位使用者看到的是自己的记录。",
+        ],
+      },
+    ],
+  },
+  "appagentsvc-suggestions": {
+    title: "主动建议说明",
+    sections: [
+      {
+        heading: "这是什么",
+        body: [
+          "本人任务卡与本应用审计读时派生的建议：去办会记一次处置并按类别深链，延后与忽略只记处置不跳转。",
+        ],
+      },
+    ],
+  },
+  "appagentsvc-memory": {
+    title: "助手记忆说明",
+    sections: [
+      {
+        heading: "这是什么",
+        body: [
+          "助手记住的本人偏好与约定：可新建、编辑、删除；待确认区是助手提议的新记忆，确认后才正式记住。",
+        ],
+      },
+    ],
+  },
+  "appagentsvc-conversations": {
+    title: "会话记录说明",
+    sections: [
+      {
+        heading: "这是什么",
+        body: [
+          "运营助手的会话记录（只读）：本应用管理员档位看本应用全部运营会话，领域角色档位只看本人会话；点查看回放全部消息。",
         ],
       },
     ],

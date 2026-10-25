@@ -7,6 +7,7 @@ import {
   Form,
   Input,
   Modal,
+  Pagination,
   Popconfirm,
   Select,
   Space,
@@ -80,6 +81,9 @@ export default function AssistantMemoryPanel({
   /** 编辑中的条目（null 且 formOpen 为真 = 新增） */
   const [editing, setEditing] = useState<AdminAssistantMemory | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  /** 正式条目分页（条数多时才出分页器；待确认队列保持全量） */
+  const [activePage, setActivePage] = useState(1);
+  const ACTIVE_PAGE_SIZE = 10;
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<MemoryFormValues>();
 
@@ -197,6 +201,13 @@ export default function AssistantMemoryPanel({
       setSaving(false);
     }
   };
+
+  /** 正式条目分页的安全页码（筛选后条数变少时不留空白页） */
+  const activePageCount = Math.max(
+    1,
+    Math.ceil(active.length / ACTIVE_PAGE_SIZE),
+  );
+  const safeActivePage = Math.min(activePage, activePageCount);
 
   const renderMeta = (m: AdminAssistantMemory) => (
     <Space size={4} wrap>
@@ -329,7 +340,12 @@ export default function AssistantMemoryPanel({
         <Empty description="暂无记忆条目" />
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>
-          {active.map((m, i) => (
+          {active
+            .slice(
+              (safeActivePage - 1) * ACTIVE_PAGE_SIZE,
+              safeActivePage * ACTIVE_PAGE_SIZE,
+            )
+            .map((m, i) => (
             <div
               key={m.id}
               style={{
@@ -377,6 +393,15 @@ export default function AssistantMemoryPanel({
               </Popconfirm>
             </div>
           ))}
+          {active.length > ACTIVE_PAGE_SIZE && (
+            <Pagination
+              style={{ marginTop: 12, textAlign: "right" }}
+              current={safeActivePage}
+              pageSize={ACTIVE_PAGE_SIZE}
+              total={active.length}
+              onChange={(p) => setActivePage(p)}
+            />
+          )}
         </div>
       )}
 
