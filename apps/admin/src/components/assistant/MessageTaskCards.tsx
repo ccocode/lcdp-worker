@@ -22,6 +22,18 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   closed: "已收尾",
 };
 
+/** 清单“已过”口径（与工作台左栏 CHECK_PASSED 一致，跳过不算过） */
+const CHECK_PASSED_CARD = new Set([
+  "done",
+  "passed",
+  "pass",
+  "ok",
+  "complete",
+  "completed",
+  "success",
+  "checked",
+]);
+
 /** 派发记录（任务行 artifacts.delegations 的元素，防御式读取） */
 interface DelegationRecord {
   childConversationId?: string;
@@ -109,7 +121,12 @@ function ChecklistRows({ task }: { task: AdminAssistantTask }) {
   );
 }
 
-/** 对话记录里的计划卡片：目标 + 清单 + 下一步 + 状态 */
+/**
+ * 对话记录里的计划卡片（去重方案 A）：默认只显示标题 + 状态 +
+ * 进度 + 下一步，目标与全部步骤收在“展开清单”之后——完整清单
+ * 只在右侧详情里常驻，消息区不再与详情重复展开同一份清单。
+ * 清单为空时无可折叠内容，目标直接显示。
+ */
 export function PlanMessageCard({
   appId,
   taskId,
@@ -118,6 +135,7 @@ export function PlanMessageCard({
   taskId: string;
 }) {
   const { task, missing } = useTaskCard(appId, taskId);
+  const [expanded, setExpanded] = useState(false);
   if (missing) {
     return (
       <Card size="small" title="计划">
@@ -136,6 +154,8 @@ export function PlanMessageCard({
       </Card>
     );
   }
+  const list = task.checklist ?? [];
+  const passed = list.filter((it) => CHECK_PASSED_CARD.has(it.status)).length;
   return (
     <Card
       size="small"
@@ -154,16 +174,31 @@ export function PlanMessageCard({
         <Typography.Text strong style={{ fontSize: 13 }}>
           {task.title}
         </Typography.Text>
-        {task.goal && (
+        {list.length > 0 && (
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            目标：{task.goal}
+            清单 {passed}/{list.length}
           </Typography.Text>
         )}
-        <ChecklistRows task={task} />
         {task.nextStep && (
           <Typography.Text style={{ fontSize: 13 }}>
             下一步：{task.nextStep}
           </Typography.Text>
+        )}
+        {(expanded || list.length === 0) && task.goal && (
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            目标：{task.goal}
+          </Typography.Text>
+        )}
+        {expanded && <ChecklistRows task={task} />}
+        {list.length > 0 && (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, alignSelf: "flex-start" }}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? "收起清单" : `展开清单（${list.length} 步）`}
+          </Button>
         )}
       </div>
     </Card>

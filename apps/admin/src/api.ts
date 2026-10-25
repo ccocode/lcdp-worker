@@ -449,6 +449,8 @@ export interface AdminAssistantTask {
   id: string;
   title: string;
   status: string;
+  /** 任务种类（服务端 taskView 本就回，前端此前漏声明）：plan 计划、theme_build 主题 */
+  kind?: string;
   checklist: { label: string; status: string; evidence?: string }[];
   updatedAt: string | null;
   /** 目标一句话（设计 6.3 状态卡字段，二期详情透出） */

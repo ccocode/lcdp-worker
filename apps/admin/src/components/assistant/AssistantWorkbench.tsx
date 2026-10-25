@@ -39,6 +39,12 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   closed: "已收尾",
 };
 
+/** 任务种类中文：左栏行首标明，任务与计划任务同属一张表、只是种类不同 */
+const TASK_KIND_LABELS: Record<string, string> = {
+  plan: "计划",
+  theme_build: "主题",
+};
+
 const CHECK_PASSED = new Set([
   "done",
   "passed",
@@ -391,6 +397,11 @@ export default function AssistantWorkbench({
                       marginTop: 2,
                     }}
                   >
+                    {t.kind && (
+                      <Tag style={{ marginInlineEnd: 0 }}>
+                        {TASK_KIND_LABELS[t.kind] ?? t.kind}
+                      </Tag>
+                    )}
                     <Tag style={{ marginInlineEnd: 0 }}>
                       {TASK_STATUS_LABELS[t.status] ?? t.status}
                     </Tag>
