@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Empty,
@@ -183,7 +183,7 @@ export default function AssistantWorkbench({
    * 列表据此滤子会话；任务行本身不删除，故“全部”口径下集合
    * 完备，不受任务状态影响）。
    */
-  const loadAllTasks = useCallback(async () => {
+  const loadAllTasks = useCallback(async (): Promise<AdminAssistantTask[]> => {
     try {
       const list = await api.assistant.app.tasks(appId, { status: "all" });
       setTasks(list);
@@ -200,17 +200,24 @@ export default function AssistantWorkbench({
         }
       }
       setChildCids(ids);
+      return list;
     } catch {
       setTasks([]);
+      return [];
     }
   }, [appId]);
 
+  /** 深链目标任务 id（防连续深链时旧的重拉回包抢切中栏） */
+  const focusTaskIdRef = useRef<string | null>(null);
+
   // 主动建议定位（第 95 步线 B）：深链打开任务详情时，中栏一并
-  // 切到该任务所属会话、右栏打开其详情（左到右层级一致）；缓存
-  // 里没有则重拉一次，选中态 sticky，重拉后派生即命中。
+  // 切到该任务所属会话、右栏打开其详情（左到右层级一致）。
+  // 缓存里没有（如弹窗刚挂载、任务尚未拉回）则链式重拉一次，
+  // 以回包里的任务补切中栏——深链落位不再依赖详情内的按钮。
   useEffect(() => {
     if (!focusTask) return;
     const { taskId } = focusTask;
+    focusTaskIdRef.current = taskId;
     const found = tasks.find((t) => t.id === taskId);
     if (found?.conversationId) {
       setCurrentCid(found.conversationId);
@@ -223,7 +230,19 @@ export default function AssistantWorkbench({
     setSelectedTaskId(taskId);
     setDelegationView(null);
     onExpandRight?.();
-    if (!found) void loadAllTasks();
+    if (!found) {
+      void loadAllTasks().then((list) => {
+        if (focusTaskIdRef.current !== taskId) return;
+        const f = list.find((t) => t.id === taskId);
+        if (!f?.conversationId) return;
+        setCurrentCid(f.conversationId);
+        setSession({
+          key: `conv:${f.conversationId}`,
+          cid: f.conversationId,
+          fresh: false,
+        });
+      });
+    }
     // 仅以 focusTask 为触发信号：缓存变化由派生自理
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTask]);
@@ -256,20 +275,13 @@ export default function AssistantWorkbench({
 
   /**
    * 左栏选会话（左到右展开的起点）：中栏切到该会话，右栏重置
-   * （详情属于旧会话的卡片，不跟到新会话）；详情自带的“查看
-   * 对话”走 viewTaskConversation，不重置。
+   * （详情属于旧会话的卡片，不跟到新会话）。
    */
   const openConversation = (cid: string) => {
     setCurrentCid(cid);
     setSession({ key: `conv:${cid}`, cid, fresh: false });
     setDelegationView(null);
     setSelectedTaskId(null);
-  };
-
-  /** 详情自带的“查看对话”：中栏切到该任务所属会话，右栏详情保留 */
-  const viewTaskConversation = (cid: string) => {
-    setCurrentCid(cid);
-    setSession({ key: `conv:${cid}`, cid, fresh: false });
   };
 
   /** 派发卡片“查看详情”：右侧切到子代理详情（并把右侧展开；
@@ -455,27 +467,15 @@ export default function AssistantWorkbench({
           <TaskDetail
             task={selectedTask}
             footer={
-              <>
-                {selectedTask.status === "active" && (
-                  <Button
-                    size="small"
-                    type="primary"
-                    onClick={() => continueTask(selectedTask)}
-                  >
-                    继续
-                  </Button>
-                )}
-                {selectedTask.conversationId && (
-                  <Button
-                    size="small"
-                    onClick={() =>
-                      viewTaskConversation(selectedTask.conversationId as string)
-                    }
-                  >
-                    查看对话
-                  </Button>
-                )}
-              </>
+              selectedTask.status === "active" ? (
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => continueTask(selectedTask)}
+                >
+                  继续
+                </Button>
+              ) : undefined
             }
           />
         ) : (
