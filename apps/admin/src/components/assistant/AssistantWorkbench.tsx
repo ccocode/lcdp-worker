@@ -84,6 +84,11 @@ function DelegationDetail({
           目标：{target.goal}
         </Typography.Text>
       )}
+      {target.roundLabel && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {target.roundLabel}
+        </Typography.Text>
+      )}
       <Typography.Text strong style={{ fontSize: 13 }}>
         对话记录
       </Typography.Text>

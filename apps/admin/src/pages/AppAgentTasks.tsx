@@ -18,6 +18,7 @@ import TaskDetail, {
   TASK_STATUS_LABELS,
   countPassed,
 } from "../components/assistant/TaskDetail";
+import { formatDelegationRound } from "../components/assistant/MessageTaskCards";
 import { useAssistantShell } from "../shell/assistantShellContext";
 
 /** 派发记录（任务行 artifacts.delegations 的元素，防御式读取） */
@@ -26,6 +27,9 @@ interface DelegationRecord {
   stepLabel?: string;
   goal?: string;
   status?: string;
+  loop?: boolean;
+  loopMax?: number;
+  rounds?: { verdict: string; failedItems: string[] }[];
 }
 
 function readDelegations(task: AdminAssistantTask): DelegationRecord[] {
@@ -191,6 +195,11 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
                   <span style={{ flex: 1, minWidth: 0 }}>
                     {d.stepLabel ?? `第 ${i + 1} 步`}
                   </span>
+                  {formatDelegationRound(d) && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {formatDelegationRound(d)}
+                    </Typography.Text>
+                  )}
                   <Tag
                     style={{ marginInlineEnd: 0 }}
                     color={

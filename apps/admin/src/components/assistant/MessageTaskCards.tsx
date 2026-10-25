@@ -41,6 +41,35 @@ interface DelegationRecord {
   goal?: string;
   status?: string;
   resultPointer?: string | null;
+  loop?: boolean;
+  loopMax?: number;
+  rounds?: {
+    round: number;
+    verdict: string;
+    failedItems: string[];
+    messageId: string;
+  }[];
+}
+
+/**
+ * 有界循环轮次文案（仅 loop 派发）：进行中为已完成轮数加一，终态为
+ * 总轮数；末轮未过时附本轮未过原因。一轮制派发返回 null，显示原样。
+ */
+export function formatDelegationRound(dep: {
+  loop?: boolean;
+  loopMax?: number;
+  status?: string;
+  rounds?: { verdict: string; failedItems: string[] }[];
+}): string | null {
+  if (!dep.loop) return null;
+  const done = dep.rounds?.length ?? 0;
+  const cur = dep.status === "running" ? done + 1 : done;
+  const last = (dep.rounds ?? [])[done - 1];
+  const failText =
+    last && last.verdict === "failed" && last.failedItems.length > 0
+      ? `（本轮未过：${last.failedItems.join("、")}）`
+      : "";
+  return `第 ${cur}/${dep.loopMax ?? 3} 轮${failText}`;
 }
 
 function readDelegations(task: AdminAssistantTask): DelegationRecord[] {
@@ -223,6 +252,7 @@ export interface DelegationViewTarget {
   stepLabel: string;
   goal: string;
   childConversationId: string;
+  roundLabel?: string;
 }
 
 /**
@@ -278,6 +308,7 @@ export function DelegationMessageCard({
         : dep.status === "failed"
           ? "失败"
           : (dep.status ?? "未知");
+  const roundLabel = formatDelegationRound(dep);
   return (
     <Card
       size="small"
@@ -310,6 +341,11 @@ export function DelegationMessageCard({
             目标：{dep.goal}
           </Typography.Text>
         )}
+        {roundLabel && (
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            {roundLabel}
+          </Typography.Text>
+        )}
         {dep.childConversationId && onOpenDelegation && (
           <div>
             <Button
@@ -321,6 +357,7 @@ export function DelegationMessageCard({
                   stepLabel: dep.stepLabel ?? `第 ${index + 1} 步`,
                   goal: dep.goal ?? "",
                   childConversationId: dep.childConversationId as string,
+                  roundLabel: roundLabel ?? undefined,
                 })
               }
             >
