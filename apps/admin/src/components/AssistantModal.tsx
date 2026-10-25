@@ -169,6 +169,8 @@ export default function AssistantModal({
         alignItems: "center",
         gap: 8,
         width: "100%",
+        // 标题栏右上角有关闭 X：按钮组右侧留空，避免最右按钮被 X 遮挡
+        paddingRight: 36,
       }}
     >
       <span style={{ fontWeight: 600 }}>{title}</span>
@@ -176,11 +178,13 @@ export default function AssistantModal({
         <Badge status="processing" text="任务进行中" />
       )}
       <span style={{ flex: 1 }} />
-      {!appId && (
-        <Button size="small" onClick={() => setSeed((s) => s + 1)}>
-          新对话
-        </Button>
-      )}
+      {/* 最小化放按钮组最左，离 X 最远，不易误触关闭 */}
+      <Button
+        size="small"
+        icon={<MinusOutlined />}
+        title="最小化"
+        onClick={() => setMinimized(true)}
+      />
       {appId && !narrow && (
         <>
           <Button
@@ -205,12 +209,11 @@ export default function AssistantModal({
           </Button>
         </>
       )}
-      <Button
-        size="small"
-        icon={<MinusOutlined />}
-        title="最小化"
-        onClick={() => setMinimized(true)}
-      />
+      {!appId && (
+        <Button size="small" onClick={() => setSeed((s) => s + 1)}>
+          新对话
+        </Button>
+      )}
     </div>
   );
 
@@ -222,7 +225,10 @@ export default function AssistantModal({
       footer={null}
       width="min(1240px, 96vw)"
       centered
-      maskClosable
+      // 无遮罩：弹窗打开时页面仍可操作，切应用与页内跳转才能发生，
+      // 切应用提示与“弹窗不受页面跳转影响”才可达（有遮罩时切换器
+      // 被遮罩挡住、切应用提示永远触发不了，线上实测已证实）
+      mask={false}
       styles={{
         body: {
           height: "min(78vh, 860px)",
