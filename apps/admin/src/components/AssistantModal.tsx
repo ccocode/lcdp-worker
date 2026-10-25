@@ -200,6 +200,8 @@ export default function AssistantModal({
     );
   }
 
+  // 标题栏只留文字与状态，不再放操作按钮——标题右侧的关闭 X
+  // 与按钮组重叠无从再发生；操作按钮统一移到体内的工具栏行。
   const titleNode = (
     <div
       onMouseDown={onTitleMouseDown}
@@ -209,53 +211,34 @@ export default function AssistantModal({
         gap: 8,
         width: "100%",
         cursor: "grab",
-        // 标题栏右上角有关闭 X：按钮组右侧留空，避免最右按钮被 X 遮挡
-        paddingRight: 36,
       }}
     >
       <span style={{ fontWeight: 600 }}>{title}</span>
       {running && (
         <Badge status="processing" text="任务进行中" />
       )}
-      <span style={{ flex: 1 }} />
-      {/* 最小化放按钮组最左，离 X 最远，不易误触关闭 */}
-      <Button
-        size="small"
-        icon={<MinusOutlined />}
-        title="最小化"
-        onClick={() => setMinimized(true)}
-      />
-      {appId && !narrow && (
-        <>
-          <Button
-            size="small"
-            icon={
-              leftCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
-            }
-            title={leftCollapsed ? "展开会话栏" : "收起会话栏"}
-            onClick={() => setLeftCollapsed((v) => !v)}
-          >
-            会话
-          </Button>
-          <Button
-            size="small"
-            icon={
-              rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
-            }
-            title={rightCollapsed ? "展开详情栏" : "收起详情栏"}
-            onClick={() => setRightCollapsed((v) => !v)}
-          >
-            详情
-          </Button>
-        </>
-      )}
-      {!appId && (
-        <Button size="small" onClick={() => setSeed((s) => s + 1)}>
-          新对话
-        </Button>
-      )}
     </div>
   );
+
+  /**
+   * 对话内容宽度固定（用户修订）：弹窗宽度跟随可见面板变化——
+   * 对话固定 720px，左栏 264px、右栏 300px，收起即减去对应宽度；
+   * 窄屏时宽度跟随当前面板；平台面无面板即 720px。
+   */
+  const CHAT_WIDTH = 720;
+  const LEFT_WIDTH = 264;
+  const RIGHT_WIDTH = 300;
+  const modalWidth = !appId
+    ? CHAT_WIDTH
+    : narrow
+      ? narrowTab === "chat"
+        ? CHAT_WIDTH
+        : narrowTab === "left"
+          ? LEFT_WIDTH
+          : RIGHT_WIDTH
+      : CHAT_WIDTH +
+        (leftCollapsed ? 0 : LEFT_WIDTH) +
+        (rightCollapsed ? 0 : RIGHT_WIDTH);
 
   return (
     <Modal
@@ -263,13 +246,14 @@ export default function AssistantModal({
       open
       onCancel={() => void requestClose()}
       footer={null}
-      width="min(1240px, 96vw)"
+      width={`min(${modalWidth}px, 96vw)`}
       centered
       style={{
         transform:
           dragOffset.x !== 0 || dragOffset.y !== 0
             ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
             : undefined,
+        transition: "width 0.2s ease",
       }}
       // 无遮罩 + wrap 层点击穿透：弹窗打开时页面仍可操作，切应用
       // 与页内跳转才能发生。只去遮罩不够——rc-dialog 的 wrap 层整屏
@@ -290,15 +274,17 @@ export default function AssistantModal({
         },
       }}
     >
-      {appId && narrow && (
-        <div
-          style={{
-            padding: "8px 12px",
-            borderBottom: "1px solid #f0f0f0",
-            display: "flex",
-            justifyContent: "center",
-          }}
-        >
+      {/* 工具栏行：标题栏不再放按钮，操作按钮统一放这里 */}
+      <div
+        style={{
+          padding: "8px 12px",
+          borderBottom: "1px solid #f0f0f0",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        {appId && narrow ? (
           <Segmented
             value={narrowTab}
             onChange={(v) => setNarrowTab(v as "left" | "chat" | "right")}
@@ -308,8 +294,42 @@ export default function AssistantModal({
               { label: "详情", value: "right" },
             ]}
           />
-        </div>
-      )}
+        ) : appId ? (
+          <>
+            <Button
+              size="small"
+              icon={
+                leftCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
+              }
+              title={leftCollapsed ? "展开会话栏" : "收起会话栏"}
+              onClick={() => setLeftCollapsed((v) => !v)}
+            >
+              会话
+            </Button>
+            <Button
+              size="small"
+              icon={
+                rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
+              }
+              title={rightCollapsed ? "展开详情栏" : "收起详情栏"}
+              onClick={() => setRightCollapsed((v) => !v)}
+            >
+              详情
+            </Button>
+          </>
+        ) : (
+          <Button size="small" onClick={() => setSeed((s) => s + 1)}>
+            新对话
+          </Button>
+        )}
+        <span style={{ flex: 1 }} />
+        <Button
+          size="small"
+          icon={<MinusOutlined />}
+          title="最小化"
+          onClick={() => setMinimized(true)}
+        />
+      </div>
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         {appId ? (
           <AssistantWorkbench

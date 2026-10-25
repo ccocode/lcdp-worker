@@ -26,6 +26,10 @@ import {
   turnStepsOf,
   type TurnStep,
 } from "./turnSteps";
+import {
+  DelegationMessageCard,
+  PlanMessageCard,
+} from "./MessageTaskCards";
 
 /**
  * 管理台助手对话面（第 83 步片四起，第 90 步线 A 升级，第 91 步线 A
@@ -78,6 +82,8 @@ export interface ChatPaneProps {
   draftSignal?: { text: string; nonce: number } | null;
   /** 工作台：隐藏 A5 任务卡横条（右栏已有任务详情） */
   hideTaskBar?: boolean;
+  /** 工作台：消息内派发卡片的“查看子代理会话”（打开子会话）；平台面不传 */
+  onOpenConversation?: (cid: string) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -391,6 +397,7 @@ export default function ChatPane({
   onConversationChange,
   draftSignal,
   hideTaskBar,
+  onOpenConversation,
 }: ChatPaneProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
@@ -754,8 +761,28 @@ export default function ChatPane({
             ))}
           </div>
         )}
-        {!isUser && msg.payload && (
-          <PayloadCard payload={msg.payload} onClose={onClose} />
+        {!isUser &&
+          msg.payload &&
+          // 结果卡只在有可展示内容时渲染：路由 verdict 等纯标记
+          // payload（无 kind/标题/动作）此前会误出一张空“已完成”卡
+          (msg.payload.kind === "themeCreated" ||
+            (msg.payload.actions ?? []).length > 0 ||
+            !!msg.payload.title) && (
+            <PayloadCard payload={msg.payload} onClose={onClose} />
+          )}
+        {!isUser && appId && msg.payload?.planCard && (
+          <PlanMessageCard
+            appId={appId}
+            taskId={msg.payload.planCard.taskId}
+          />
+        )}
+        {!isUser && appId && msg.payload?.delegationCard && (
+          <DelegationMessageCard
+            appId={appId}
+            taskId={msg.payload.delegationCard.taskId}
+            index={msg.payload.delegationCard.index}
+            onOpenConversation={onOpenConversation}
+          />
         )}
         {!isUser && msg.pendingAction && (
           <Card

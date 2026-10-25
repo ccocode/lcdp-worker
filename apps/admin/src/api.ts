@@ -438,6 +438,10 @@ export interface AdminAssistantPayload {
   title?: string;
   actions?: AdminAssistantPayloadAction[];
   data?: Record<string, unknown>;
+  /** 对话记录里的计划卡片指针（103-6 用户修订）：只存任务 id */
+  planCard?: { taskId: string };
+  /** 对话记录里的派发卡片指针（103-6 用户修订）：任务 id + 派发序号 */
+  delegationCard?: { taskId: string; index: number };
 }
 
 /** 助手任务卡行（第 90 步线 B tasks 端点；第 91 步线 A 工作台补全详情字段，皆可选、缺失即不展示） */

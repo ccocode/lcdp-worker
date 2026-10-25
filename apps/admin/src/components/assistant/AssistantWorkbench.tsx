@@ -444,6 +444,7 @@ export default function AssistantWorkbench({
           }}
           hideTaskBar
           draftSignal={draftSignal}
+          onOpenConversation={openConversation}
           onConversationChange={(cid) => {
             setCurrentCid(cid);
             void loadConversations();
