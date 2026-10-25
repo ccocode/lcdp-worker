@@ -45,9 +45,10 @@ import {
  * - 富渲染（第 90 步 A2）：消息 text 经自写小解析器渲染（linkify +
  *   轻量 markdown 子集），全程走 React 文本节点、天然转义。
  * - 结果卡（第 90 步 A3）：助手消息可带 payload 结构化结果。
- * - 上下文带入（第 90 步 A4）：外壳/页面组装 context 透传回合，
- *   对话顶部一行小字明示；应用上下文另有进行中任务卡横条（A5，
- *   工作台形态以 hideTaskBar 关闭——右栏已有任务详情）。
+ * - 上下文带入（第 90 步 A4）：外壳/页面组装 context 透传回合
+ *   （服务端收 pageContext；顶部明示行已于 103-6 用户修订中删
+ *   除）；应用上下文另有进行中任务卡横条（A5，工作台形态以
+ *   hideTaskBar 关闭——右栏已有任务详情）。
  * - 过程可见（第 91 步 A2）：生成中消息下方呈现步骤流（助手文本
  *   即 say 行 + 工具调用摘要〔turnSteps 适配点归一〕+ 已耗时），
  *   并给「中止」按钮（调线 B 取消端点，失败静默降级不崩）；
@@ -814,12 +815,6 @@ export default function ChatPane({
     );
   };
 
-  /** A4 上下文明示行：应用上下文写应用与页面，平台上下文写「平台」 */
-  const contextLine = appId
-    ? `上下文：本应用${pageContext?.pageName ? ` · ${pageContext.pageName}` : ""}${
-        pageContext?.entityKey ? ` · 实体 ${pageContext.entityKey}` : ""
-      }`
-    : "上下文：平台";
   const taskPassed = activeTask
     ? activeTask.checklist.filter((it) => PASSED_STATUS.has(it.status)).length
     : 0;
@@ -829,16 +824,6 @@ export default function ChatPane({
 
   return (
     <>
-      <div
-        style={{
-          padding: "8px 16px",
-          borderBottom: `1px solid ${tokens.colorDivider}`,
-          color: tokens.colorTextTertiary,
-          fontSize: 12,
-        }}
-      >
-        {contextLine}
-      </div>
       {activeTask && !hideTaskBar && (
         <div
           style={{

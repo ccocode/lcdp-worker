@@ -59,6 +59,43 @@ export default function AssistantModal({
   );
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
+  /** 拖拽偏移（标题栏拖动；所装 antd 无 Modal 拖拽属性，手动实现） */
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+  } | null>(null);
+
+  /** 标题栏按下即开始拖动（点中按钮则不拖，保证按钮点击正常） */
+  const onTitleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if ((e.target as HTMLElement).closest("button")) return;
+      dragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        baseX: dragOffset.x,
+        baseY: dragOffset.y,
+      };
+      const onMove = (ev: MouseEvent) => {
+        const d = dragRef.current;
+        if (!d) return;
+        setDragOffset({
+          x: d.baseX + ev.clientX - d.startX,
+          y: d.baseY + ev.clientY - d.startY,
+        });
+      };
+      const onUp = () => {
+        dragRef.current = null;
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [dragOffset],
+  );
   const [narrow, setNarrow] = useState(
     () => typeof window !== "undefined" && window.innerWidth < 900,
   );
@@ -141,7 +178,8 @@ export default function AssistantModal({
     });
   }, [appId, doClose, refreshRunning]);
 
-  const title = appId ? `运营助手 · ${appName ?? appId}` : "平台助手";
+  /** 标题不带应用名（用户修订）：只留助手身份 */
+  const title = appId ? "运营助手" : "平台助手";
 
   if (!open) return null;
 
@@ -164,11 +202,13 @@ export default function AssistantModal({
 
   const titleNode = (
     <div
+      onMouseDown={onTitleMouseDown}
       style={{
         display: "flex",
         alignItems: "center",
         gap: 8,
         width: "100%",
+        cursor: "grab",
         // 标题栏右上角有关闭 X：按钮组右侧留空，避免最右按钮被 X 遮挡
         paddingRight: 36,
       }}
@@ -225,13 +265,19 @@ export default function AssistantModal({
       footer={null}
       width="min(1240px, 96vw)"
       centered
+      style={{
+        transform:
+          dragOffset.x !== 0 || dragOffset.y !== 0
+            ? `translate(${dragOffset.x}px, ${dragOffset.y}px)`
+            : undefined,
+      }}
       // 无遮罩：弹窗打开时页面仍可操作，切应用与页内跳转才能发生，
       // 切应用提示与“弹窗不受页面跳转影响”才可达（有遮罩时切换器
       // 被遮罩挡住、切应用提示永远触发不了，线上实测已证实）
       mask={false}
       styles={{
         body: {
-          height: "min(78vh, 860px)",
+          height: "min(70vh, 720px)",
           padding: 0,
           overflow: "hidden",
           display: "flex",

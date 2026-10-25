@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Empty,
+  Segmented,
   Select,
   Tag,
   Typography,
@@ -124,6 +125,10 @@ export default function AssistantWorkbench({
   const [conversations, setConversations] = useState<AdminAssistantConversation[]>([]);
   const [tasks, setTasks] = useState<AdminAssistantTask[]>([]);
   const [taskStatus, setTaskStatus] = useState<string>("active");
+  /** 第 103 步步骤 6 用户修订：左栏会话与任务改选项卡切换 */
+  const [leftTab, setLeftTab] = useState<"conversations" | "tasks">(
+    "conversations",
+  );
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [session, setSession] = useState<PaneSession>({
     key: "latest",
@@ -275,14 +280,22 @@ export default function AssistantWorkbench({
             borderBottom: `1px solid ${tokens.colorDivider}`,
           }}
         >
-          <Typography.Text strong style={{ fontSize: 13, flex: 1 }}>
-            会话
-          </Typography.Text>
+          <Segmented
+            size="small"
+            style={{ flex: 1 }}
+            value={leftTab}
+            onChange={(v) => setLeftTab(v as "conversations" | "tasks")}
+            options={[
+              { label: "会话", value: "conversations" },
+              { label: "任务", value: "tasks" },
+            ]}
+          />
           <Button size="small" onClick={startNew}>
             新对话
           </Button>
         </div>
-        <div style={{ overflowY: "auto", maxHeight: 240 }}>
+        {leftTab === "conversations" ? (
+        <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
           {conversations.length === 0 ? (
             <div style={{ padding: "12px", color: tokens.colorTextTertiary, fontSize: 12 }}>
               暂无会话
@@ -314,18 +327,19 @@ export default function AssistantWorkbench({
             ))
           )}
         </div>
+        ) : (
+        <>
         <div
           style={{
             padding: "10px 12px",
             display: "flex",
             alignItems: "center",
             gap: 8,
-            borderTop: `1px solid ${tokens.colorDivider}`,
             borderBottom: `1px solid ${tokens.colorDivider}`,
           }}
         >
           <Typography.Text strong style={{ fontSize: 13, flex: 1 }}>
-            任务
+            任务状态
           </Typography.Text>
           <Select
             size="small"
@@ -403,6 +417,8 @@ export default function AssistantWorkbench({
             })
           )}
         </div>
+        </>
+        )}
       </div>
 
       {/* 中栏：对话（共用 ChatPane） */}
