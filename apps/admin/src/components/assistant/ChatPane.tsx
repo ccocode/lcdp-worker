@@ -28,6 +28,7 @@ import {
 } from "./turnSteps";
 import {
   DelegationMessageCard,
+  OptionsMessageCard,
   PlanMessageCard,
   type DelegationViewTarget,
 } from "./MessageTaskCards";
@@ -409,6 +410,8 @@ export default function ChatPane({
   const [sending, setSending] = useState(false);
   const [turnError, setTurnError] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  /** 选项卡片点选中（messageId:key，防重复点选；发送中亦禁用） */
+  const [choosingKey, setChoosingKey] = useState<string | null>(null);
   /** A5：进行中任务（应用上下文才查；查不到/失败保持 null 不显示） */
   const [activeTask, setActiveTask] = useState<AdminAssistantTask | null>(null);
   /** 线 B · B2：最近一次会话详情顶层的工具调用（步骤流适配点数据源） */
@@ -443,6 +446,10 @@ export default function ChatPane({
     appId
       ? api.assistant.app.confirm(appId, messageId, decision)
       : api.assistant.confirm(messageId, decision);
+  const chooseOptionAction = (messageId: string, key: string) =>
+    appId
+      ? api.assistant.app.chooseOption(appId, messageId, key)
+      : api.assistant.chooseOption(messageId, key);
   const cancelTurn = (cid: string) =>
     appId ? api.assistant.app.cancel(appId, cid) : api.assistant.cancel(cid);
 
@@ -677,6 +684,42 @@ export default function ChatPane({
     }
   };
 
+  /**
+   * 选项卡片点选：先调选择端点记 chosenKey（卡片立即翻已选态），再以
+   * 所选项发一条用户消息续跑（复用 sendText 的受理 + 轮询）。选择已
+   * 记但发送失败时卡片仍为已选，用户可在输入框打字继续，不会重复点选。
+   */
+  const handleChooseOption = async (
+    msg: AdminAssistantMessage,
+    key: string,
+    label: string,
+  ) => {
+    const card = msg.payload?.optionsCard;
+    if (!card || card.chosenKey || choosingKey || sending) return;
+    setChoosingKey(`${msg.id}:${key}`);
+    try {
+      await chooseOptionAction(msg.id, key);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msg.id && m.payload?.optionsCard
+            ? {
+                ...m,
+                payload: {
+                  ...m.payload,
+                  optionsCard: { ...m.payload.optionsCard, chosenKey: key },
+                },
+              }
+            : m,
+        ),
+      );
+      await sendText(`我选：${label}`);
+    } catch (err) {
+      antdMessage.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setChoosingKey(null);
+    }
+  };
+
   const renderMessage = (msg: AdminAssistantMessage, index: number) => {
     if (msg.role === "system") {
       return (
@@ -787,6 +830,17 @@ export default function ChatPane({
             taskId={msg.payload.delegationCard.taskId}
             index={msg.payload.delegationCard.index}
             onOpenDelegation={onOpenDelegation}
+          />
+        )}
+        {!isUser && msg.payload?.optionsCard && (
+          <OptionsMessageCard
+            card={msg.payload.optionsCard}
+            choosingKey={
+              choosingKey?.startsWith(`${msg.id}:`)
+                ? choosingKey.slice(msg.id.length + 1)
+                : null
+            }
+            onChoose={(key, label) => void handleChooseOption(msg, key, label)}
           />
         )}
         {!isUser && msg.pendingAction && (

@@ -11,6 +11,7 @@ import { Button, Card, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
   api,
+  type AdminAssistantOptionsCard,
   type AdminAssistantTask,
 } from "../../api";
 
@@ -365,6 +366,72 @@ export function DelegationMessageCard({
             </Button>
           </div>
         )}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * 选项卡片（选项类型消息）：助手出选择题时挂在气泡下方，点选项即
+ * 确认——调用方先记选择、再以所选项发用户消息续跑。推荐项主按钮 +
+ * “推荐”标记 + 理由小字；已选后全部按钮禁用并显示已选项（服务端
+ * chosenKey 持久化，刷新不复活）。卡片自身不发请求，只呈现与回调。
+ */
+export function OptionsMessageCard({
+  card,
+  choosingKey,
+  onChoose,
+}: {
+  card: AdminAssistantOptionsCard;
+  choosingKey?: string | null;
+  onChoose: (key: string, label: string) => void;
+}) {
+  const chosen = card.options.find((o) => o.key === card.chosenKey) ?? null;
+  const options = Array.isArray(card.options) ? card.options : [];
+  if (options.length === 0) return null;
+  return (
+    <Card
+      size="small"
+      title={card.question ? `请选择：${card.question}` : "请选择"}
+      style={{ borderColor: tokens.colorPrimary }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {options.map((o) => {
+          const isRecommended = o.key === card.recommendedKey;
+          const isChosen = o.key === card.chosenKey;
+          return (
+            <div key={o.key}>
+              <Button
+                block
+                size="small"
+                type={isRecommended && !chosen ? "primary" : "default"}
+                disabled={!!chosen || !!choosingKey}
+                loading={choosingKey === o.key}
+                onClick={() => onChoose(o.key, o.label)}
+                style={{ justifyContent: "flex-start", height: "auto", padding: "4px 8px", whiteSpace: "normal", textAlign: "left" }}
+              >
+                {o.label}
+                {isRecommended && !chosen ? "（推荐）" : ""}
+                {isChosen ? "（已选）" : ""}
+              </Button>
+              {o.description ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{ display: "block", fontSize: 12, marginTop: 2 }}
+                >
+                  {o.description}
+                </Typography.Text>
+              ) : null}
+            </div>
+          );
+        })}
+        {chosen ? (
+          <Tag color="success">已选：{chosen.label}</Tag>
+        ) : card.recommendReason ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            推荐理由：{card.recommendReason}
+          </Typography.Text>
+        ) : null}
       </div>
     </Card>
   );

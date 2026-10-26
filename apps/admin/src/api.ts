@@ -433,6 +433,22 @@ export interface AdminAssistantPayloadAction {
  * （如 theme_create 成功）时给最终助手消息附带；data 只放非敏感展示
  * 字段。界面按 kind 渲染结果卡，未知 kind 回落通用卡，不阻塞文本呈现。
  */
+export interface AdminAssistantOptionsCardItem {
+  key: string;
+  label: string;
+  description?: string;
+}
+
+/** 选项卡片（选项类型消息）：助手出选择题时挂在消息 payload 上 */
+export interface AdminAssistantOptionsCard {
+  question?: string;
+  options: AdminAssistantOptionsCardItem[];
+  recommendedKey: string;
+  recommendReason?: string;
+  chosenKey?: string;
+  chosenAt?: string;
+}
+
 export interface AdminAssistantPayload {
   kind: string;
   title?: string;
@@ -442,6 +458,8 @@ export interface AdminAssistantPayload {
   planCard?: { taskId: string };
   /** 对话记录里的派发卡片指针（103-6 用户修订）：任务 id + 派发序号 */
   delegationCard?: { taskId: string; index: number };
+  /** 对话记录里的选项卡片：助手出选择题时的选项与推荐项 */
+  optionsCard?: AdminAssistantOptionsCard;
 }
 
 /** 助手任务卡行（第 90 步线 B tasks 端点；第 91 步线 A 工作台补全详情字段，皆可选、缺失即不展示） */
@@ -1775,6 +1793,19 @@ export const api = {
       );
     },
     /**
+     * 选项卡片点选：只记选择（chosenKey），不执行写操作；点选后由调用
+     * 方以所选项发一条用户消息续跑对话。
+     */
+    async chooseOption(
+      messageId: string,
+      key: string,
+    ): Promise<{ ok: boolean; chosenKey: string; label: string }> {
+      return apiFetch(
+        `/admin/assistant/messages/${encodeURIComponent(messageId)}/options-choice`,
+        { method: "POST", body: JSON.stringify({ key }) },
+      );
+    },
+    /**
      * 中止本会话进行中的回合（第 91 步线 B · B2）：服务端置生成中
      * 消息 failed 并停后续工具步。端点未就绪时调用方静默降级。
      */
@@ -1836,6 +1867,17 @@ export const api = {
         return apiFetch(
           `/admin/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
           { method: "POST", body: JSON.stringify({ decision }) },
+        );
+      },
+      /** 应用组选项卡片点选（口径同平台组 chooseOption） */
+      async chooseOption(
+        appId: string,
+        messageId: string,
+        key: string,
+      ): Promise<{ ok: boolean; chosenKey: string; label: string }> {
+        return apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/messages/${encodeURIComponent(messageId)}/options-choice`,
+          { method: "POST", body: JSON.stringify({ key }) },
         );
       },
       /** 中止本应用会话进行中的回合（第 91 步线 B · B2，口径同平台组 cancel） */
