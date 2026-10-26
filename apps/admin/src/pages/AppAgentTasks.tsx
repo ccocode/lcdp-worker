@@ -9,7 +9,7 @@
  * 的审计面，详情层不跨实体取数。
  */
 import { useCallback, useEffect, useState } from "react";
-import { Button, Drawer, Spin, Table, Tag, Typography } from "antd";
+import { Button, Drawer, Segmented, Spin, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
@@ -138,6 +138,15 @@ function TaskRunNodes({
 export default function AppAgentTasks({ appId }: { appId: string }) {
   const [tasks, setTasks] = useState<AdminAssistantTask[]>([]);
   const [loading, setLoading] = useState(true);
+  /** 记录页默认只看未终态（active）；已收尾（run 完成自动关的卡）
+   * 在「已收尾」里查，全部含已放弃/清单已办结等旧态。 */
+  const [statusView, setStatusView] = useState<"active" | "closed" | "all">(
+    "active",
+  );
+  const visibleTasks =
+    statusView === "all"
+      ? tasks
+      : tasks.filter((t) => t.status === statusView);
   const [detail, setDetail] = useState<AdminAssistantTask | null>(null);
   /** 子会话审计抽屉：派发记录 → 子会话原文（只读） */
   const [childDetail, setChildDetail] = useState<{
@@ -286,10 +295,21 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
 
   return (
     <div>
+      <div style={{ marginBottom: 12 }}>
+        <Segmented
+          options={[
+            { label: "进行中", value: "active" },
+            { label: "已收尾", value: "closed" },
+            { label: "全部", value: "all" },
+          ]}
+          value={statusView}
+          onChange={(v) => setStatusView(v as "active" | "closed" | "all")}
+        />
+      </div>
       <Table
         rowKey="id"
         columns={taskColumns}
-        dataSource={tasks}
+        dataSource={visibleTasks}
         loading={loading}
         expandable={{
           rowExpandable: (t) => readDelegations(t).length > 0 || !!t.runId,

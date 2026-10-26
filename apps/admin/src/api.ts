@@ -1927,6 +1927,26 @@ export const api = {
         }
       },
       /**
+       * 任务 run 继续（暂停处置）：paused → running；未暂停时服务端 409。
+       */
+      async resumeRun(appId: string, taskId: string): Promise<void> {
+        await apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/run/resume`,
+          { method: "POST" },
+        );
+      },
+      /**
+       * 任务 run 重试失败节点（暂停处置）：failed 节点打回 pending 后续跑；
+       * 未暂停或无失败节点时服务端 409。
+       */
+      async retryRunNodes(appId: string, taskId: string): Promise<string[]> {
+        const res = await apiFetch<{ retriedNodes?: string[] }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/run/retry-nodes`,
+          { method: "POST" },
+        );
+        return Array.isArray(res?.retriedNodes) ? res.retriedNodes : [];
+      },
+      /**
        * 主题绑定门（D6 首批只读）：版本有产出 run 且终审未通过
        * 时 canBind 为 false；无产出 run 的版本不拦。
        */

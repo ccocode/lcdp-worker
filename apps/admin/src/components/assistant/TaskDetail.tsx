@@ -87,6 +87,16 @@ export const PAUSE_REASON_LABELS: Record<string, string> = {
   "consecutive-failures": "连续失败",
 };
 
+/** 暂停处置动作中文（与服务端通知正文同口径；未知键原样回落） */
+export const RECOVERY_ACTION_LABELS: Record<string, string> = {
+  "raise-budget": "提高预算",
+  abandon: "放弃任务",
+  "fix-contract": "修规约",
+  "start-successor-run": "开后继任务",
+  "inspect-failures": "查看失败节点",
+  "retry-nodes": "重试失败节点",
+};
+
 function nodeStatusTag(status: string) {
   if (status === "completed") return <Tag color="green">已完成</Tag>;
   if (status === "failed") return <Tag color="red">已失败</Tag>;
@@ -138,6 +148,8 @@ export default function TaskDetail({
 }) {
   const [runDetail, setRunDetail] = useState<AdminTaskRunDetail | null>(null);
   const [runLoading, setRunLoading] = useState(false);
+  const [runTick, setRunTick] = useState(0);
+  const [acting, setActing] = useState<string | null>(null);
   useEffect(() => {
     if (!appId || !task.runId) {
       setRunDetail(null);
@@ -156,7 +168,18 @@ export default function TaskDetail({
     return () => {
       alive = false;
     };
-  }, [appId, task.id, task.runId]);
+  }, [appId, task.id, task.runId, runTick]);
+  const runAction = async (kind: "resume" | "retry-nodes") => {
+    if (!appId || acting) return;
+    setActing(kind);
+    try {
+      if (kind === "resume") await api.assistant.app.resumeRun(appId, task.id);
+      else await api.assistant.app.retryRunNodes(appId, task.id);
+      setRunTick((t) => t + 1);
+    } finally {
+      setActing(null);
+    }
+  };
   const arts = task.artifacts as Record<string, unknown> | null | undefined;
   const themeLine =
     task.kind === "theme_build" && typeof arts?.themeId === "string"
@@ -384,11 +407,38 @@ export default function TaskDetail({
                       : "终审未达标"}
                     {p.type === "pause" &&
                       p.recoveryActions.length > 0 &&
-                      `（可处置：${p.recoveryActions.join("、")}）`}
+                      `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
                     {p.type === "critic" &&
                       p.gaps.length > 0 &&
                       `：${p.gaps.join("；")}`}
                   </span>
+                  {p.type === "pause" &&
+                    runDetail?.run?.runStatus === "paused" && (
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, height: "auto", fontSize: 12 }}
+                        loading={acting === "resume"}
+                        disabled={acting !== null}
+                        onClick={() => void runAction("resume")}
+                      >
+                        继续运行
+                      </Button>
+                    )}
+                  {p.type === "pause" &&
+                    runDetail?.run?.runStatus === "paused" &&
+                    p.recoveryActions.includes("retry-nodes") && (
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, height: "auto", fontSize: 12 }}
+                        loading={acting === "retry-nodes"}
+                        disabled={acting !== null}
+                        onClick={() => void runAction("retry-nodes")}
+                      >
+                        重试失败节点
+                      </Button>
+                    )}
                   {onHandlePending && (
                     <Button
                       type="link"
