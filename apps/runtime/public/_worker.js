@@ -375,6 +375,9 @@ async function loadEntryConfig(host, seg, ctx, env) {
     siteMode: "dynamic",
     themeSlots: { desktop: null, mobile: null },
     appMeta: emptyMeta,
+    // 站点定位方式：仅 "path"（默认域名下首段定位应用）时主题层剥首段；
+    // 缺失/其他值一律不剥（fail-open，行为与修前逐字一致）。
+    siteVia: null,
   };
   try {
     const cache = caches.default;
@@ -407,6 +410,8 @@ async function loadEntryConfig(host, seg, ctx, env) {
             entryName: meta.entryName ?? null,
             appId: meta.appId ?? null,
           },
+          // 旧信封无此字段时按 null 读（60 秒缓存过期后自愈）
+          siteVia: typeof data.siteVia === "string" ? data.siteVia : null,
         };
       }
       return fallback;
@@ -414,6 +419,8 @@ async function loadEntryConfig(host, seg, ctx, env) {
     let siteMode = "dynamic";
     let themeSlots = { desktop: null, mobile: null };
     let appMeta = emptyMeta;
+    // 服务端 /public/site 下发的 site.via：仅 "path" 表示首段定位应用
+    let siteVia = null;
     try {
       const res = await fetch(
         `${API_BASE}/public/site?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(seg ?? "")}`,
@@ -429,6 +436,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
           appId: data?.primary?.appId ?? data?.apps?.[0]?.id ?? null,
         };
         appMeta = meta;
+        siteVia = typeof data?.site?.via === "string" ? data.site.via : null;
         const rawSlots = themeSlotsOf(data?.entry?.theme);
         themeSlots = {
           desktop: await resolveSlotTheme(env, rawSlots.desktop, meta),
@@ -438,14 +446,17 @@ async function loadEntryConfig(host, seg, ctx, env) {
     } catch {
       // 网关/源站不可达 → dynamic + 未绑定（fail-open）
     }
-    const resp = new Response(JSON.stringify({ siteMode, themeSlots, appMeta }), {
-      headers: {
-        "content-type": "application/json",
-        "cache-control": "public, max-age=60",
+    const resp = new Response(
+      JSON.stringify({ siteMode, themeSlots, appMeta, siteVia }),
+      {
+        headers: {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=60",
+        },
       },
-    });
+    );
     ctx.waitUntil(cache.put(cacheKey, resp));
-    return { siteMode, themeSlots, appMeta };
+    return { siteMode, themeSlots, appMeta, siteVia };
   } catch {
     return fallback;
   }
@@ -553,6 +564,20 @@ function themeRouteMatches(routes, pathname) {
 }
 
 /**
+ * 主题层应用内路径：仅路径作用域应用（服务端 resolveSite 的 via=path，
+ * 即默认域名下首段定位应用）剥首段；绑定域名、主应用根路径与未知
+ * 情形下路径本身即应用内路径，不剥。
+ * 与 SPA 侧 stripSitePrefix 同口径、与服务端 via 判定同源——此前边缘
+ * 未剥段，www/<应用ID>/home 一类路径恒对不上主题路由表、主题永不
+ * 送达，只影响未绑域名应用（2026-10-26 content-pilot 实证）。
+ */
+function themeAppPath(pathname, siteVia) {
+  if (siteVia !== "path") return pathname;
+  const idx = pathname.indexOf("/", 1);
+  return idx === -1 ? "/" : pathname.slice(idx);
+}
+
+/**
  * 主题分发：命中返回 Response，未命中/不适用返回 null（调用方落回快照/SPA）。
  * - 精确路径命中主题文件 → 直出（index.html 走注入）；
  * - `/` 与无扩展名页面路径未命中 → 回退主题 index.html（注入后应答）；
@@ -564,10 +589,15 @@ function themeRouteMatches(routes, pathname) {
  * 页在预览中被吞）；全部应答改 no-store 并加 x-lcdp-theme-preview
  * 头；index 应答的 __LCDP__ 追加 preview: true 并注入预览角标。
  * 正常分发不传 preview，行为逐字不变。
+ * opts.appPath：调用方算好的应用内路径（路径作用域应用已剥首段），
+ * 主题层 R2 查找与 routes 判定一律以此为准；不传则用原始 pathname。
  */
 async function serveTheme(env, theme, url, method, opts = {}) {
   const prefix = `themes/${theme.id}/${theme.version}/`;
-  const rel = url.pathname.replace(/^\//, "");
+  // 主题层路径口径：调用方传入应用内路径（路径作用域应用已剥首段）；
+  // 未传时沿用原始 pathname（绑定域名等无前缀场景，行为逐字不变）。
+  const themePath = opts.appPath ?? url.pathname;
+  const rel = themePath.replace(/^\//, "");
   const respond = async (path, obj, isIndex) => {
     const headers = new Headers();
     headers.set("content-type", themeContentType(path));
@@ -600,7 +630,7 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     const obj = await get(prefix + rel);
     if (obj) return respond(rel, obj, rel === "index.html");
   }
-  if (!rel || isPagePath(url.pathname)) {
+  if (!rel || isPagePath(themePath)) {
     // 修法 D：声明了 routes 的主题只接管清单内路径，清单外落回快照/SPA。
     // 预览模式同样适用（第 90 步修正）：预览只覆盖主题指针、路径归属
     // 与正常分发一致，否则桥接页（购物车/结算等）在预览中被主题吞掉、
@@ -608,7 +638,7 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     if (
       Array.isArray(theme.routes) &&
       theme.routes.length > 0 &&
-      !themeRouteMatches(theme.routes, url.pathname)
+      !themeRouteMatches(theme.routes, themePath)
     ) {
       return null;
     }
@@ -803,7 +833,10 @@ async function tryThemePreview(request, env, ctx, url) {
     entryCfg.appMeta,
   );
   if (!theme) return null;
-  const themed = await serveTheme(env, theme, url, method, { preview: true });
+  const themed = await serveTheme(env, theme, url, method, {
+    preview: true,
+    appPath: themeAppPath(url.pathname, entryCfg.siteVia),
+  });
   if (themed) {
     return found.fromParam ? withPreviewCookie(themed, found.token) : themed;
   }
@@ -885,6 +918,8 @@ async function dispatch(request, env, ctx) {
             const theme = slots[name];
             if (!theme) continue;
             const themed = await serveTheme(env, theme, url, method, {
+              // 应用内路径：路径作用域应用剥首段后匹配（见 themeAppPath）
+              appPath: themeAppPath(url.pathname, entryCfg.siteVia),
               // 自检注入四条件齐备才开：页面请求、桌面槽 index 应答、
               // 移动槽有绑定、槽位来自默认判定（未被参数/Cookie 明示）
               viewCheck:
