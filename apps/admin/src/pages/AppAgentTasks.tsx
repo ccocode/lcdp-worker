@@ -100,12 +100,24 @@ function TaskRunNodes({
       </div>
     );
   }
-  if (!detail || !detail.run || detail.nodes.length === 0) return null;
+  if (!detail || !detail.run) return null;
+  const artifactFiles = new Set(
+    (detail.artifacts ?? []).map((a) => a.artifactId),
+  ).size;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        节点
-      </Typography.Text>
+      {detail.primaryArtifact && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          主产物：{detail.primaryArtifact.path}（第{" "}
+          {detail.primaryArtifact.version} 版）；共 {artifactFiles} 个文件、
+          {(detail.artifacts ?? []).length} 个版本
+        </Typography.Text>
+      )}
+      {detail.nodes.length > 0 && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          节点
+        </Typography.Text>
+      )}
       {detail.nodes.map((n) => (
         <div
           key={n.nodeId}

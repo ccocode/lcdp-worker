@@ -510,6 +510,41 @@ export interface AdminTaskRunArtifact {
   bytes: number | null;
   isPrimary: boolean;
   status: string | null;
+  createdAt: string | null;
+}
+
+/** 任务 run 终审轮次（D6 第二批只读） */
+export interface AdminTaskRunVerdict {
+  round: number;
+  verdict: string | null;
+  reasoning: string | null;
+  acceptanceGaps: string[];
+  reopenProposals: Array<{ nodeId: string; reason: string; severity: string }>;
+  createdAt: string | null;
+}
+
+/** 任务 run 执行时间线事件（D6 第二批只读） */
+export interface AdminTaskRunTimelineEvent {
+  seq: number | null;
+  kind: string;
+  createdAt: string | null;
+  nodeId: string | null;
+  summary: string;
+}
+
+/** 任务 run 产物正文（D6 第二批只读，大产物只回预览） */
+export interface AdminTaskRunArtifactContent {
+  artifactId: string;
+  version: number;
+  path: string;
+  kind: string | null;
+  bytes: number | null;
+  isPrimary: boolean;
+  status: string | null;
+  createdAt: string | null;
+  preview: string;
+  truncated: boolean;
+  totalChars: number;
 }
 
 /** 任务 run 通知（终态/暂停通知账本行，最新在前） */
@@ -543,6 +578,8 @@ export interface AdminTaskRunDetail {
   primaryArtifact: AdminTaskRunArtifact | null;
   notifications: AdminTaskRunNotification[];
   pendingItems: AdminTaskRunPending[];
+  verdicts: AdminTaskRunVerdict[];
+  timeline: AdminTaskRunTimelineEvent[];
   canBind: boolean;
   latestVerdict: string | null;
 }
@@ -1920,6 +1957,28 @@ export const api = {
         try {
           const res = await apiFetch<AdminTaskRunDetail>(
             `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/run`,
+          );
+          return res && typeof res === "object" ? res : null;
+        } catch {
+          return null;
+        }
+      },
+      /**
+       * 任务 run 产物正文（D6 第二批只读）：指定版或最新版，
+       * 大产物只回预览；无 run 或版本不存在时调用方静默降级。
+       */
+      async taskRunArtifact(
+        appId: string,
+        taskId: string,
+        artifactId: string,
+        version?: number,
+      ): Promise<AdminTaskRunArtifactContent | null> {
+        try {
+          const qs =
+            `?artifactId=${encodeURIComponent(artifactId)}` +
+            (version != null ? `&version=${version}` : "");
+          const res = await apiFetch<AdminTaskRunArtifactContent>(
+            `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/run/artifacts${qs}`,
           );
           return res && typeof res === "object" ? res : null;
         } catch {

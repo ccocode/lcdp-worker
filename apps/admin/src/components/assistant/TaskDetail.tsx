@@ -7,16 +7,19 @@
  * D6 首批：有 run 的任务另取本任务 run 详情（节点、待决、
  * 通知、主产物版本、终审门信号），仍是单实体取数；无 run 或
  * 取数失败时该区不出现，旧形态不变。
+ * D6 第二批：运行区加产物版本浏览（按文件分组、版本倒序、
+ * 点版看正文）与报告流程（执行时间线 + 终审历史），仍只读。
  * 底部操作由调用方以 footer 注入（工作台：继续，仅进行中；
  * 任务记录页：去助手查看）。待决事项的处理入口由调用方以
  * onHandlePending 注入（工作台：切到本任务会话；任务记录页：
  * 去助手查看）；不传则只展示待决、不给入口。
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { Button, Spin, Tag, Typography } from "antd";
+import { Button, Modal, Spin, Tag, Typography } from "antd";
 import {
   api,
   type AdminAssistantTask,
+  type AdminTaskRunArtifactContent,
   type AdminTaskRunDetail,
 } from "../../api";
 import { fmtTime } from "../../helpers";
@@ -150,6 +153,24 @@ export default function TaskDetail({
   const [runLoading, setRunLoading] = useState(false);
   const [runTick, setRunTick] = useState(0);
   const [acting, setActing] = useState<string | null>(null);
+  const [artifactView, setArtifactView] =
+    useState<AdminTaskRunArtifactContent | null>(null);
+  const [artifactLoading, setArtifactLoading] = useState(false);
+  const openArtifactVersion = async (artifactId: string, version: number) => {
+    if (!appId || artifactLoading) return;
+    setArtifactLoading(true);
+    try {
+      const res = await api.assistant.app.taskRunArtifact(
+        appId,
+        task.id,
+        artifactId,
+        version,
+      );
+      if (res) setArtifactView(res);
+    } finally {
+      setArtifactLoading(false);
+    }
+  };
   useEffect(() => {
     if (!appId || !task.runId) {
       setRunDetail(null);
@@ -180,6 +201,24 @@ export default function TaskDetail({
       setActing(null);
     }
   };
+  const artifactGroups: Array<{
+    artifactId: string;
+    versions: NonNullable<AdminTaskRunDetail["artifacts"]>;
+  }> = [];
+  if (runDetail) {
+    const byId = new Map<string, AdminTaskRunDetail["artifacts"]>();
+    for (const a of runDetail.artifacts ?? []) {
+      const list = byId.get(a.artifactId) ?? [];
+      list.push(a);
+      byId.set(a.artifactId, list);
+    }
+    for (const [artifactId, list] of byId) {
+      artifactGroups.push({
+        artifactId,
+        versions: [...list].sort((x, y) => y.version - x.version),
+      });
+    }
+  }
   const arts = task.artifacts as Record<string, unknown> | null | undefined;
   const themeLine =
     task.kind === "theme_build" && typeof arts?.themeId === "string"
@@ -336,6 +375,50 @@ export default function TaskDetail({
               </Typography.Text>
             )}
           </div>
+          {artifactGroups.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 8,
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                产物版本
+              </Typography.Text>
+              {artifactGroups.map((g) => (
+                <div key={g.artifactId} style={{ fontSize: 12 }}>
+                  <div style={{ wordBreak: "break-word" }}>{g.artifactId}</div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      marginTop: 2,
+                    }}
+                  >
+                    {g.versions.map((v) => (
+                      <Button
+                        key={v.version}
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, height: "auto", fontSize: 12 }}
+                        loading={artifactLoading}
+                        onClick={() =>
+                          void openArtifactVersion(g.artifactId, v.version)
+                        }
+                      >
+                        第 {v.version} 版{v.isPrimary ? "（主）" : ""}
+                        {v.bytes != null ? ` · ${v.bytes} 字节` : ""}
+                        {v.createdAt ? ` · ${fmtTime(v.createdAt)}` : ""}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {runDetail.nodes.length > 0 && (
             <div
               style={{
@@ -378,6 +461,117 @@ export default function TaskDetail({
                       }}
                     >
                       产物：{n.outputArtifacts.join("、")}
+                    </Typography.Text>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {(runDetail.timeline ?? []).length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 8,
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                报告流程
+              </Typography.Text>
+              {(runDetail.timeline ?? []).map((e, i) => (
+                <div
+                  key={i}
+                  style={{ display: "flex", gap: 6, fontSize: 12 }}
+                >
+                  {e.createdAt && (
+                    <Typography.Text
+                      type="secondary"
+                      style={{ fontSize: 12, flexShrink: 0 }}
+                    >
+                      {fmtTime(e.createdAt)}
+                    </Typography.Text>
+                  )}
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {e.summary}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {(runDetail.verdicts ?? []).length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 8,
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                终审历史
+              </Typography.Text>
+              {(runDetail.verdicts ?? []).map((v) => (
+                <div key={v.round} style={{ fontSize: 12 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Tag style={{ marginInlineEnd: 0 }}>
+                      第 {v.round} 轮
+                    </Tag>
+                    {v.verdict === "pass" ? (
+                      <Tag color="green" style={{ marginInlineEnd: 0 }}>
+                        通过
+                      </Tag>
+                    ) : v.verdict === "fail" ? (
+                      <Tag color="red" style={{ marginInlineEnd: 0 }}>
+                        未通过
+                      </Tag>
+                    ) : (
+                      <Tag style={{ marginInlineEnd: 0 }}>未知</Tag>
+                    )}
+                    {v.createdAt && (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {fmtTime(v.createdAt)}
+                      </Typography.Text>
+                    )}
+                  </div>
+                  {v.reasoning && (
+                    <div style={{ wordBreak: "break-word", marginTop: 2 }}>
+                      {v.reasoning}
+                    </div>
+                  )}
+                  {v.acceptanceGaps.length > 0 && (
+                    <Typography.Text
+                      type="secondary"
+                      style={{
+                        fontSize: 12,
+                        display: "block",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      缺口：{v.acceptanceGaps.join("；")}
+                    </Typography.Text>
+                  )}
+                  {v.reopenProposals.length > 0 && (
+                    <Typography.Text
+                      type="secondary"
+                      style={{
+                        fontSize: 12,
+                        display: "block",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      重开：
+                      {v.reopenProposals
+                        .map((p) => `${p.nodeId}（${p.reason}）`)
+                        .join("、")}
                     </Typography.Text>
                   )}
                 </div>
@@ -497,6 +691,40 @@ export default function TaskDetail({
       {footer && (
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>{footer}</div>
       )}
+      <Modal
+        open={artifactView !== null}
+        title={
+          artifactView
+            ? `${artifactView.path}（第 ${artifactView.version} 版）`
+            : ""
+        }
+        footer={null}
+        onCancel={() => setArtifactView(null)}
+        width={720}
+      >
+        {artifactView && (
+          <div>
+            {artifactView.truncated && (
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 12, display: "block", marginBottom: 8 }}
+              >
+                仅显示前 12000 字，全文共 {artifactView.totalChars} 字。
+              </Typography.Text>
+            )}
+            <pre
+              style={{
+                fontSize: 12,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                margin: 0,
+              }}
+            >
+              {artifactView.preview}
+            </pre>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
