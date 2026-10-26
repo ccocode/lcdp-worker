@@ -11,9 +11,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Drawer, Spin, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { api, type AdminAssistantMessage, type AdminAssistantTask } from "../api";
+import {
+  api,
+  type AdminAssistantMessage,
+  type AdminAssistantTask,
+  type AdminTaskRunDetail,
+} from "../api";
 import { fmtTime } from "../helpers";
 import TaskDetail, {
+  NODE_STATUS_LABELS,
+  RUN_STATUS_LABELS,
   TASK_KIND_LABELS,
   TASK_STATUS_LABELS,
   countPassed,
@@ -49,6 +56,83 @@ function depStatusLabel(status?: string): string {
       : status === "failed"
         ? "失败"
         : (status ?? "未知");
+}
+
+/** 终态 run（通知入口的触发条件：终态通知可点回任务详情） */
+function isTerminalRun(t: AdminAssistantTask): boolean {
+  return (
+    !!t.runId &&
+    (t.runStatus === "completed" ||
+      t.runStatus === "failed" ||
+      t.runStatus === "cancelled")
+  );
+}
+
+/** 展开行节点清单（D6 首批：展开时才取本任务 run 详情，单实体） */
+function TaskRunNodes({
+  appId,
+  taskId,
+}: {
+  appId: string;
+  taskId: string;
+}) {
+  const [detail, setDetail] = useState<AdminTaskRunDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    void api.assistant.app
+      .taskRun(appId, taskId)
+      .then((res) => {
+        if (alive) setDetail(res);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [appId, taskId]);
+  if (loading) {
+    return (
+      <div style={{ padding: "4px 0" }}>
+        <Spin size="small" />
+      </div>
+    );
+  }
+  if (!detail || !detail.run || detail.nodes.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        节点
+      </Typography.Text>
+      {detail.nodes.map((n) => (
+        <div
+          key={n.nodeId}
+          style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>{n.nodeId}</span>
+          <Tag
+            style={{ marginInlineEnd: 0 }}
+            color={
+              n.status === "completed"
+                ? "success"
+                : n.status === "failed"
+                  ? "error"
+                  : n.status === "active"
+                    ? "processing"
+                    : undefined
+            }
+          >
+            {NODE_STATUS_LABELS[n.status] ?? n.status}
+          </Tag>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            尝试 {n.attempts} 次
+          </Typography.Text>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function AppAgentTasks({ appId }: { appId: string }) {
@@ -137,6 +221,35 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
       ),
     },
     {
+      title: "运行",
+      width: 110,
+      render: (_, t) =>
+        t.runId && t.runStatus ? (
+          <Tag style={{ marginInlineEnd: 0 }}>
+            {RUN_STATUS_LABELS[t.runStatus] ?? t.runStatus}
+          </Tag>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      title: "通知",
+      width: 110,
+      render: (_, t) =>
+        isTerminalRun(t) ? (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: "auto" }}
+            onClick={() => setDetail(t)}
+          >
+            查看通知
+          </Button>
+        ) : (
+          "—"
+        ),
+    },
+    {
       title: "清单",
       width: 110,
       render: (_, t) =>
@@ -179,9 +292,10 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
         dataSource={tasks}
         loading={loading}
         expandable={{
-          rowExpandable: (t) => readDelegations(t).length > 0,
+          rowExpandable: (t) => readDelegations(t).length > 0 || !!t.runId,
           expandedRowRender: (t) => (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {t.runId && <TaskRunNodes appId={appId} taskId={t.id} />}
               {readDelegations(t).map((d, i) => (
                 <div
                   key={i}
@@ -255,6 +369,8 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
         {detail && (
           <TaskDetail
             task={detail}
+            appId={appId}
+            onHandlePending={() => goAssistant(detail)}
             footer={
               <Button type="primary" size="small" onClick={() => goAssistant(detail)}>
                 去助手查看

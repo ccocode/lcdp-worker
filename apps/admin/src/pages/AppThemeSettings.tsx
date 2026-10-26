@@ -23,6 +23,7 @@ import {
   THEME_SLOT_LABEL,
   versionFitsSlot,
   versionTargetLabel,
+  type AdminThemeBindGate,
   type SiteAppView,
   type ThemeConfigItem,
   type ThemeItem,
@@ -138,6 +139,29 @@ export default function AppThemeSettings({
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [binding, setBinding] = useState<BindingState | null>(null);
+  /**
+   * 绑定门（D6 首批只读）：弹窗打开/版本切换时查该版本有无产出
+   * run；有且终审未通过时“设为当前”不可点。查不到（null）时不拦，
+   * 与今日行为一致（fail-open）。
+   */
+  const [bindGate, setBindGate] = useState<AdminThemeBindGate | null>(null);
+  const bindingThemeId = binding?.theme.id;
+  const bindingVersion = binding?.version;
+  useEffect(() => {
+    if (!bindingThemeId || !bindingVersion) {
+      setBindGate(null);
+      return;
+    }
+    let alive = true;
+    void api.assistant.app
+      .themeBindGate(appId, bindingThemeId, bindingVersion)
+      .then((res) => {
+        if (alive) setBindGate(res);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [appId, bindingThemeId, bindingVersion]);
   const [bVals, setBVals] = useState<Record<string, string>>({});
   const [bValsJson, setBValsJson] = useState("{}");
   const [bSaving, setBSaving] = useState(false);
@@ -322,6 +346,11 @@ export default function AppThemeSettings({
 
   const saveBinding = useCallback(async () => {
     if (!binding || !binding.version) return;
+    // 绑定门纵深：按钮已禁用时再拦一次（门信号取弹窗打开时那次查询）
+    if (bindGate && !bindGate.canBind) {
+      message.warning("该版本终审尚未通过，暂不能设为当前");
+      return;
+    }
     const { theme, slot, version } = binding;
     const items = configOf(findVersion(themes, theme.id, version));
     let values: Record<string, unknown>;
@@ -358,7 +387,7 @@ export default function AppThemeSettings({
     } finally {
       setBSaving(false);
     }
-  }, [binding, bVals, bValsJson, themes, slots, appId, load]);
+  }, [binding, bindGate, bVals, bValsJson, themes, slots, appId, load]);
 
   const unbindCurrent = useCallback(async () => {
     if (!binding) return;
@@ -649,9 +678,19 @@ export default function AppThemeSettings({
         okText="设为当前"
         cancelText="取消"
         width={640}
+        okButtonProps={{
+          disabled: bindGate !== null && !bindGate.canBind,
+        }}
       >
         {binding && (
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            {bindGate !== null && !bindGate.canBind && (
+              <Alert
+                type="warning"
+                showIcon
+                message="该版本由助手任务生成，终审尚未通过，暂不能设为当前"
+              />
+            )}
             <Space size={8}>
               <Typography.Text style={{ width: 72, display: "inline-block" }}>
                 设备

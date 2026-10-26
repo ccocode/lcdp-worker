@@ -471,6 +471,12 @@ export default function AssistantWorkbench({
         ) : selectedTask ? (
           <TaskDetail
             task={selectedTask}
+            appId={appId}
+            onHandlePending={
+              selectedTask.conversationId
+                ? () => openConversation(selectedTask.conversationId as string)
+                : undefined
+            }
             footer={
               selectedTask.status === "active" ? (
                 <Button

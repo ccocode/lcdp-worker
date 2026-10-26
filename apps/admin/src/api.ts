@@ -463,6 +463,79 @@ export interface AdminAssistantTask {
   nextStep?: string | null;
   conversationId?: string | null;
   createdAt?: string | null;
+  /** run 面（服务端 taskView 本就回，前端此前漏声明） */
+  runId?: string | null;
+  runStatus?: string | null;
+  spentTokens?: number | null;
+  budgetTokens?: number | null;
+  traceId?: string | null;
+}
+
+/** 任务 run 节点（D6 首批：节点名、状态、尝试次数、产物引用） */
+export interface AdminTaskRunNode {
+  nodeId: string;
+  kind: string | null;
+  phase: string | null;
+  status: string;
+  attempts: number;
+  reopenAttempts: number;
+  error: string | null;
+  outputArtifacts: string[];
+}
+
+/** 任务 run 产物（只含引用，不含全文；primary 为当前主版本） */
+export interface AdminTaskRunArtifact {
+  artifactId: string;
+  kind: string | null;
+  version: number;
+  path: string;
+  bytes: number | null;
+  isPrimary: boolean;
+  status: string | null;
+}
+
+/** 任务 run 通知（终态/暂停通知账本行，最新在前） */
+export interface AdminTaskRunNotification {
+  title: string;
+  body: string;
+  createdAt: string | null;
+}
+
+/** 任务 run 待决事项（暂停原因 / 终审未达标，带处理入口） */
+export interface AdminTaskRunPending {
+  type: "pause" | "critic";
+  reason: string | null;
+  recoveryActions: string[];
+  gaps: string[];
+  createdAt: string | null;
+}
+
+/** 任务 run 详情（D6 首批只读聚合） */
+export interface AdminTaskRunDetail {
+  task: AdminAssistantTask;
+  run: {
+    runId: string;
+    runStatus: string | null;
+    spentTokens: number | null;
+    budgetTokens: number | null;
+    traceId: string | null;
+  } | null;
+  nodes: AdminTaskRunNode[];
+  artifacts: AdminTaskRunArtifact[];
+  primaryArtifact: AdminTaskRunArtifact | null;
+  notifications: AdminTaskRunNotification[];
+  pendingItems: AdminTaskRunPending[];
+  canBind: boolean;
+  latestVerdict: string | null;
+}
+
+/** 主题绑定门（D6 首批只读）：无产出 run 的版本不拦 */
+export interface AdminThemeBindGate {
+  themeId: string;
+  version: string;
+  runId: string | null;
+  latestVerdict: string | null;
+  canBind: boolean;
 }
 
 /**
@@ -1793,6 +1866,42 @@ export const api = {
           `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks${qs}`,
         );
         return Array.isArray(res.tasks) ? res.tasks : [];
+      },
+      /**
+       * 任务 run 详情（D6 首批只读）：节点 + 产物 + 通知 + 待决
+       * + 终审门信号；无 run 的任务回空清单，调用方静默降级。
+       */
+      async taskRun(
+        appId: string,
+        taskId: string,
+      ): Promise<AdminTaskRunDetail | null> {
+        try {
+          const res = await apiFetch<AdminTaskRunDetail>(
+            `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/run`,
+          );
+          return res && typeof res === "object" ? res : null;
+        } catch {
+          return null;
+        }
+      },
+      /**
+       * 主题绑定门（D6 首批只读）：版本有产出 run 且终审未通过
+       * 时 canBind 为 false；无产出 run 的版本不拦。
+       */
+      async themeBindGate(
+        appId: string,
+        themeId: string,
+        version: string,
+      ): Promise<AdminThemeBindGate | null> {
+        try {
+          const qs = `?themeId=${encodeURIComponent(themeId)}&version=${encodeURIComponent(version)}`;
+          const res = await apiFetch<AdminThemeBindGate>(
+            `/admin/apps/${encodeURIComponent(appId)}/assistant/theme-bind-gate${qs}`,
+          );
+          return res && typeof res === "object" ? res : null;
+        } catch {
+          return null;
+        }
       },
     },
     /**

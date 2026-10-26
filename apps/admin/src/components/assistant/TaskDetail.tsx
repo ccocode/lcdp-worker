@@ -4,12 +4,21 @@
  * 种类标 + 状态标 + 目标；正文按种类分体：计划是步骤清单 +
  * 已定决定 + 下一步，主题是主题 id@版本行 + 步骤清单 + 产物。
  * 派发记录不在此汇总（只从消息内的派发卡进入子代理详情）。
+ * D6 首批：有 run 的任务另取本任务 run 详情（节点、待决、
+ * 通知、主产物版本、终审门信号），仍是单实体取数；无 run 或
+ * 取数失败时该区不出现，旧形态不变。
  * 底部操作由调用方以 footer 注入（工作台：继续，仅进行中；
- * 任务记录页：去助手查看）。
+ * 任务记录页：去助手查看）。待决事项的处理入口由调用方以
+ * onHandlePending 注入（工作台：切到本任务会话；任务记录页：
+ * 去助手查看）；不传则只展示待决、不给入口。
  */
-import type { ReactNode } from "react";
-import { Tag, Typography } from "antd";
-import type { AdminAssistantTask } from "../../api";
+import { useEffect, useState, type ReactNode } from "react";
+import { Button, Spin, Tag, Typography } from "antd";
+import {
+  api,
+  type AdminAssistantTask,
+  type AdminTaskRunDetail,
+} from "../../api";
 import { fmtTime } from "../../helpers";
 
 export const TASK_STATUS_LABELS: Record<string, string> = {
@@ -51,6 +60,42 @@ export function countPassed(task: AdminAssistantTask): number {
     .length;
 }
 
+/** run 状态中文（D6 首批；服务端 run_status 原值直传，缺省回原值） */
+export const RUN_STATUS_LABELS: Record<string, string> = {
+  pending: "待开始",
+  running: "进行中",
+  paused: "等你处理",
+  completed: "已完成",
+  failed: "已失败",
+  cancelled: "已取消",
+};
+
+/** 节点状态中文（D6 首批） */
+export const NODE_STATUS_LABELS: Record<string, string> = {
+  pending: "待开始",
+  active: "进行中",
+  completed: "已完成",
+  failed: "已失败",
+  skipped: "已跳过",
+  cancelled: "已取消",
+};
+
+/** 暂停原因中文（D6 首批；服务端 reason 键直传，未列出的回通用文案） */
+export const PAUSE_REASON_LABELS: Record<string, string> = {
+  "budget-exhausted": "预算已用完",
+  "script-failure": "节点执行失败",
+  "consecutive-failures": "连续失败",
+};
+
+function nodeStatusTag(status: string) {
+  if (status === "completed") return <Tag color="green">已完成</Tag>;
+  if (status === "failed") return <Tag color="red">已失败</Tag>;
+  if (status === "skipped" || status === "cancelled") return <Tag>跳过</Tag>;
+  if (status === "active" || status === "running")
+    return <Tag color="processing">进行中</Tag>;
+  return <Tag color="orange">待开始</Tag>;
+}
+
 /** 防御式呈现：有什么显示什么，形状不合不造；skip 键不展开 */
 function renderLoose(value: unknown, skip: Set<string>): string[] {
   if (value === null || value === undefined) return [];
@@ -81,10 +126,37 @@ function renderLoose(value: unknown, skip: Set<string>): string[] {
 export default function TaskDetail({
   task,
   footer,
+  appId,
+  onHandlePending,
 }: {
   task: AdminAssistantTask;
   footer?: ReactNode;
+  /** 传了且任务有 runId 时才取 run 详情（不传则不取数） */
+  appId?: string;
+  /** 待决事项的处理入口（不传则只展示） */
+  onHandlePending?: () => void;
 }) {
+  const [runDetail, setRunDetail] = useState<AdminTaskRunDetail | null>(null);
+  const [runLoading, setRunLoading] = useState(false);
+  useEffect(() => {
+    if (!appId || !task.runId) {
+      setRunDetail(null);
+      return;
+    }
+    let alive = true;
+    setRunLoading(true);
+    void api.assistant.app
+      .taskRun(appId, task.id)
+      .then((res) => {
+        if (alive) setRunDetail(res);
+      })
+      .finally(() => {
+        if (alive) setRunLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [appId, task.id, task.runId]);
   const arts = task.artifacts as Record<string, unknown> | null | undefined;
   const themeLine =
     task.kind === "theme_build" && typeof arts?.themeId === "string"
@@ -196,6 +268,178 @@ export default function TaskDetail({
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           下一步：{task.nextStep}
         </Typography.Text>
+      )}
+      {runLoading && (
+        <div style={{ padding: "8px 0" }}>
+          <Spin size="small" />
+        </div>
+      )}
+      {runDetail && runDetail.run && (
+        <div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            运行
+          </Typography.Text>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 4,
+              fontSize: 12,
+            }}
+          >
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {RUN_STATUS_LABELS[runDetail.run.runStatus ?? ""] ??
+                runDetail.run.runStatus ??
+                "—"}
+            </Tag>
+            {runDetail.latestVerdict === "pass" ? (
+              <Tag color="green" style={{ marginInlineEnd: 0 }}>
+                终审已通过
+              </Tag>
+            ) : runDetail.latestVerdict === "fail" ? (
+              <Tag color="red" style={{ marginInlineEnd: 0 }}>
+                终审未通过
+              </Tag>
+            ) : (
+              <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                待终审
+              </Tag>
+            )}
+            {runDetail.primaryArtifact && (
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                主产物：{runDetail.primaryArtifact.path}（第{" "}
+                {runDetail.primaryArtifact.version} 版）
+              </Typography.Text>
+            )}
+          </div>
+          {runDetail.nodes.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 8,
+              }}
+            >
+              {runDetail.nodes.map((n) => (
+                <div key={n.nodeId} style={{ fontSize: 12 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    {nodeStatusTag(n.status)}
+                    <span style={{ flex: 1, minWidth: 0 }}>{n.nodeId}</span>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      尝试 {n.attempts} 次
+                    </Typography.Text>
+                  </div>
+                  {n.error && (
+                    <Typography.Text
+                      type="danger"
+                      style={{
+                        fontSize: 12,
+                        display: "block",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {n.error}
+                    </Typography.Text>
+                  )}
+                  {n.outputArtifacts.length > 0 && (
+                    <Typography.Text
+                      type="secondary"
+                      style={{
+                        fontSize: 12,
+                        display: "block",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      产物：{n.outputArtifacts.join("、")}
+                    </Typography.Text>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {runDetail.pendingItems.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 8,
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                待决事项
+              </Typography.Text>
+              {runDetail.pendingItems.map((p, i) => (
+                <div
+                  key={i}
+                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
+                    {p.type === "pause"
+                      ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
+                      : "终审未达标"}
+                    {p.type === "pause" &&
+                      p.recoveryActions.length > 0 &&
+                      `（可处置：${p.recoveryActions.join("、")}）`}
+                    {p.type === "critic" &&
+                      p.gaps.length > 0 &&
+                      `：${p.gaps.join("；")}`}
+                  </span>
+                  {onHandlePending && (
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0, height: "auto", fontSize: 12 }}
+                      onClick={onHandlePending}
+                    >
+                      去处理
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {runDetail.notifications.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 8,
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                通知
+              </Typography.Text>
+              {runDetail.notifications.map((n, i) => (
+                <div key={i} style={{ fontSize: 12 }}>
+                  <div>{n.title}</div>
+                  {n.body && (
+                    <Typography.Text
+                      type="secondary"
+                      style={{
+                        fontSize: 12,
+                        display: "block",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {n.body}
+                    </Typography.Text>
+                  )}
+                  {n.createdAt && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {fmtTime(n.createdAt)}
+                    </Typography.Text>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         更新于 {fmtTime(task.updatedAt)}
