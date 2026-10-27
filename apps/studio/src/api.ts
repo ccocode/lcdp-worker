@@ -577,30 +577,6 @@ export const api = {
       body: JSON.stringify({ note }),
     });
   },
-  /**
-   * 内置主题重生成：按当前已发布设计机械重建指定槽的内置主题包并入库；
-   * force=true 时同版本已存在先删旧文件再重生成。未发布设计时服务端 409。
-   * 生成器升级（如内置壳脚本更新）后，须经此入口刷新线上内置主题；
-   * 设计本身未变时不会触发发布，故不走发布流程。
-   */
-  async regenerateBuiltin(
-    appId: string,
-    body: { target: "desktop" | "mobile"; force: boolean },
-  ): Promise<{
-    ok: boolean;
-    already?: boolean;
-    themeId?: string;
-    version?: string;
-    target?: string;
-    slotBound?: boolean;
-    regenerated?: boolean;
-    slotError?: string;
-  }> {
-    return apiFetch(`/apps/${encodeURIComponent(appId)}/design/builtin`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-  },
   async rollback(
     appId: string,
     version: number,
