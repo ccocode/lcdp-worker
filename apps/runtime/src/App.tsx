@@ -693,6 +693,9 @@ function MemberCenterApp({ route }: { route: Route }) {
       />
     );
   }
+  if (route.path === "/logout") {
+    return <CenterLogoutPage redirectUri={route.params.redirect_uri ?? ""} />;
+  }
   // /consents 与中心根路径：授权管理（无会话时呈登录引导）
   return <CenterConsentsPage />;
 }
@@ -1178,6 +1181,71 @@ function CenterAuthorizePage({
       >
         授权后再次访问该应用将不再询问；可在会员中心「我的授权」中随时撤销。
       </Typography.Paragraph>
+    </CenterFrame>
+  );
+}
+
+/**
+ * 会员中心单点退出（/logout）：应用侧退出只清本站会话时，中心 7 天会话
+ * 残留会导致下次授权静默复活——应用退出必须经此页清中心会话才算真正退出。
+ * 进页即清中心会话；redirect_uri 仅当 https 且 host 为已登记站点入口时才回跳，
+ * 否则停在本页呈已退出态（不向未登记 host 开放重定向）。
+ */
+function CenterLogoutPage({ redirectUri }: { redirectUri: string }) {
+  const [done, setDone] = useState(false);
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    storeCenterSession(null);
+    let target: URL | null = null;
+    try {
+      target = new URL(redirectUri);
+    } catch {
+      target = null;
+    }
+    if (!target || target.protocol !== "https:") {
+      setDone(true);
+      return;
+    }
+    let alive = true;
+    api
+      .publicSite(target.host)
+      .then((res) => {
+        if (!alive) return;
+        if (res.entry) {
+          window.location.assign(redirectUri);
+        } else {
+          setDone(true);
+        }
+      })
+      .catch(() => {
+        if (!alive) return;
+        setDone(true);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (!done) {
+    return (
+      <CenterFrame subtitle="退出登录">
+        <Typography.Paragraph>正在退出…</Typography.Paragraph>
+      </CenterFrame>
+    );
+  }
+  return (
+    <CenterFrame subtitle="退出登录">
+      <Alert
+        type="success"
+        message="已退出会员中心"
+        description="下次登录时需要重新输入账号密码。"
+        style={{ marginBottom: 12 }}
+      />
+      <Button type="primary" onClick={() => navigateTo("/consents")}>
+        返回我的授权
+      </Button>
     </CenterFrame>
   );
 }
@@ -3047,6 +3115,20 @@ function PublicShell({
   /** 快照含 /cart 页时页眉才出现购物车入口（商城线） */
   const hasCartPage = primary.pages.some((p) => p.route === "/cart");
 
+  /**
+   * 会员退出（单点退出）：只清本站会话不够，中心 7 天会话残留会让下次
+   * 授权静默复活。SSO 启用时先清本站会话、再整页到中心 /logout 清中心
+   * 会话并回跳本站首页；未启用 SSO 时无中心会话，仅清本站会话即可。
+   */
+  const memberLogout = useCallback(() => {
+    clearMemberSession();
+    if (memberSso?.enabled && memberSso.centerBase) {
+      window.location.assign(
+        `${memberSso.centerBase.replace(/\/$/, "")}/logout?redirect_uri=${encodeURIComponent(`${window.location.origin}/`)}`,
+      );
+    }
+  }, [clearMemberSession, memberSso]);
+
   /** 页眉右侧区：仅会员区（启用会员页时）；员工「登录」已按入口分离口径移至页脚文字链 */
   const memberArea = (small?: boolean) =>
     hasMemberPages ? (
@@ -3055,7 +3137,7 @@ function PublicShell({
         small={small}
         onLogin={() => openAuth("login")}
         onRegister={() => openAuth("register")}
-        onLogout={clearMemberSession}
+        onLogout={memberLogout}
       />
     ) : null;
 
