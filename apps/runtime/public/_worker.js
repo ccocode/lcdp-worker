@@ -897,23 +897,29 @@ async function dispatch(request, env, ctx) {
       // 1. 主题层（M14 线二 + 第⑤步双槽）：按槽尝试，未命中/异常落回下一层
       const slots = entryCfg.themeSlots;
       const slotPick = requestedSlot(url, request);
-      // 回落注入的主题与主题层同判定：选桌面只取桌面槽；选移动取
-      // 移动槽、空缺回退桌面槽（与页面请求尝试顺序一致）
+      // 回落注入的主题与主题层同判定：选桌面取桌面槽、桌面槽空缺
+      // 时回退移动槽；选移动取移动槽、空缺回退桌面槽（单槽用该槽，
+      // 双槽齐全时口径不变；与页面请求尝试顺序一致）
       spaTheme =
         slotPick.slot === "mobile"
           ? (slots.mobile ?? slots.desktop)
-          : slots.desktop;
+          : (slots.desktop ?? slots.mobile);
       if (slots.desktop || slots.mobile) {
         try {
           const { slot, source } = slotPick;
           const page = isPagePath(url.pathname);
+          // 页面请求：移动槽沿用 [移动, 桌面]；桌面槽有绑定时只试桌面
+          // 槽（双槽口径不变），桌面槽空缺时只试移动槽（单槽用该槽）。
+          // 资源请求沿用既有双向尝试顺序，不动。
           const order = !page
             ? slot === "mobile"
               ? ["mobile", "desktop"]
               : ["desktop", "mobile"]
             : slot === "mobile"
               ? ["mobile", "desktop"]
-              : ["desktop"];
+              : slots.desktop
+                ? ["desktop"]
+                : ["mobile"];
           for (const name of order) {
             const theme = slots[name];
             if (!theme) continue;
