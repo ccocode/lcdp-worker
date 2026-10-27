@@ -24,6 +24,9 @@
  *    index.html，清单外页面路径直接落回快照/SPA——主题只管自理的页面，
  *    平台页面（订购/我的订单等）与之共存；未声明 routes 的旧主题保持
  *    全路径回退。精确文件命中不受 routes 影响。
+ *    登录门（2026-10-27 领域呈现返工）：内置主题（builtin: true）且
+ *    routes 为空时，页面路径不回退主题 index，直接落回快照/SPA——
+ *    该应用无公开页，SPA 无公开页时自显员工登录页；无标记老主题不动。
  * 2. 快照层（CMS 静态化/SEO 线）：按入口运行模式（siteMode）分发静态快照：
  *    - dynamic（缺省/未知/读配置失败）：纯透传，与无本文件时行为一致（零扰动）；
  *    - pseudo / static：按规范键查 R2（键 = static/<host><path>[?规范 query]，
@@ -284,6 +287,9 @@ async function resolveSlotTheme(env, ptr, meta) {
   const config = {};
   let routes = null;
   let tokens = null;
+  // 领域呈现返工·登录门：内置标记（生成端 theme.json builtin: true）。
+  // 仅内置主题带此标记；无标记的老主题保持原行为。
+  let builtin = false;
   try {
     const mObj = await env.STATIC_R2.get(
       `themes/${ptr.id}/${ptr.version}/theme.json`,
@@ -311,6 +317,7 @@ async function resolveSlotTheme(env, ptr, meta) {
       }
       // 功能页主题化（第 93 步线 A1）：tokens 只收形状合法项
       tokens = sanitizeThemeTokens(manifest?.tokens);
+      if (manifest?.builtin === true) builtin = true;
     }
   } catch {
     // 清单读失败：config 只用绑定 values，不阻断主题分发
@@ -338,6 +345,7 @@ async function resolveSlotTheme(env, ptr, meta) {
     ...(routes ? { routes } : {}),
     ...(tokens ? { tokens } : {}),
     ...(functionalCss ? { functionalCss: true } : {}),
+    ...(builtin ? { builtin: true } : {}),
   };
 }
 
@@ -358,6 +366,8 @@ function cachedSlotTheme(raw) {
     else delete out.tokens;
     if (raw.functionalCss === true) out.functionalCss = true;
     else delete out.functionalCss;
+    if (raw.builtin === true) out.builtin = true;
+    else delete out.builtin;
     return out;
   }
   return null;
@@ -631,6 +641,16 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     if (obj) return respond(rel, obj, rel === "index.html");
   }
   if (!rel || isPagePath(themePath)) {
+    // 领域呈现返工·登录门：内置且空路由 = 该应用无公开页（OA/供应商），
+    // 主题壳无页可给——不回退主题 index（否则壳子自带“页面不存在”把
+    // 员工登录门截住），直接落回快照/SPA，SPA 无公开页时自显员工登录页。
+    // 无标记的老主题保持全路径回退不动；精确文件命中在上文已直出，不受影响。
+    if (
+      theme.builtin === true &&
+      (!Array.isArray(theme.routes) || theme.routes.length === 0)
+    ) {
+      return null;
+    }
     // 修法 D：声明了 routes 的主题只接管清单内路径，清单外落回快照/SPA。
     // 预览模式同样适用（第 90 步修正）：预览只覆盖主题指针、路径归属
     // 与正常分发一致，否则桥接页（购物车/结算等）在预览中被主题吞掉、
