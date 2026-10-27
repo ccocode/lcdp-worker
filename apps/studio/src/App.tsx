@@ -556,6 +556,33 @@ function Designer({
     }
   };
 
+  const regenerateBuiltin = async () => {
+    setBusy("regenBuiltin");
+    setError(null);
+    try {
+      const res = await api.regenerateBuiltin(appId, {
+        target: "desktop",
+        force: true,
+      });
+      if (res.already) {
+        void antdMessage.success("内置主题已是最新，无需重生成");
+      } else if (res.slotError) {
+        void antdMessage.warning(
+          `内置主题已重生成（${res.themeId}@${res.version}），但未指回当前槽：${res.slotError}`,
+        );
+      } else {
+        void antdMessage.success(
+          `内置主题已重生成：${res.themeId}@${res.version}`,
+        );
+      }
+      await load();
+    } catch (err) {
+      setError(errText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const rollback = async (version: number) => {
     setBusy("rollback");
     setError(null);
@@ -1191,6 +1218,18 @@ function Designer({
           onClick={() => setPublishOpen(true)}
         >
           发布
+        </Button>
+        <Button
+          loading={busy === "regenBuiltin"}
+          disabled={!design.published}
+          title={
+            !design.published
+              ? "须先发布设计，才能生成内置主题"
+              : "按当前已发布设计重建桌面端内置主题（生成器升级后刷新线上主题用）"
+          }
+          onClick={() => void regenerateBuiltin()}
+        >
+          重新生成内置主题
         </Button>
         <Button onClick={onLogout}>退出（{user.username}）</Button>
       </Layout.Header>
