@@ -21,6 +21,8 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   done: "已完成",
   abandoned: "已放弃",
   closed: "已收尾",
+  awaiting_preview: "等你验收预览",
+  awaiting_bind: "等你确认绑定",
 };
 
 /** 清单“已过”口径（与工作台左栏 CHECK_PASSED 一致，跳过不算过） */

@@ -15,12 +15,13 @@
  * 去助手查看）；不传则只展示待决、不给入口。
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { Button, Modal, Spin, Tag, Typography } from "antd";
+import { Button, message, Modal, Spin, Tag, Typography } from "antd";
 import {
   api,
   type AdminAssistantTask,
   type AdminTaskRunArtifactContent,
   type AdminTaskRunDetail,
+  type AdminTaskRunPending,
 } from "../../api";
 import { fmtTime } from "../../helpers";
 
@@ -29,6 +30,8 @@ export const TASK_STATUS_LABELS: Record<string, string> = {
   done: "已完成",
   abandoned: "已放弃",
   closed: "已收尾",
+  awaiting_preview: "等你验收预览",
+  awaiting_bind: "等你确认绑定",
 };
 
 /** 任务种类中文：计划与主题任务同属一张表、只是种类不同 */
@@ -71,6 +74,8 @@ export const RUN_STATUS_LABELS: Record<string, string> = {
   completed: "已完成",
   failed: "已失败",
   cancelled: "已取消",
+  awaiting_preview: "等你验收预览",
+  awaiting_bind: "等你确认绑定",
 };
 
 /** 节点状态中文（D6 首批） */
@@ -136,6 +141,34 @@ function renderLoose(value: unknown, skip: Set<string>): string[] {
   return [];
 }
 
+/**
+ * 主题预览 payload 防御式读取：服务端把 preview-card.json 内容
+ * 放在待决项的 preview 字段里；顶层同名字段作回落。缺失时
+ * 返回空，界面以通用文案呈现、不现编主题名与应用名。
+ */
+function readThemePreview(p: AdminTaskRunPending): {
+  themeName: string | null;
+  styleSummary: string | null;
+  pages: string[];
+  changes: string[];
+} {
+  const inner = p.preview ?? null;
+  const text = (v: unknown): string | null =>
+    typeof v === "string" && v.length > 0 ? v : null;
+  const list = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
+      : [];
+  const pages = list(inner?.pages);
+  const changes = list(inner?.changes);
+  return {
+    themeName: text(inner?.themeName) ?? text(p.themeName),
+    styleSummary: text(inner?.styleSummary) ?? text(p.styleSummary),
+    pages: pages.length > 0 ? pages : list(p.pages),
+    changes: changes.length > 0 ? changes : list(p.changes),
+  };
+}
+
 export default function TaskDetail({
   task,
   footer,
@@ -190,13 +223,33 @@ export default function TaskDetail({
       alive = false;
     };
   }, [appId, task.id, task.runId, runTick]);
-  const runAction = async (kind: "resume" | "retry-nodes") => {
+  const runAction = async (
+    kind:
+      | "resume"
+      | "retry-nodes"
+      | "preview-accept"
+      | "preview-reject"
+      | "bind-approve"
+      | "bind-reject",
+  ) => {
     if (!appId || acting) return;
     setActing(kind);
     try {
       if (kind === "resume") await api.assistant.app.resumeRun(appId, task.id);
-      else await api.assistant.app.retryRunNodes(appId, task.id);
+      else if (kind === "retry-nodes")
+        await api.assistant.app.retryRunNodes(appId, task.id);
+      else if (kind === "preview-accept")
+        await api.assistant.app.acceptPreview(appId, task.id);
+      else if (kind === "preview-reject")
+        await api.assistant.app.rejectPreview(appId, task.id);
+      else if (kind === "bind-approve")
+        await api.assistant.app.approveBind(appId, task.id);
+      else await api.assistant.app.rejectBind(appId, task.id);
+      // 成功后重拉 run 详情：验收通过可能翻到绑定确认或已完成，
+      // 拒绝则仍停在原等待状态，界面随重拉结果刷新。
       setRunTick((t) => t + 1);
+    } catch {
+      message.error("操作失败，请稍后重试");
     } finally {
       setActing(null);
     }
@@ -590,61 +643,213 @@ export default function TaskDetail({
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 待决事项
               </Typography.Text>
-              {runDetail.pendingItems.map((p, i) => (
-                <div
-                  key={i}
-                  style={{ display: "flex", alignItems: "center", gap: 6 }}
-                >
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
-                    {p.type === "pause"
-                      ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
-                      : "终审未达标"}
-                    {p.type === "pause" &&
-                      p.recoveryActions.length > 0 &&
-                      `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
-                    {p.type === "critic" &&
-                      p.gaps.length > 0 &&
-                      `：${p.gaps.join("；")}`}
-                  </span>
-                  {p.type === "pause" &&
-                    runDetail?.run?.runStatus === "paused" && (
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, height: "auto", fontSize: 12 }}
-                        loading={acting === "resume"}
-                        disabled={acting !== null}
-                        onClick={() => void runAction("resume")}
-                      >
-                        继续运行
-                      </Button>
-                    )}
-                  {p.type === "pause" &&
-                    runDetail?.run?.runStatus === "paused" &&
-                    p.recoveryActions.includes("retry-nodes") && (
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, height: "auto", fontSize: 12 }}
-                        loading={acting === "retry-nodes"}
-                        disabled={acting !== null}
-                        onClick={() => void runAction("retry-nodes")}
-                      >
-                        重试失败节点
-                      </Button>
-                    )}
-                  {onHandlePending && (
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: 0, height: "auto", fontSize: 12 }}
-                      onClick={onHandlePending}
+              {runDetail.pendingItems.map((p, i) => {
+                if (p.type === "theme-preview") {
+                  const preview = readThemePreview(p);
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                        fontSize: 12,
+                      }}
                     >
-                      去处理
-                    </Button>
-                  )}
-                </div>
-              ))}
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                          等你验收预览
+                        </Tag>
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontWeight: 600,
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {preview.themeName ?? "新主题"}
+                        </span>
+                      </div>
+                      {preview.styleSummary && (
+                        <div style={{ wordBreak: "break-word" }}>
+                          {preview.styleSummary}
+                        </div>
+                      )}
+                      {preview.pages.length > 0 && (
+                        <div style={{ wordBreak: "break-word" }}>
+                          覆盖页面：{preview.pages.join("、")}
+                        </div>
+                      )}
+                      {preview.changes.length > 0 && (
+                        <div>
+                          <div>主要变化：</div>
+                          {preview.changes.map((c, j) => (
+                            <div
+                              key={j}
+                              style={{ wordBreak: "break-word" }}
+                            >
+                              · {c}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <Typography.Text
+                        type="secondary"
+                        style={{ fontSize: 12 }}
+                      >
+                        暂不验收时，草稿会保留在原处。
+                      </Typography.Text>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Button
+                          type="primary"
+                          size="small"
+                          loading={acting === "preview-accept"}
+                          disabled={acting !== null}
+                          onClick={() => void runAction("preview-accept")}
+                        >
+                          确认验收
+                        </Button>
+                        <Button
+                          size="small"
+                          loading={acting === "preview-reject"}
+                          disabled={acting !== null}
+                          onClick={() => void runAction("preview-reject")}
+                        >
+                          暂不验收
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                }
+                if (p.type === "theme-bind") {
+                  const themeName =
+                    readThemePreview(p).themeName ?? "新主题";
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                        fontSize: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                          等你确认绑定
+                        </Tag>
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontWeight: 600,
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          将绑定的主题：{themeName}
+                        </span>
+                      </div>
+                      <div>目标：电脑版</div>
+                      <div style={{ wordBreak: "break-word" }}>
+                        确认后将换上该主题并重新生成页面。
+                      </div>
+                      <Typography.Text
+                        type="secondary"
+                        style={{ fontSize: 12 }}
+                      >
+                        如果不绑定，草稿会保留在原处，任务仍开着。
+                      </Typography.Text>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Button
+                          type="primary"
+                          size="small"
+                          loading={acting === "bind-approve"}
+                          disabled={acting !== null}
+                          onClick={() => void runAction("bind-approve")}
+                        >
+                          确认绑定
+                        </Button>
+                        <Button
+                          size="small"
+                          loading={acting === "bind-reject"}
+                          disabled={acting !== null}
+                          onClick={() => void runAction("bind-reject")}
+                        >
+                          不绑定
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={i}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
+                      {p.type === "pause"
+                        ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
+                        : "终审未达标"}
+                      {p.type === "pause" &&
+                        p.recoveryActions.length > 0 &&
+                        `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
+                      {p.type === "critic" &&
+                        p.gaps.length > 0 &&
+                        `：${p.gaps.join("；")}`}
+                    </span>
+                    {p.type === "pause" &&
+                      runDetail?.run?.runStatus === "paused" && (
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ padding: 0, height: "auto", fontSize: 12 }}
+                          loading={acting === "resume"}
+                          disabled={acting !== null}
+                          onClick={() => void runAction("resume")}
+                        >
+                          继续运行
+                        </Button>
+                      )}
+                    {p.type === "pause" &&
+                      runDetail?.run?.runStatus === "paused" &&
+                      p.recoveryActions.includes("retry-nodes") && (
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ padding: 0, height: "auto", fontSize: 12 }}
+                          loading={acting === "retry-nodes"}
+                          disabled={acting !== null}
+                          onClick={() => void runAction("retry-nodes")}
+                        >
+                          重试失败节点
+                        </Button>
+                      )}
+                    {onHandlePending && (
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, height: "auto", fontSize: 12 }}
+                        onClick={onHandlePending}
+                      >
+                        去处理
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
           {runDetail.notifications.length > 0 && (

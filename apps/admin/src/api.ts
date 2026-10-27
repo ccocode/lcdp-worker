@@ -554,13 +554,29 @@ export interface AdminTaskRunNotification {
   createdAt: string | null;
 }
 
-/** 任务 run 待决事项（暂停原因 / 终审未达标，带处理入口） */
+/**
+ * 任务 run 待决事项（暂停原因 / 终审未达标，带处理入口）。
+ * 主题分段审批（契约第 5 节冻结形状）：awaiting_preview 时推
+ * theme-preview 项、载 preview payload；awaiting_bind 时推
+ * theme-bind 项、载主题名；两类项的 preview / themeName 均
+ * 为可选字段，缺失时界面以通用文案回落、不造数据。
+ */
 export interface AdminTaskRunPending {
-  type: "pause" | "critic";
+  type: "pause" | "critic" | "theme-preview" | "theme-bind";
   reason: string | null;
   recoveryActions: string[];
   gaps: string[];
   createdAt: string | null;
+  themeName?: string | null;
+  styleSummary?: string | null;
+  pages?: string[] | null;
+  changes?: string[] | null;
+  preview?: {
+    themeName?: string | null;
+    styleSummary?: string | null;
+    pages?: string[] | null;
+    changes?: string[] | null;
+  } | null;
 }
 
 /** 任务 run 详情（D6 首批只读聚合） */
@@ -2004,6 +2020,83 @@ export const api = {
           { method: "POST" },
         );
         return Array.isArray(res?.retriedNodes) ? res.retriedNodes : [];
+      },
+      /**
+       * 主题分段审批（契约第 5 节，贴 resumeRun / retryRunNodes
+       * 形态与路径）：仅对应等待状态可用，否则服务端 409；
+       * 验收拒绝与绑定拒绝均只记账、不推进状态。
+       */
+      async acceptPreview(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }> {
+        const res = await apiFetch<{
+          ok?: boolean;
+          runStatus?: string | null;
+          taskStatus?: string | null;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/preview/accept`,
+          { method: "POST" },
+        );
+        return res && typeof res === "object" ? res : {};
+      },
+      async rejectPreview(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }> {
+        const res = await apiFetch<{
+          ok?: boolean;
+          runStatus?: string | null;
+          taskStatus?: string | null;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/preview/reject`,
+          { method: "POST" },
+        );
+        return res && typeof res === "object" ? res : {};
+      },
+      async approveBind(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }> {
+        const res = await apiFetch<{
+          ok?: boolean;
+          runStatus?: string | null;
+          taskStatus?: string | null;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/bind/approve`,
+          { method: "POST" },
+        );
+        return res && typeof res === "object" ? res : {};
+      },
+      async rejectBind(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }> {
+        const res = await apiFetch<{
+          ok?: boolean;
+          runStatus?: string | null;
+          taskStatus?: string | null;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/bind/reject`,
+          { method: "POST" },
+        );
+        return res && typeof res === "object" ? res : {};
       },
       /**
        * 主题绑定门（D6 首批只读）：版本有产出 run 且终审未通过
