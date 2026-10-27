@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Card,
-  Descriptions,
   Empty,
   Input,
   Modal,
@@ -31,7 +30,7 @@ import {
   type ThemeSlots,
   type ThemeVersionView,
 } from "../api";
-import { accessFormText, fmtTime } from "../helpers";
+import { fmtTime } from "../helpers";
 
 /**
  * 主题（第 68 步口径：入口模型退役后，主题绑定是**应用自身的属性**；
@@ -40,11 +39,13 @@ import { accessFormText, fmtTime } from "../helpers";
  * 可见；自定义/空白领域应用无货架），列表就是该对象的集合形态属性。
  * 列表按桌面 / 移动两组呈现，每组置顶显示当前激活（双槽指针、每组唯一），
  * 「设为当前」把某主题版本写进本应用对应槽的指针（theme_slots，values
- * 按槽独立），经 PUT /admin/apps/:id/site 落盘即时生效（生效面见下方
- * 「当前绑定」）。写权口径：绑定权归本应用运营方与平台管理员，主题须
+ * 按槽独立），经 PUT /admin/apps/:id/site 落盘即时生效；绑定状态与操作
+ * 直接放在卡片上（槽位头的当前激活标记、行内的激活中标记与设为当前按钮），
+ * 页面底部不再设当前绑定区。写权口径：绑定权归本应用运营方与平台管理员，主题须
  * 本应用私有或本领域货架（服务端供给执法，admin 同口径）。
- * 上传口径：页签内上传默认落本应用私有（admin/operator 均可，operator
- * 须持运营授权）；admin 可切换归属为某领域货架供货。
+ * 上传口径（10-27 定）：上传主题不设归属，归属只由当前应用上下文决定，
+ * 页签内上传恒落本应用私有（admin/operator 均可，operator 须持运营授权）。
+ * 卡片只显当前版本（已激活者优先，否则首个合槽版本），历史版本走弹窗查看。
  */
 
 /** 领域 key → 展示名（与平台领域注册表 DOMAINS 的 name 同步） */
@@ -117,7 +118,6 @@ interface BindingState {
 
 export default function AppThemeSettings({
   appId,
-  isAdmin,
   appDomain,
 }: {
   appId: string;
@@ -129,16 +129,18 @@ export default function AppThemeSettings({
   const [site, setSite] = useState<SiteAppView | null>(null);
   /** 管理档位（第 81 步）：t2 领域角色只读——上传/绑定控件禁用，执法在服务端 */
   const [accessTier, setAccessTier] = useState<"t0" | "t1" | "t2" | null>(null);
-  const [defaultHost, setDefaultHost] = useState("www.coode.cc.cd");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  /** 上传归属（仅 admin 可改）："" = 本应用私有；其余为领域 key（货架供货） */
-  const [uploadDomain, setUploadDomain] = useState("");
   const [problems, setProblems] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [binding, setBinding] = useState<BindingState | null>(null);
+  /** 历史版本弹窗：主题 × 槽位（10-27 口径：卡片只显当前版本，历史走弹窗） */
+  const [history, setHistory] = useState<{
+    theme: ThemeItem;
+    slot: ThemeSlotName;
+  } | null>(null);
   /**
    * 绑定门（D6 首批只读）：弹窗打开/版本切换时查该版本有无产出
    * run；有且终审未通过时“设为当前”不可点。查不到（null）时不拦，
@@ -176,7 +178,6 @@ export default function AppThemeSettings({
       setThemes(ts);
       setSite(s.app);
       setAccessTier(s.accessTier);
-      setDefaultHost(s.defaultHost);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
@@ -236,13 +237,10 @@ export default function AppThemeSettings({
       setUploading(true);
       setProblems([]);
       try {
-        const res = uploadDomain
-          ? await api.themes.upload(file, { domainKey: uploadDomain })
-          : await api.themes.upload(file, { appId });
+        // 10-27 口径：上传主题不设归属，归属只由当前应用上下文决定（恒为本应用私有）。
+        const res = await api.themes.upload(file, { appId });
         message.success(
-          uploadDomain
-            ? `共享主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），已加入「${domainLabel(uploadDomain)}」领域共享主题，同领域应用均可见可绑`
-            : `私有主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
+          `私有主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
         );
         await load();
       } catch (err) {
@@ -256,7 +254,7 @@ export default function AppThemeSettings({
         setUploading(false);
       }
     },
-    [appId, load, uploadDomain],
+    [appId, load],
   );
 
   /**
@@ -415,25 +413,6 @@ export default function AppThemeSettings({
     return <Tag color="orange">其他应用私有</Tag>;
   };
 
-  const versionDetail = (t: ThemeItem, slot: ThemeSlotName) => (
-    <Space direction="vertical" size={4}>
-      {t.versions
-        .filter((v) => versionFitsSlot(v, slot))
-        .map((v) => (
-          <Typography.Text key={v.version} style={{ fontSize: 12 }}>
-            {t.id}@{v.version}：{v.fileCount} 个文件 / {fmtBytes(v.totalBytes)}
-            ，上传人 {v.createdBy ?? "—"}，{fmtTime(v.createdAt)}
-            ；端：{versionTargetLabel(v)}
-            {configOf(v).length > 0
-              ? `；配置项：${configOf(v)
-                  .map((c) => `${c.label}(${c.key})`)
-                  .join("、")}`
-              : "；无配置项"}
-          </Typography.Text>
-        ))}
-    </Space>
-  );
-
   /** 分组（桌面/移动）共用的列定义：版本只列本组端的，绑定标记只认本组槽 */
   const themeColumnsFor = (slot: ThemeSlotName): ColumnsType<ThemeItem> => [
     {
@@ -453,68 +432,71 @@ export default function AppThemeSettings({
       ),
     },
     {
-      title: "版本（激活中已标记）",
+      title: "当前版本",
       dataIndex: "versions",
-      render: (_, t) => (
-        <Space size={4} wrap>
-          {t.versions
-            .filter((v) => versionFitsSlot(v, slot))
-            .map((v) => {
-              const active = marksFor(t.id, v.version).includes(slot);
-              return (
-                <Tag key={v.version} color={active ? "processing" : undefined}>
-                  {v.version}（{v.fileCount} 文件 / {fmtBytes(v.totalBytes)} ·{" "}
-                  {versionTargetLabel(v)}）{active ? " · 激活中" : ""}
-                </Tag>
-              );
-            })}
-        </Space>
-      ),
+      render: (_, t) => {
+        const slotVersions = t.versions.filter((v) => versionFitsSlot(v, slot));
+        const current =
+          slotVersions.find((v) => marksFor(t.id, v.version).includes(slot)) ??
+          slotVersions[0];
+        if (!current) {
+          return <Typography.Text type="secondary">—</Typography.Text>;
+        }
+        const active = marksFor(t.id, current.version).includes(slot);
+        return (
+          <Space size={4} wrap>
+            <Tag color={active ? "processing" : undefined}>
+              {current.version}（{current.fileCount} 文件 / {fmtBytes(current.totalBytes)} ·{" "}
+              {versionTargetLabel(current)}）{active ? " · 激活中" : ""}
+            </Tag>
+            {slotVersions.length > 1 && (
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => setHistory({ theme: t, slot })}
+              >
+                历史版本（{slotVersions.length}）
+              </Button>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: "操作",
       width: 170,
-      render: (_, t) => (
-        <Space direction="vertical" size={2}>
-          <Button
-            type="primary"
-            size="small"
-            disabled={readOnly || !t.versions.some((v) => versionFitsSlot(v, slot))}
-            onClick={() => openBinding(t, slot)}
-          >
-            设为当前
-          </Button>
-          {t.versions
-            .filter((v) => versionFitsSlot(v, slot))
-            .map((v) => (
+      render: (_, t) => {
+        const slotVersions = t.versions.filter((v) => versionFitsSlot(v, slot));
+        const current =
+          slotVersions.find((v) => marksFor(t.id, v.version).includes(slot)) ??
+          slotVersions[0];
+        return (
+          <Space direction="vertical" size={2}>
+            <Button
+              type="primary"
+              size="small"
+              disabled={readOnly || slotVersions.length === 0}
+              onClick={() => openBinding(t, slot)}
+            >
+              设为当前
+            </Button>
+            {current && (
               <Button
-                key={v.version}
                 type="link"
                 size="small"
                 style={{ padding: 0, height: "auto" }}
-                loading={previewing === `${t.id}@${v.version}`}
-                onClick={() => void onPreview(t, slot, v.version)}
+                loading={previewing === `${t.id}@${current.version}`}
+                onClick={() => void onPreview(t, slot, current.version)}
               >
-                预览 {v.version}
+                预览 {current.version}
               </Button>
-            ))}
-        </Space>
-      ),
+            )}
+          </Space>
+        );
+      },
     },
   ];
-
-  // 第 71 步口径统一：与应用管理列表、域名页签共用 accessFormText 措辞
-  const accessText = !site
-    ? "站点信息未加载"
-    : accessFormText(
-        {
-          boundHost: site.boundHost,
-          isPrimary: site.isPrimary,
-          id: appId,
-          nameEn: site.nameEn,
-        },
-        defaultHost,
-      );
 
   const bindingPtr = binding ? slots[binding.slot] : null;
   const bindingItems =
@@ -559,25 +541,8 @@ export default function AppThemeSettings({
           >
             上传主题包（.zip）
           </Button>
-          {isAdmin && (
-            <Select
-              style={{ width: 190 }}
-              value={uploadDomain}
-              onChange={(v) => setUploadDomain(v)}
-              options={[
-                { value: "", label: "归属：本应用私有" },
-                ...Object.entries(DOMAIN_LABEL).map(([key, label]) => ({
-                  value: key,
-                  label: `归属：${label}领域共享主题`,
-                })),
-              ]}
-            />
-          )}
           <Typography.Text type="secondary">
-            {uploadDomain
-              ? `共享主题将加入「${domainLabel(uploadDomain)}」领域，同领域所有应用可见可绑`
-              : "私有主题仅本应用可见可绑"}
-            ，校验标准一致（≤200 个文件、解压总大小 ≤20MB、单文件 ≤5MB）
+            私有主题仅本应用可见可绑，校验标准一致（≤200 个文件、解压总大小 ≤20MB、单文件 ≤5MB）
           </Typography.Text>
         </Space>
         {problems.length > 0 && (
@@ -637,9 +602,6 @@ export default function AppThemeSettings({
                     columns={themeColumnsFor(slot)}
                     dataSource={rows}
                     pagination={false}
-                    expandable={{
-                      expandedRowRender: (t) => versionDetail(t, slot),
-                    }}
                   />
                 )}
               </div>
@@ -648,26 +610,7 @@ export default function AppThemeSettings({
         )}
       </Card>
 
-      <Card title="当前绑定">
-        <Descriptions column={2} size="small">
-          <Descriptions.Item label="生效范围">{accessText}</Descriptions.Item>
-          <Descriptions.Item label="主应用">
-            {site?.isPrimary ? <Tag color="gold">主应用</Tag> : "否"}
-          </Descriptions.Item>
-          {THEME_SLOTS.map((slot) => (
-            <Descriptions.Item key={slot} label={`${THEME_SLOT_LABEL[slot]}当前`}>
-              {slots[slot] ? (
-                <Tag color="processing">
-                  {slots[slot]!.id}@{slots[slot]!.version}
-                </Tag>
-              ) : (
-                <Typography.Text type="secondary">未绑定</Typography.Text>
-              )}
-            </Descriptions.Item>
-          ))}
-        </Descriptions>
-
-      </Card>
+      {/* 10-27 口径：页面底部不再设当前绑定区，绑定状态与操作直接放在上方卡片（槽位头与行内）上。 */}
 
       <Modal
         title={binding ? `设为当前主题 · ${binding.theme.name}` : "设为当前主题"}
@@ -815,6 +758,56 @@ export default function AppThemeSettings({
                   onChange={(ev) => setBValsJson(ev.target.value)}
                 />
               ))}
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
+        title={
+          history
+            ? `历史版本 · ${history.theme.name}（${THEME_SLOT_LABEL[history.slot]}）`
+            : "历史版本"
+        }
+        open={history !== null}
+        onCancel={() => setHistory(null)}
+        footer={null}
+        width={640}
+      >
+        {history && (
+          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+            {history.theme.versions
+              .filter((v) => versionFitsSlot(v, history.slot))
+              .map((v) => {
+                const active = marksFor(history.theme.id, v.version).includes(
+                  history.slot,
+                );
+                return (
+                  <Space key={v.version} size={8} wrap>
+                    <Tag color={active ? "processing" : undefined}>
+                      {v.version}
+                      {active ? " · 激活中" : ""}
+                    </Tag>
+                    <Typography.Text style={{ fontSize: 12 }}>
+                      {history.theme.id}@{v.version}：{v.fileCount} 个文件 /{" "}
+                      {fmtBytes(v.totalBytes)}，上传人 {v.createdBy ?? "—"}，
+                      {fmtTime(v.createdAt)}；端：{versionTargetLabel(v)}
+                    </Typography.Text>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0, height: "auto" }}
+                      loading={
+                        previewing === `${history.theme.id}@${v.version}`
+                      }
+                      onClick={() =>
+                        void onPreview(history.theme, history.slot, v.version)
+                      }
+                    >
+                      预览
+                    </Button>
+                  </Space>
+                );
+              })}
           </Space>
         )}
       </Modal>
