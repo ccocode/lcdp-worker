@@ -13,6 +13,8 @@ import {
   api,
   type AdminAssistantOptionsCard,
   type AdminAssistantTask,
+  type AdminTaskRunDetail,
+  type AdminTaskRunPending,
 } from "../../api";
 import { TaskRunTimeline } from "./TaskRunTimeline";
 
@@ -87,7 +89,7 @@ function readDelegations(task: AdminAssistantTask): DelegationRecord[] {
 }
 
 /** 读一张任务卡（全部状态里找；找不到即已不在列表中） */
-function useTaskCard(appId: string, taskId: string) {
+function useTaskCard(appId: string, taskId: string, refreshKey = 0) {
   const [task, setTask] = useState<AdminAssistantTask | null>(null);
   const [missing, setMissing] = useState(false);
   useEffect(() => {
@@ -118,8 +120,73 @@ function useTaskCard(appId: string, taskId: string) {
       alive = false;
       if (timer) clearInterval(timer);
     };
-  }, [appId, taskId]);
+  }, [appId, taskId, refreshKey]);
   return { task, missing };
+}
+
+/**
+ * 主题预览 payload 防御式读取（与详情的 readThemePreview 同口径：
+ * 待决项 preview 字段优先、顶层同名字段回落；缺失时返回空，
+ * 界面以通用文案呈现、不现编主题名）。
+ */
+function readDialogPreview(p: AdminTaskRunPending): {
+  themeName: string | null;
+  styleSummary: string | null;
+  pages: string[];
+  changes: string[];
+} {
+  const inner = p.preview ?? null;
+  const text = (v: unknown): string | null =>
+    typeof v === "string" && v.length > 0 ? v : null;
+  const list = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
+      : [];
+  const pages = list(inner?.pages);
+  const changes = list(inner?.changes);
+  return {
+    themeName: text(inner?.themeName) ?? text(p.themeName),
+    styleSummary: text(inner?.styleSummary) ?? text(p.styleSummary),
+    pages: pages.length > 0 ? pages : list(p.pages),
+    changes: changes.length > 0 ? changes : list(p.changes),
+  };
+}
+
+/**
+ * 对话框并行卡片用的 run 详情：只在等验收 / 等绑定时取数，
+ * 等待态每 20 秒轮询一次、终态即停（与任务卡轮询同频）。
+ * 取不到时返回 null，卡片以通用文案 + 按钮回落，不阻塞验收。
+ */
+function useTaskRunDetail(
+  appId: string,
+  taskId: string,
+  enabled: boolean,
+  refreshKey = 0,
+): AdminTaskRunDetail | null {
+  const [detail, setDetail] = useState<AdminTaskRunDetail | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setDetail(null);
+      return;
+    }
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const load = async () => {
+      try {
+        const res = await api.assistant.app.taskRun(appId, taskId);
+        if (alive) setDetail(res);
+      } catch {
+        // 静默：卡片回落为通用文案，详情里仍可看完整待决
+      }
+    };
+    void load();
+    timer = setInterval(() => void load(), 20000);
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [appId, taskId, enabled, refreshKey]);
+  return detail;
 }
 
 const CHECK_ICON: Record<string, string> = {
@@ -178,7 +245,8 @@ export function PlanMessageCard({
    */
   autoOpen?: boolean;
 }) {
-  const { task, missing } = useTaskCard(appId, taskId);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { task, missing } = useTaskCard(appId, taskId, refreshKey);
   const [expanded, setExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
   useEffect(() => {
@@ -187,6 +255,49 @@ export function PlanMessageCard({
     autoOpenedRef.current = true;
     onOpenTask(taskId);
   }, [autoOpen, task, taskId, onOpenTask]);
+  // 对话框并行卡片（2026-10-29 用户定）：预览卡与绑定审批卡
+  // 与计划卡并行出现在对话框里，用户只盯对话框就能走完
+  // “需求发起 → 规划执行 → 预览验收 → 收尾总结”全程；收尾
+  // 总结是后端在对话里发的 closing 消息（accept/approve 后
+  // 的 appendApprovalMessage），此处不再另造一张总结卡。
+  const awaitingPreview = task?.status === "awaiting_preview";
+  const awaitingBind = task?.status === "awaiting_bind";
+  const runDetail = useTaskRunDetail(
+    appId,
+    taskId,
+    awaitingPreview || awaitingBind,
+    refreshKey,
+  );
+  const previewPending =
+    runDetail?.pendingItems.find((p) => p.type === "theme-preview") ?? null;
+  const bindPending =
+    runDetail?.pendingItems.find((p) => p.type === "theme-bind") ?? null;
+  const [acting, setActing] = useState<string | null>(null);
+  const [actError, setActError] = useState<string | null>(null);
+  const act = async (
+    kind: "preview-accept" | "preview-reject" | "bind-approve" | "bind-reject",
+  ) => {
+    if (acting) return;
+    setActing(kind);
+    setActError(null);
+    try {
+      if (kind === "preview-accept")
+        await api.assistant.app.acceptPreview(appId, taskId);
+      else if (kind === "preview-reject")
+        await api.assistant.app.rejectPreview(appId, taskId);
+      else if (kind === "bind-approve")
+        await api.assistant.app.approveBind(appId, taskId);
+      else await api.assistant.app.rejectBind(appId, taskId);
+      // 服务端状态已变：重拉任务行与 run 详情，卡片随之翻态
+      // （验收通过 → 绑定审批卡或已完成；暂不验收 → 仍停在
+      // 预览卡，等用户在输入框发整改需求再循环）。
+      setRefreshKey((k) => k + 1);
+    } catch {
+      setActError("操作失败，请稍后重试");
+    } finally {
+      setActing(null);
+    }
+  };
   if (missing) {
     return (
       <Card size="small" title="计划">
@@ -207,7 +318,12 @@ export function PlanMessageCard({
   }
   const list = task.checklist ?? [];
   const passed = list.filter((it) => CHECK_PASSED_CARD.has(it.status)).length;
+  const preview = previewPending ? readDialogPreview(previewPending) : null;
+  const bindThemeName = bindPending
+    ? readDialogPreview(bindPending).themeName
+    : null;
   return (
+    <>
     <Card
       size="small"
       title="计划"
@@ -261,6 +377,131 @@ export function PlanMessageCard({
         <TaskRunTimeline appId={appId} taskId={taskId} />
       </div>
     </Card>
+    {awaitingPreview && (
+      <Card
+        size="small"
+        title="预览"
+        extra={
+          <Tag color="orange" style={{ margin: 0 }}>
+            等你验收预览
+          </Tag>
+        }
+        style={{
+          borderColor: tokens.colorBorder,
+          background: tokens.colorBgContainer,
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            {preview?.themeName ?? "新主题"}
+          </Typography.Text>
+          {preview?.styleSummary && (
+            <Typography.Text style={{ fontSize: 13 }}>
+              {preview.styleSummary}
+            </Typography.Text>
+          )}
+          {preview && preview.pages.length > 0 && (
+            <Typography.Text style={{ fontSize: 13 }}>
+              覆盖页面：{preview.pages.join("、")}
+            </Typography.Text>
+          )}
+          {preview && preview.changes.length > 0 && (
+            <div>
+              <Typography.Text style={{ fontSize: 13 }}>
+                主要变化：
+              </Typography.Text>
+              {preview.changes.map((c, j) => (
+                <div key={j} style={{ fontSize: 13 }}>
+                  · {c}
+                </div>
+              ))}
+            </div>
+          )}
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            暂不验收时，草稿会保留在原处；请在输入框告诉我哪里有问题，我按你的意见改。
+          </Typography.Text>
+          {actError && (
+            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+              {actError}
+            </Typography.Text>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button
+              type="primary"
+              size="small"
+              loading={acting === "preview-accept"}
+              disabled={acting !== null}
+              onClick={() => void act("preview-accept")}
+            >
+              确认验收
+            </Button>
+            <Button
+              size="small"
+              loading={acting === "preview-reject"}
+              disabled={acting !== null}
+              onClick={() => void act("preview-reject")}
+            >
+              暂不验收
+            </Button>
+          </div>
+        </div>
+      </Card>
+    )}
+    {awaitingBind && (
+      <Card
+        size="small"
+        title="绑定审批"
+        extra={
+          <Tag color="orange" style={{ margin: 0 }}>
+            等你确认绑定
+          </Tag>
+        }
+        style={{
+          borderColor: tokens.colorBorder,
+          background: tokens.colorBgContainer,
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            将绑定的主题：{bindThemeName ?? "新主题"}
+          </Typography.Text>
+          <Typography.Text style={{ fontSize: 13 }}>
+            目标：电脑版
+          </Typography.Text>
+          <Typography.Text style={{ fontSize: 13 }}>
+            确认后将换上该主题并重新生成页面。
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            如果不绑定，草稿会保留在原处，任务仍开着。
+          </Typography.Text>
+          {actError && (
+            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+              {actError}
+            </Typography.Text>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button
+              type="primary"
+              size="small"
+              loading={acting === "bind-approve"}
+              disabled={acting !== null}
+              onClick={() => void act("bind-approve")}
+            >
+              确认绑定
+            </Button>
+            <Button
+              size="small"
+              loading={acting === "bind-reject"}
+              disabled={acting !== null}
+              onClick={() => void act("bind-reject")}
+            >
+              不绑定
+            </Button>
+          </div>
+        </div>
+      </Card>
+    )}
+    </>
   );
 }
 
