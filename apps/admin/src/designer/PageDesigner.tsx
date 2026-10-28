@@ -259,6 +259,9 @@ export default function PageDesigner({
   const pagesArr = useMemo(() => pages ?? [], [pages]);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [device, setDevice] = useState<Device>("desktop");
+  /** 同路由匿名变体编辑态（2026-10-28）：开 = 画布/结构树/全部节点操作改写
+   *  当前页的 anonRoot，关 = 写正式树 root。切换即清选中，避免跨树串选。 */
+  const [editAnon, setEditAnon] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [genEntityKey, setGenEntityKey] = useState<string | null>(null);
   const [newPageOpen, setNewPageOpen] = useState(false);
@@ -299,10 +302,53 @@ export default function PageDesigner({
 
   const currentPage: PageSchema | null =
     pagesArr.find((p) => p.id === selectedPageId) ?? pagesArr[0] ?? null;
+  /** 匿名变体空壳 id：正式树 id 恒为 n-…，壳 id 用 anon- 前缀、永不碰撞。 */
+  const anonShellId = (pageId: string) => `anon-${pageId}`;
+  /** 当前页的编辑树（只读视角）：正式态取 root；匿名态取 anonRoot 或空壳
+   *  （空壳仅渲染占位、不落库；首个写入时以同一 id 采纳为真正的 anonRoot，
+   *  保证拖拽落点可命中）。 */
+  const editTree: ComponentNode | null = useMemo(() => {
+    if (!currentPage) return null;
+    if (!editAnon) return currentPage.root;
+    const anon = (currentPage as PageSchema & { anonRoot?: ComponentNode })
+      .anonRoot;
+    return (
+      anon ?? {
+        id: anonShellId(currentPage.id),
+        type: "Page",
+        props: { title: currentPage.name },
+        children: [],
+      }
+    );
+  }, [currentPage, editAnon]);
+  /** 任一页的编辑树只读视角（拖拽落点等 ref 回调用，不走 currentPage）。 */
+  const editTreeOf = (page: PageSchema): ComponentNode => {
+    if (!editAnon) return page.root;
+    return (
+      (page as PageSchema & { anonRoot?: ComponentNode }).anonRoot ?? {
+        id: anonShellId(page.id),
+        type: "Page",
+        props: { title: page.name },
+        children: [],
+      }
+    );
+  };
+  /** 写入用：确保编辑树已落到 draft（匿名态采纳空壳），与 mutatePage 同一步历史。 */
+  const ensureEditTree = (page: PageSchema): ComponentNode => {
+    if (!editAnon) return page.root;
+    const p = page as PageSchema & { anonRoot?: ComponentNode };
+    if (!p.anonRoot) {
+      p.anonRoot = {
+        id: anonShellId(page.id),
+        type: "Page",
+        props: { title: page.name },
+        children: [],
+      };
+    }
+    return p.anonRoot;
+  };
   const selectedNode: ComponentNode | null =
-    currentPage && selectedNodeId
-      ? findNode(currentPage.root, selectedNodeId)
-      : null;
+    editTree && selectedNodeId ? findNode(editTree, selectedNodeId) : null;
 
   const topEntities = useMemo(
     () => data.entities.filter((e) => !e.parentField),
@@ -340,7 +386,7 @@ export default function PageDesigner({
   };
   const mutateNode = (nodeId: string, fn: (node: ComponentNode) => void) =>
     mutatePage((page) => {
-      const n = findNode(page.root, nodeId);
+      const n = findNode(editTreeOf(page), nodeId);
       if (n) fn(n);
     });
 
@@ -489,7 +535,7 @@ export default function PageDesigner({
     let insertedId: string | null = null;
     mutatePage((page) => {
       prepareNode(page, raw);
-      insertAtPoint(page.root, selectedNodeId, raw);
+      insertAtPoint(ensureEditTree(page), selectedNodeId, raw);
       insertedId = raw.id;
     });
     if (insertedId) {
@@ -499,20 +545,20 @@ export default function PageDesigner({
   };
 
   const insertCatalogItem = (item: CatalogItem) => {
-    if (!currentPage) {
+    if (!currentPage || !editTree) {
       void antdMessage.warning("先选择或新建一张页面");
       return;
     }
-    const existing = collectIds(currentPage.root);
+    const existing = collectIds(editTree);
     insertNode(item.make(genNodeId(existing)));
   };
 
   const insertFragment = (frag: FragmentDef) => {
-    if (!currentPage) {
+    if (!currentPage || !editTree) {
       void antdMessage.warning("先选择或新建一张页面");
       return;
     }
-    const existing = collectIds(currentPage.root);
+    const existing = collectIds(editTree);
     insertNode(reIdTree(frag.root, existing));
   };
 
@@ -608,10 +654,11 @@ export default function PageDesigner({
     if (!el || !wrap.contains(el)) return null;
     const targetId = el.dataset.nodeId;
     if (!targetId) return null;
-    const target = findNode(page.root, targetId);
+    const tree = editTreeOf(page);
+    const target = findNode(tree, targetId);
     if (!target) return null;
     const rect = el.getBoundingClientRect();
-    const axis = flowAxis(page.root, targetId);
+    const axis = flowAxis(tree, targetId);
     const ratio =
       axis === "x"
         ? rect.width > 0
@@ -628,7 +675,7 @@ export default function PageDesigner({
     }
     const dragId =
       dragRef.current?.source.kind === "node" ? dragRef.current.source.nodeId : null;
-    const eff = resolveDropPos(page.root, dragId, targetId, pos);
+    const eff = resolveDropPos(tree, dragId, targetId, pos);
     return eff ? { targetId, pos: eff, axis } : null;
   };
 
@@ -639,16 +686,17 @@ export default function PageDesigner({
     if (!drag || !drop || !currentPageRef.current) return;
     let landedId: string | null = null;
     mutatePage((page) => {
+      const tree = ensureEditTree(page);
       if (drag.source.kind === "catalog") {
-        const node = drag.source.item.make(genNodeId(collectIds(page.root)));
+        const node = drag.source.item.make(genNodeId(collectIds(tree)));
         prepareNode(page, node);
-        if (insertNodeAt(page.root, node, drop.targetId, drop.pos)) landedId = node.id;
+        if (insertNodeAt(tree, node, drop.targetId, drop.pos)) landedId = node.id;
       } else if (drag.source.kind === "fragment") {
-        const node = reIdTree(drag.source.frag.root, collectIds(page.root));
+        const node = reIdTree(drag.source.frag.root, collectIds(tree));
         prepareNode(page, node);
-        if (insertNodeAt(page.root, node, drop.targetId, drop.pos)) landedId = node.id;
+        if (insertNodeAt(tree, node, drop.targetId, drop.pos)) landedId = node.id;
       } else {
-        if (moveNodeTo(page.root, drag.source.nodeId, drop.targetId, drop.pos))
+        if (moveNodeTo(tree, drag.source.nodeId, drop.targetId, drop.pos))
           landedId = drag.source.nodeId;
       }
     });
@@ -745,8 +793,9 @@ export default function PageDesigner({
     const handle = (e.target as HTMLElement).closest<HTMLElement>("[data-drag-handle]");
     if (!handle || !canvasWrapRef.current?.contains(handle)) return;
     const nodeId = handle.dataset.dragHandle;
-    if (!nodeId || nodeId === page.root.id) return;
-    const node = findNode(page.root, nodeId);
+    const tree = editTreeOf(page);
+    if (!nodeId || nodeId === tree.id) return;
+    const node = findNode(tree, nodeId);
     if (!node) return;
     armDrag({ kind: "node", nodeId, label: node.type }, e);
   };
@@ -761,7 +810,7 @@ export default function PageDesigner({
     const pos: DropPos = rel < 0 ? "before" : rel > 0 ? "after" : "inside";
     let ok = false;
     mutatePage((page) => {
-      ok = moveNodeTo(page.root, dragId, targetId, pos);
+      ok = moveNodeTo(ensureEditTree(page), dragId, targetId, pos);
     });
     if (ok) setSelectedNodeId(dragId);
   };
@@ -829,7 +878,7 @@ export default function PageDesigner({
       if (!page.dataSources.some((ds) => ds.key === entityKey)) {
         page.dataSources.push({ key: entityKey, kind: "entity", ref: entityKey });
       }
-      const n = findNode(page.root, nodeId);
+      const n = findNode(editTreeOf(page), nodeId);
       if (n) n.binding = { ...(n.binding ?? {}), source: entityKey };
     });
 
@@ -843,7 +892,7 @@ export default function PageDesigner({
 
   const moveNode = (nodeId: string, dir: -1 | 1) =>
     mutatePage((page) => {
-      const loc = findParent(page.root, nodeId);
+      const loc = findParent(ensureEditTree(page), nodeId);
       if (!loc?.parent.children) return;
       const j = loc.index + dir;
       if (j < 0 || j >= loc.parent.children.length) return;
@@ -855,15 +904,16 @@ export default function PageDesigner({
 
   const deleteNode = (nodeId: string) =>
     mutatePage((page) => {
-      const loc = findParent(page.root, nodeId);
+      const loc = findParent(ensureEditTree(page), nodeId);
       if (loc?.parent.children) loc.parent.children.splice(loc.index, 1);
     });
 
   const copyNode = (node: ComponentNode) =>
     mutatePage((page) => {
-      const loc = findParent(page.root, node.id);
+      const tree = ensureEditTree(page);
+      const loc = findParent(tree, node.id);
       if (!loc?.parent.children) return;
-      const existing = collectIds(page.root);
+      const existing = collectIds(tree);
       const copy = reIdTree(node, existing);
       loc.parent.children.splice(loc.index + 1, 0, copy);
       setSelectedNodeId(copy.id);
@@ -1193,7 +1243,7 @@ export default function PageDesigner({
   const renderNodeProps = (page: PageSchema, node: ComponentNode) => {
     const entity = boundEntity(page, node);
     const layout = node.layout?.[device] ?? {};
-    const isRoot = node.id === page.root.id;
+    const isRoot = node.id === editTreeOf(page).id;
     const props = node.props ?? {};
     const str = (v: unknown) => (typeof v === "string" ? v : "");
     return (
@@ -2102,6 +2152,17 @@ export default function PageDesigner({
                 { label: "移动", value: "mobile" },
               ]}
             />
+            <Segmented
+              value={editAnon ? "anon" : "formal"}
+              onChange={(v) => {
+                setEditAnon(v === "anon");
+                setSelectedNodeId(null);
+              }}
+              options={[
+                { label: "正式内容", value: "formal" },
+                { label: "未登录显示", value: "anon" },
+              ]}
+            />
             <Button
               size="small"
               disabled={pastRef.current.length === 0}
@@ -2118,7 +2179,9 @@ export default function PageDesigner({
             </Button>
             <div style={{ flex: 1 }} />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {device === "desktop" ? "桌面" : "移动"}布局编辑中 · 按住组件左上角手柄拖拽排布，点选后在右栏改属性
+              {editAnon
+                ? "未登录显示编辑中 · 仅会员页匿名访问时生效，空变体回落默认门"
+                : `${device === "desktop" ? "桌面" : "移动"}布局编辑中 · 按住组件左上角手柄拖拽排布，点选后在右栏改属性`}
             </Typography.Text>
           </div>
           {undesigned.length > 0 && (
@@ -2170,7 +2233,11 @@ export default function PageDesigner({
                 }
               >
                 <SchemaRenderer
-                  page={currentPage}
+                  page={
+                    editAnon
+                      ? { ...currentPage, root: editTree ?? currentPage.root }
+                      : currentPage
+                  }
                   dataSchema={data}
                   adapter={adapter}
                   device={device}
@@ -2219,7 +2286,7 @@ export default function PageDesigner({
                 children: (
                   <div style={{ padding: "4px 8px 14px" }}>
                     {currentPage ? (
-                      selectedNode && selectedNode.id !== currentPage.root.id ? (
+                      selectedNode && editTree && selectedNode.id !== editTree.id ? (
                         renderNodeProps(currentPage, selectedNode)
                       ) : (
                         <>
@@ -2249,7 +2316,7 @@ export default function PageDesigner({
                     </Typography.Paragraph>
                     {currentPage ? (
                       <Tree
-                        treeData={[toTreeData(currentPage.root)]}
+                        treeData={[toTreeData(editTree ?? currentPage.root)]}
                         selectedKeys={selectedNodeId ? [selectedNodeId] : []}
                         onSelect={(keys) =>
                           setSelectedNodeId(

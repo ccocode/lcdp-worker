@@ -34,7 +34,7 @@ import {
 } from "@lcdp/ui";
 import QRCode from "qrcode";
 import type { EntityAccess } from "@lcdp/renderer";
-import type { DataSchema, PageSchema } from "@naka1205/schema";
+import type { ComponentNode, DataSchema, PageSchema } from "@naka1205/schema";
 import type {
   AppInfo,
   AssistantContext,
@@ -2985,13 +2985,23 @@ function PublicShell({
   const publicPageRoutes: string[] = primary.public?.pages ?? [];
   const memberOnlyPages = memberPages.filter((p) => !publicPageRoutes.includes(p));
   /**
-   * 应用自定义会员门（桥接页个性化，2026-10-28）：设计里路由为 /member-gate 的页
-   * （须菜单隐藏，collectMenu 与主题导航均以 menu.hidden 排除）存在时，未登录
-   * 会员页改渲染该页（公开适配器，门页本身是公开内容）；没有则回落默认门。
-   * 门页应为公开页（不进 member.pages）；若误进 member.pages，直接访问时仍走
-   * 门分支渲染同一内容，不会死循环。主题壳的会员门（直接跳 SSO）不在此口径内。
+   * 同路由匿名变体（2026-10-28，替代 /member-gate 单独路由）：会员页定义里
+   * 的 anonRoot——匿名访问该会员页时渲染这棵树（公开适配器），而不是默认门；
+   * 未定义或空树时回落默认门。变体与正式树同页、同路由，永不进菜单。
+   * 类型暂以本地扩展承载（发布版 schema 尚未含该字段时构建仍通过；落库
+   * 以平台 pageSchema 为准，见 platform packages/schema/src/page.ts）。
    */
-  const gatePage = primary.pages.find((p) => p.route === "/member-gate") ?? null;
+  const anonRootOf = (p: PageSchema): ComponentNode | undefined =>
+    (p as PageSchema & { anonRoot?: ComponentNode }).anonRoot;
+  /** 变体生效：定义了且至少含一个子节点；空树视同未定义、回落默认门。 */
+  const hasAnonGate = (p: PageSchema): boolean => {
+    const a = anonRootOf(p);
+    return !!a && (a.children?.length ?? 0) > 0;
+  };
+  const anonGateRoutes = useMemo(
+    () => new Set(primary.pages.filter(hasAnonGate).map((p) => p.route)),
+    [primary.pages],
+  );
   const host = window.location.host;
   const [memberSession, setMemberSession] = useState<MemberSession | null>(
     () => (hasMemberPages ? loadMemberSession(host, primary.appId) : null),
@@ -3103,15 +3113,15 @@ function PublicShell({
   );
 
   /** 导航守卫：未登录点会员页先弹登录弹窗（页面照常切过去，内容区呈占位引导）；
-   *  有自定义门页时不弹登录/跳 SSO，照常切过去、内容区呈自定义门页；无门页时原口径不变 */
+   *  目标页定义了匿名变体时不弹登录，照常切过去、内容区呈变体；无变体时原口径不变 */
   const goPageGuarded = useCallback(
     (to: string) => {
       const path = to.split("?")[0]!;
-      if (memberOnlyPages.includes(path) && !memberSession && !gatePage)
+      if (memberOnlyPages.includes(path) && !memberSession && !anonGateRoutes.has(path))
         openAuth("login");
       goPage(to);
     },
-    [goPage, memberOnlyPages, memberSession, openAuth, gatePage],
+    [goPage, memberOnlyPages, memberSession, openAuth, anonGateRoutes],
   );
 
   const menu = assembleMenu(primary.pages, primary.data.entities);
@@ -3175,9 +3185,9 @@ function PublicShell({
           access={memberAccess}
           theme={primary.appConfig?.theme}
         />
-      ) : gatePage ? (
+      ) : hasAnonGate(current) ? (
         <SchemaRenderer
-          page={gatePage}
+          page={{ ...current, root: anonRootOf(current)! }}
           dataSchema={primary.data}
           adapter={adapter}
           params={params}
