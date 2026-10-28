@@ -7,7 +7,6 @@ import {
   Input,
   Modal,
   Segmented,
-  Select,
   Space,
   Table,
   Tag,
@@ -21,7 +20,6 @@ import {
   ThemeUploadError,
   THEME_SLOT_LABEL,
   versionFitsSlot,
-  versionTargetLabel,
   type AdminThemeBindGate,
   type SiteAppView,
   type ThemeConfigItem,
@@ -30,7 +28,6 @@ import {
   type ThemeSlots,
   type ThemeVersionView,
 } from "../api";
-import { fmtTime } from "../helpers";
 
 /**
  * 主题（第 68 步口径：入口模型退役后，主题绑定是**应用自身的属性**；
@@ -38,14 +35,17 @@ import { fmtTime } from "../helpers";
  * 私有 + 本应用所属领域的货架主题（平台管理员供货、同领域应用自动
  * 可见；自定义/空白领域应用无货架），列表就是该对象的集合形态属性。
  * 列表按桌面 / 移动两组呈现，每组置顶显示当前激活（双槽指针、每组唯一），
- * 「设为当前」把某主题版本写进本应用对应槽的指针（theme_slots，values
+ * 「设为当前」把某主题写进本应用对应槽的指针（theme_slots，values
  * 按槽独立），经 PUT /admin/apps/:id/site 落盘即时生效；绑定状态与操作
  * 直接放在卡片上（槽位头的当前激活标记、行内的激活中标记与设为当前按钮），
  * 页面底部不再设当前绑定区。写权口径：绑定权归本应用运营方与平台管理员，主题须
  * 本应用私有或本领域货架（服务端供给执法，admin 同口径）。
  * 上传口径（10-27 定）：上传主题不设归属，归属只由当前应用上下文决定，
  * 页签内上传恒落本应用私有（admin/operator 均可，operator 须持运营授权）。
- * 卡片只显当前版本（已激活者优先，否则首个合槽版本），历史版本走弹窗查看。
+ * 版本口径（10-28 定，模型不动）：版本号由平台内部管理，页面上不显示、
+ * 不操作版本——无版本列、无版本记录弹窗、无版本选择器；“设为当前”即
+ * 绑定该主题的最新合槽版本（接口按创建时间升序返回，取最后一个合槽
+ * 版本），删除按主题行操作；主题名显示去掉应用名前缀，只显风格定义。
  */
 
 /** 领域 key → 展示名（与平台领域注册表 DOMAINS 的 name 同步） */
@@ -84,6 +84,40 @@ function findVersion(
   return themes
     .find((t) => t.id === themeId)
     ?.versions.find((v) => v.version === version);
+}
+
+/**
+ * 主题名显示：去掉应用名前缀，只显风格定义（如“星桥科技官网内置主题”
+ * 在本应用页显示为“内置主题”；上传主题名不含应用名时原样显示）。
+ */
+function displayThemeName(name: string, appName: string | null): string {
+  if (appName && name.startsWith(appName)) {
+    const rest = name.slice(appName.length);
+    return rest === "" ? name : rest;
+  }
+  return name;
+}
+
+/**
+ * 某主题最新合槽版本：接口按创建时间升序返回，取合槽版本中创建时间
+ * 最晚者；时间不可解析时退回列表最后一个合槽版本。
+ */
+function latestSlotVersion(
+  theme: ThemeItem,
+  slot: ThemeSlotName,
+): ThemeVersionView | undefined {
+  const fitting = theme.versions.filter((v) => versionFitsSlot(v, slot));
+  if (fitting.length === 0) return undefined;
+  let best = fitting[fitting.length - 1];
+  let bestTime = Date.parse(best.createdAt ?? "");
+  for (const v of fitting) {
+    const t = Date.parse(v.createdAt ?? "");
+    if (Number.isFinite(t) && (!Number.isFinite(bestTime) || t >= bestTime)) {
+      best = v;
+      bestTime = t;
+    }
+  }
+  return best;
 }
 
 /** 绑定初值：清单 default 打底，本应用该槽已绑同版本时用已存 values 覆盖 */
@@ -136,13 +170,8 @@ export default function AppThemeSettings({
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [binding, setBinding] = useState<BindingState | null>(null);
-  /** 历史版本弹窗：主题 × 槽位（10-27 口径：卡片只显当前版本，历史走弹窗） */
-  const [history, setHistory] = useState<{
-    theme: ThemeItem;
-    slot: ThemeSlotName;
-  } | null>(null);
   /**
-   * 绑定门（D6 首批只读）：弹窗打开/版本切换时查该版本有无产出
+   * 绑定门（D6 首批只读）：弹窗打开时查该主题有无产出
    * run；有且终审未通过时“设为当前”不可点。查不到（null）时不拦，
    * 与今日行为一致（fail-open）。
    */
@@ -234,19 +263,24 @@ export default function AppThemeSettings({
     [themes, appId, appDomain, boundIds],
   );
 
-  /** 某主题版本在本应用双槽上的当前绑定标记 */
-  const marksFor = useCallback(
-    (themeId: string, version: string) => {
-      const marks: ThemeSlotName[] = [];
-      for (const slot of THEME_SLOTS) {
-        const ptr = slots[slot];
-        if (ptr && ptr.id === themeId && ptr.version === version) {
-          marks.push(slot);
-        }
-      }
-      return marks;
-    },
+  /** 某主题在本应用某槽上是否激活（版本由平台内部管理，激活按主题认） */
+  const isActive = useCallback(
+    (themeId: string, slot: ThemeSlotName) => slots[slot]?.id === themeId,
     [slots],
+  );
+
+  /** 本应用名（主题名显示去前缀用）与主题显示名 */
+  const appName = site?.name ?? null;
+  const showName = useCallback(
+    (t: ThemeItem) => displayThemeName(t.name, appName),
+    [appName],
+  );
+  const showNameById = useCallback(
+    (themeId: string) => {
+      const t = themes.find((x) => x.id === themeId);
+      return t ? showName(t) : themeId;
+    },
+    [themes, showName],
   );
 
   const onUploadFile = useCallback(
@@ -257,7 +291,7 @@ export default function AppThemeSettings({
         // 10-27 口径：上传主题不设归属，归属只由当前应用上下文决定（恒为本应用私有）。
         const res = await api.themes.upload(file, { appId });
         message.success(
-          `私有主题 ${res.themeId}@${res.version} 上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
+          `主题包上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
         );
         await load();
       } catch (err) {
@@ -333,20 +367,20 @@ export default function AppThemeSettings({
     setCloneActing(`bind:${theme.id}`);
     try {
       const res = await api.themes.cloneBind(appId, theme.id);
-      message.success(`已绑定克隆：${res.cloneId}@${res.version}（${res.target === "mobile" ? "移动端" : "桌面端"}）`);
+      message.success(`已绑定克隆：${showName(theme)}（${res.target === "mobile" ? "移动端" : "桌面端"}）`);
       await load();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "克隆绑定失败");
     } finally {
       setCloneActing(null);
     }
-  }, [appId, load]);
+  }, [appId, load, showName]);
 
   const onCloneUnbind = useCallback(async (theme: ThemeItem) => {
     setCloneActing(`unbind:${theme.id}`);
     try {
-      const res = await api.themes.cloneUnbind(appId, theme.id);
-      message.success(`已解绑回内置：${res.builtinId}@${res.builtinVersion}`);
+      await api.themes.cloneUnbind(appId, theme.id);
+      message.success(`已解绑回内置`);
       await load();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "克隆解绑失败");
@@ -358,8 +392,8 @@ export default function AppThemeSettings({
   /** 删除主题模板（本应用私有、非内置）：已绑定时服务端回 409，须先解绑再删。 */
   const onDeleteTheme = useCallback((theme: ThemeItem) => {
     Modal.confirm({
-      title: `删除主题 ${theme.name}？`,
-      content: "删除后该主题及其全部版本一并清除，不可恢复；已绑定的主题须先解绑才能删。",
+      title: `删除主题 ${showName(theme)}？`,
+      content: "删除后该主题一并清除，不可恢复；已绑定的主题须先解绑才能删。",
       okText: "删除",
       okType: "danger",
       cancelText: "取消",
@@ -376,13 +410,13 @@ export default function AppThemeSettings({
         }
       },
     });
-  }, [load]);
+  }, [load, showName]);
 
   /** 删除克隆（测试完即可删）：已绑定时服务端回 409，须先解绑再删。 */
   const onCloneDelete = useCallback((theme: ThemeItem) => {
     Modal.confirm({
-      title: `删除克隆 ${theme.id}？`,
-      content: "删除后该克隆及其生效版本一并清除，不可恢复；线上绑定不受影响（已解绑时指针早已回到内置）。",
+      title: `删除克隆 ${showName(theme)}？`,
+      content: "删除后该克隆一并清除，不可恢复；线上绑定不受影响（已解绑时指针早已回到内置）。",
       okText: "删除",
       okType: "danger",
       cancelText: "取消",
@@ -399,9 +433,9 @@ export default function AppThemeSettings({
         }
       },
     });
-  }, [appId, load]);
+  }, [appId, load, showName]);
 
-  /** 弹窗内切换 主题/槽位/版本 后，同步 values 编辑初值 */
+  /** 弹窗内切换 主题/槽位 后，同步 values 编辑初值（版本由平台内部定） */
   const syncBindingValues = useCallback(
     (b: BindingState) => {
       if (!b.version) {
@@ -422,10 +456,8 @@ export default function AppThemeSettings({
 
   const openBinding = useCallback(
     (theme: ThemeItem, slot: ThemeSlotName) => {
-      const version =
-        theme.versions.find((v) => versionFitsSlot(v, slot))?.version ??
-        theme.versions[0]?.version ??
-        "";
+      // 设为当前即绑定该主题的最新合槽版本（版本不由用户选）。
+      const version = latestSlotVersion(theme, slot)?.version ?? "";
       const b: BindingState = { theme, slot, version };
       setBinding(b);
       syncBindingValues(b);
@@ -438,14 +470,10 @@ export default function AppThemeSettings({
       setBinding((prev) => {
         if (!prev) return prev;
         const next = { ...prev, ...patch };
-        // 槽位变化后版本须仍合槽（target 口径），不合则取首个合槽版本
-        if (patch.slot && next.version) {
-          const cur = next.theme.versions.find((v) => v.version === next.version);
-          if (!cur || !versionFitsSlot(cur, next.slot)) {
-            next.version =
-              next.theme.versions.find((v) => versionFitsSlot(v, next.slot))
-                ?.version ?? "";
-          }
+        // 槽位变化后版本随槽重定为该槽最新合槽版本（版本不由用户选）
+        if (patch.slot) {
+          next.version =
+            latestSlotVersion(next.theme, patch.slot)?.version ?? "";
         }
         syncBindingValues(next);
         return next;
@@ -458,7 +486,7 @@ export default function AppThemeSettings({
     if (!binding || !binding.version) return;
     // 绑定门纵深：按钮已禁用时再拦一次（门信号取弹窗打开时那次查询）
     if (bindGate && !bindGate.canBind) {
-      message.warning("该版本终审尚未通过，暂不能设为当前");
+      message.warning("该主题终审尚未通过，暂不能设为当前");
       return;
     }
     const { theme, slot, version } = binding;
@@ -488,7 +516,7 @@ export default function AppThemeSettings({
       };
       await api.site.update(appId, { themeSlots: next });
       message.success(
-        `已设为当前：本应用${THEME_SLOT_LABEL[slot]} = ${theme.id}@${version}`,
+        `已设为当前：本应用${THEME_SLOT_LABEL[slot]} = ${showName(theme)}`,
       );
       await load();
       setBinding(null);
@@ -497,7 +525,7 @@ export default function AppThemeSettings({
     } finally {
       setBSaving(false);
     }
-  }, [binding, bindGate, bVals, bValsJson, themes, slots, appId, load]);
+  }, [binding, bindGate, bVals, bValsJson, themes, slots, appId, load, showName]);
 
   const unbindCurrent = useCallback(async () => {
     if (!binding) return;
@@ -519,11 +547,7 @@ export default function AppThemeSettings({
   const originTag = (t: ThemeItem) => {
     if (t.kind === "builtin") return <Tag color="purple">系统内置</Tag>;
     if (t.sourceThemeId) {
-      return (
-        <Tag color="cyan">
-          克隆 · 来源 {t.sourceThemeId}@{t.sourceVersion ?? "—"}
-        </Tag>
-      );
+      return <Tag color="cyan">克隆</Tag>;
     }
     if (t.ownerAppId === appId) return <Tag color="blue">本应用私有</Tag>;
     if (t.scope === "domain") {
@@ -533,7 +557,7 @@ export default function AppThemeSettings({
     return <Tag color="orange">其他应用私有</Tag>;
   };
 
-  /** 分组（桌面/移动）共用的列定义：版本只列本组端的，绑定标记只认本组槽 */
+  /** 分组（桌面/移动）共用的列定义：不设版本列，激活按主题认本组槽 */
   const themeColumnsFor = (slot: ThemeSlotName): ColumnsType<ThemeItem> => [
     {
       title: "主题",
@@ -541,8 +565,9 @@ export default function AppThemeSettings({
       render: (_, t) => (
         <Space direction="vertical" size={2}>
           <Space size={6}>
-            <Typography.Text strong>{t.name}</Typography.Text>
+            <Typography.Text strong>{showName(t)}</Typography.Text>
             {originTag(t)}
+            {isActive(t.id, slot) && <Tag color="processing">激活中</Tag>}
           </Space>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {t.id}
@@ -552,40 +577,15 @@ export default function AppThemeSettings({
       ),
     },
     {
-      title: "当前版本",
-      dataIndex: "versions",
-      render: (_, t) => {
-        const slotVersions = t.versions.filter((v) => versionFitsSlot(v, slot));
-        const current =
-          slotVersions.find((v) => marksFor(t.id, v.version).includes(slot)) ??
-          slotVersions[0];
-        if (!current) {
-          return <Typography.Text type="secondary">—</Typography.Text>;
-        }
-        const active = marksFor(t.id, current.version).includes(slot);
-        // 版本记录不在列表里展开：只显当前版本，历史走操作栏的版本记录按钮弹窗看。
-        return (
-          <Space size={4} wrap>
-            <Tag color={active ? "processing" : undefined}>
-              {current.version}（{current.fileCount} 文件 / {fmtBytes(current.totalBytes)} ·{" "}
-              {versionTargetLabel(current)}）{active ? " · 激活中" : ""}
-            </Tag>
-          </Space>
-        );
-      },
-    },
-    {
       title: "操作",
       width: 170,
       render: (_, t) => {
         const slotVersions = t.versions.filter((v) => versionFitsSlot(v, slot));
-        const current =
-          slotVersions.find((v) => marksFor(t.id, v.version).includes(slot)) ??
-          slotVersions[0];
+        const current = latestSlotVersion(t, slot);
         // 克隆行不走通用“设为当前”：克隆须经专属绑定生成生效版本后才可指指针，
         // 直接绑克隆 id 会因无生效版本而失败；绑定/解绑/预览均走克隆端点。
         if (t.sourceThemeId) {
-          const active = marksFor(t.id, current?.version ?? "").includes(slot);
+          const active = isActive(t.id, slot);
           return (
             <Space direction="vertical" size={2}>
               <Button
@@ -627,14 +627,6 @@ export default function AppThemeSettings({
               <Button
                 type="link"
                 size="small"
-                style={{ padding: 0, height: "auto" }}
-                onClick={() => setHistory({ theme: t, slot })}
-              >
-                版本记录
-              </Button>
-              <Button
-                type="link"
-                size="small"
                 danger
                 style={{ padding: 0, height: "auto" }}
                 disabled={readOnly}
@@ -667,17 +659,9 @@ export default function AppThemeSettings({
                 loading={previewing === `${t.id}@${current.version}`}
                 onClick={() => void onPreview(t, slot, current.version)}
               >
-                预览 {current.version}
+                预览
               </Button>
             )}
-            <Button
-              type="link"
-              size="small"
-              style={{ padding: 0, height: "auto" }}
-              onClick={() => setHistory({ theme: t, slot })}
-            >
-              版本记录
-            </Button>
             {deletable && (
               <Button
                 type="link"
@@ -782,7 +766,7 @@ export default function AppThemeSettings({
                   </Typography.Text>
                   {ptr ? (
                     <Tag color="processing">
-                      当前激活：{ptr.id}@{ptr.version}
+                      当前激活：{showNameById(ptr.id)}
                     </Tag>
                   ) : (
                     <Tag>未绑定</Tag>
@@ -817,7 +801,7 @@ export default function AppThemeSettings({
       {/* 10-27 口径：页面底部不再设当前绑定区，绑定状态与操作直接放在上方卡片（槽位头与行内）上。 */}
 
       <Modal
-        title={binding ? `设为当前主题 · ${binding.theme.name}` : "设为当前主题"}
+        title={binding ? `设为当前主题 · ${showName(binding.theme)}` : "设为当前主题"}
         open={binding !== null}
         onCancel={() => setBinding(null)}
         onOk={() => void saveBinding()}
@@ -835,7 +819,7 @@ export default function AppThemeSettings({
               <Alert
                 type="warning"
                 showIcon
-                message="该版本由助手任务生成，终审尚未通过，暂不能设为当前"
+                message="该主题由助手任务生成，终审尚未通过，暂不能设为当前"
               />
             )}
             <Space size={8}>
@@ -856,30 +840,13 @@ export default function AppThemeSettings({
                 </Typography.Text>
               )}
             </Space>
-            <Space size={8}>
-              <Typography.Text style={{ width: 72, display: "inline-block" }}>
-                版本
-              </Typography.Text>
-              <Select
-                style={{ width: 320 }}
-                placeholder="选择版本"
-                value={binding.version || undefined}
-                options={binding.theme.versions
-                  .filter((v) => versionFitsSlot(v, binding.slot))
-                  .map((v) => ({
-                    value: v.version,
-                    label: `${binding.theme.id} @ ${v.version} · ${versionTargetLabel(v)}`,
-                  }))}
-                onChange={(v) => patchBinding({ version: v })}
-              />
-            </Space>
             {bindingPtr && (
               <Alert
                 type="info"
                 showIcon
                 message={
                   <>
-                    当前绑定：{bindingPtr.id}@{bindingPtr.version}
+                    当前绑定：{showNameById(bindingPtr.id)}
                     <Button
                       type="link"
                       danger
@@ -957,7 +924,7 @@ export default function AppThemeSettings({
               ) : (
                 <Input.TextArea
                   rows={3}
-                  placeholder='该版本清单未声明 config，用 JSON 对象填写配置值，如 {"siteName":"星桥"}'
+                  placeholder='该主题清单未声明 config，用 JSON 对象填写配置值，如 {"siteName":"星桥"}'
                   value={bValsJson}
                   onChange={(ev) => setBValsJson(ev.target.value)}
                 />
@@ -969,7 +936,7 @@ export default function AppThemeSettings({
       <Modal
         title={
           clonePreviewList
-            ? `预览清单 · ${clonePreviewList.cloneId}（来源 ${clonePreviewList.sourceThemeId}@${clonePreviewList.sourceVersion}）`
+            ? `预览清单 · ${showNameById(clonePreviewList.cloneId)}（来源 ${showNameById(clonePreviewList.sourceThemeId)}）`
             : "预览清单"
         }
         open={clonePreviewList !== null}
@@ -1052,59 +1019,6 @@ export default function AppThemeSettings({
                 ))}
               </div>
             </div>
-          </Space>
-        )}
-      </Modal>
-
-      <Modal
-        title={
-          history
-            ? `版本记录 · ${history.theme.name}（${THEME_SLOT_LABEL[history.slot]}）`
-            : "版本记录"
-        }
-        open={history !== null}
-        onCancel={() => setHistory(null)}
-        footer={null}
-        width={640}
-      >
-        {history && history.theme.versions.filter((v) => versionFitsSlot(v, history.slot)).length === 0 && (
-          <Typography.Text type="secondary">暂无版本记录</Typography.Text>
-        )}
-        {history && (
-          <Space direction="vertical" size={8} style={{ width: "100%" }}>
-            {history.theme.versions
-              .filter((v) => versionFitsSlot(v, history.slot))
-              .map((v) => {
-                const active = marksFor(history.theme.id, v.version).includes(
-                  history.slot,
-                );
-                return (
-                  <Space key={v.version} size={8} wrap>
-                    <Tag color={active ? "processing" : undefined}>
-                      {v.version}
-                      {active ? " · 激活中" : ""}
-                    </Tag>
-                    <Typography.Text style={{ fontSize: 12 }}>
-                      {history.theme.id}@{v.version}：{v.fileCount} 个文件 /{" "}
-                      {fmtBytes(v.totalBytes)}，上传人 {v.createdBy ?? "—"}，
-                      {fmtTime(v.createdAt)}；端：{versionTargetLabel(v)}
-                    </Typography.Text>
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: 0, height: "auto" }}
-                      loading={
-                        previewing === `${history.theme.id}@${v.version}`
-                      }
-                      onClick={() =>
-                        void onPreview(history.theme, history.slot, v.version)
-                      }
-                    >
-                      预览
-                    </Button>
-                  </Space>
-                );
-              })}
           </Space>
         )}
       </Modal>
