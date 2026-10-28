@@ -2984,6 +2984,14 @@ function PublicShell({
      「会员可达页」口径，与公开页天然可重叠（如商城商品页），公开优先不设门。 */
   const publicPageRoutes: string[] = primary.public?.pages ?? [];
   const memberOnlyPages = memberPages.filter((p) => !publicPageRoutes.includes(p));
+  /**
+   * 应用自定义会员门（桥接页个性化，2026-10-28）：设计里路由为 /member-gate 的页
+   * （须菜单隐藏，collectMenu 与主题导航均以 menu.hidden 排除）存在时，未登录
+   * 会员页改渲染该页（公开适配器，门页本身是公开内容）；没有则回落默认门。
+   * 门页应为公开页（不进 member.pages）；若误进 member.pages，直接访问时仍走
+   * 门分支渲染同一内容，不会死循环。主题壳的会员门（直接跳 SSO）不在此口径内。
+   */
+  const gatePage = primary.pages.find((p) => p.route === "/member-gate") ?? null;
   const host = window.location.host;
   const [memberSession, setMemberSession] = useState<MemberSession | null>(
     () => (hasMemberPages ? loadMemberSession(host, primary.appId) : null),
@@ -3094,14 +3102,16 @@ function PublicShell({
     [primary.appId, goPage, memberToken, clearMemberSession, memberHooks],
   );
 
-  /** 导航守卫：未登录点会员页先弹登录弹窗（页面照常切过去，内容区呈占位引导） */
+  /** 导航守卫：未登录点会员页先弹登录弹窗（页面照常切过去，内容区呈占位引导）；
+   *  有自定义门页时不弹登录/跳 SSO，照常切过去、内容区呈自定义门页；无门页时原口径不变 */
   const goPageGuarded = useCallback(
     (to: string) => {
       const path = to.split("?")[0]!;
-      if (memberOnlyPages.includes(path) && !memberSession) openAuth("login");
+      if (memberOnlyPages.includes(path) && !memberSession && !gatePage)
+        openAuth("login");
       goPage(to);
     },
-    [goPage, memberOnlyPages, memberSession, openAuth],
+    [goPage, memberOnlyPages, memberSession, openAuth, gatePage],
   );
 
   const menu = assembleMenu(primary.pages, primary.data.entities);
@@ -3163,6 +3173,16 @@ function PublicShell({
           params={params}
           device={device}
           access={memberAccess}
+          theme={primary.appConfig?.theme}
+        />
+      ) : gatePage ? (
+        <SchemaRenderer
+          page={gatePage}
+          dataSchema={primary.data}
+          adapter={adapter}
+          params={params}
+          device={device}
+          access={access}
           theme={primary.appConfig?.theme}
         />
       ) : (
