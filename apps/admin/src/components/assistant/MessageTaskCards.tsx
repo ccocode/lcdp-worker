@@ -259,8 +259,13 @@ export function PlanMessageCard({
   // “需求发起 → 规划执行 → 预览验收 → 收尾总结”全程；收尾
   // 总结是后端在对话里发的 closing 消息（accept/approve 后
   // 的 appendApprovalMessage），此处不再另造一张总结卡。
-  const awaitingPreview = task?.status === "awaiting_preview";
-  const awaitingBind = task?.status === "awaiting_bind";
+  // 注意：任务行 status 与 run_status 是两列——setRunStatus
+  // 只改 run_status，任务 status 在关闭前一直是 active；等验收
+  // / 等绑定必须读任务行自带的 runStatus，不能读 task.status
+  // （2026-10-29 线上实证：等验收任务的计划卡仍标“进行中”）。
+  const runStatus = task?.runStatus ?? null;
+  const awaitingPreview = runStatus === "awaiting_preview";
+  const awaitingBind = runStatus === "awaiting_bind";
   const runDetail = useTaskRunDetail(
     appId,
     taskId,
@@ -380,21 +385,27 @@ export function PlanMessageCard({
       动画在计划卡外面、下方，只表示对话没有停止；任务进行中
       才转，等验收 / 终态即停。执行记录与细节只在右侧详情里。
     */}
-    {task.status === "active" && (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "2px 0",
-        }}
-      >
-        <Spin size="small" />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          执行中…
-        </Typography.Text>
-      </div>
-    )}
+    {task.status === "active" &&
+      runStatus !== "awaiting_preview" &&
+      runStatus !== "awaiting_bind" &&
+      runStatus !== "completed" &&
+      runStatus !== "failed" &&
+      runStatus !== "cancelled" &&
+      runStatus !== "paused" && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "2px 0",
+          }}
+        >
+          <Spin size="small" />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            执行中…
+          </Typography.Text>
+        </div>
+      )}
     {awaitingPreview && (
       <Card
         size="small"
