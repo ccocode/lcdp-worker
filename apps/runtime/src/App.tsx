@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import {
   Alert,
   Badge,
@@ -17,6 +17,7 @@ import {
   Spin,
   Tabs,
   Typography,
+  theme,
   message as antdMessage,
 } from "antd";
 import type { MenuProps } from "antd";
@@ -1717,40 +1718,85 @@ function SiteHeader({
   searchRoute?: string;
   right?: ReactNode;
 }) {
+  // 与内置主题页眉同构（主题壳 .bt-head/.bt-brand/.bt-nav 口径）：
+  // 高 73、上下内边距 16、品牌 22/800、栏目为文字链 15px、当前项主色 + 淡底。
+  // 颜色一律取 antd 令牌（运行壳基线 = @lcdp/ui runtimeTokens，站点主题可覆盖），
+  // 不写 hex 字面量，令牌变了页眉自动跟。
+  const { token } = theme.useToken();
   return (
-    <Layout.Header
-      style={{
-        background: "#fff",
-        borderBottom: "1px solid #e6e8ec",
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "0 20px",
-      }}
-    >
-      <span
+    <>
+      <style>{`.site-nav-link:hover{background:${token.colorBgLayout};color:${token.colorPrimary};}`}</style>
+      <Layout.Header
         style={{
-          fontWeight: 700,
-          fontSize: 16,
-          whiteSpace: "nowrap",
-          cursor: "pointer",
+          background: token.colorBgContainer,
+          borderBottom: `1px solid ${token.colorBorder}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 24,
+          padding: "16px 20px",
+          flexWrap: "wrap",
+          height: "auto",
+          minHeight: 73,
+          lineHeight: "normal",
         }}
-        onClick={() => onNavigate("/")}
       >
-        {brand}
-      </span>
-      <Menu
-        mode="horizontal"
-        selectedKeys={selectedKey ? [selectedKey] : []}
-        items={navItems}
-        onClick={({ key }) => onNavigate(key)}
-        style={{
-          flex: 1,
-          minWidth: 0,
-          borderBottom: "none",
-          background: "transparent",
-        }}
-      />
+        <span
+          style={{
+            fontWeight: 800,
+            fontSize: 22,
+            letterSpacing: ".2px",
+            whiteSpace: "nowrap",
+            cursor: "pointer",
+          }}
+          onClick={() => onNavigate("/")}
+        >
+          {brand}
+        </span>
+        <nav
+          style={{
+            display: "flex",
+            gap: 4,
+            flexWrap: "wrap",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {(navItems ?? []).map((item) => {
+            if (!item) return null;
+            const anyItem = item as {
+              key?: string | number;
+              label?: ReactNode;
+              type?: string;
+            };
+            if (anyItem.type === "divider" || anyItem.key == null) return null;
+            const active =
+              selectedKey != null && String(anyItem.key) === String(selectedKey);
+            return (
+              <a
+                key={String(anyItem.key)}
+                href="#"
+                className="site-nav-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onNavigate(String(anyItem.key));
+                }}
+                style={{
+                  color: active ? token.colorPrimary : token.colorText,
+                  textDecoration: "none",
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  fontSize: 15,
+                  fontWeight: active ? 700 : 400,
+                  background: active ? token.colorPrimaryBg : "transparent",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {anyItem.label}
+              </a>
+            );
+          })}
+        </nav>
       {searchRoute && (
         <Input.Search
           placeholder="搜索"
@@ -1765,7 +1811,8 @@ function SiteHeader({
         />
       )}
       {right}
-    </Layout.Header>
+      </Layout.Header>
+    </>
   );
 }
 
@@ -2477,17 +2524,62 @@ function MemberAuthModal({
 function MemberArea({
   session,
   small,
+  links,
   onLogin,
   onRegister,
   onLogout,
 }: {
   session: MemberSession | null;
   small?: boolean;
+  // links：站点型页眉用主题壳会员区形态（文字链、16px、主色），
+  // 员工外壳与移动外壳仍用按钮形态，不传即默认按钮。
+  links?: boolean;
   onLogin: () => void;
   onRegister: () => void;
   onLogout: () => void;
 }) {
   const size = small ? ("small" as const) : undefined;
+  // useToken 必须无条件调用（links 在同一挂载里恒定也不许放进分支，见第 80 步 hook 事故）。
+  const { token } = theme.useToken();
+  if (links) {
+    const linkStyle: CSSProperties = {
+      color: token.colorPrimary,
+      fontSize: 16,
+      textDecoration: "none",
+      cursor: "pointer",
+      whiteSpace: "nowrap",
+    };
+    const go = (fn: () => void) => (e: MouseEvent) => {
+      e.preventDefault();
+      fn();
+    };
+    if (session) {
+      return (
+        <Space size={16}>
+          <Typography.Text
+            style={{ fontSize: 16, maxWidth: 140, color: token.colorText }}
+            ellipsis
+            title={session.member.identifier}
+          >
+            {session.member.displayName || session.member.identifier}
+          </Typography.Text>
+          <a href="#" onClick={go(onLogout)} style={linkStyle}>
+            退出
+          </a>
+        </Space>
+      );
+    }
+    return (
+      <Space size={16}>
+        <a href="#" onClick={go(onLogin)} style={linkStyle}>
+          会员登录
+        </a>
+        <a href="#" onClick={go(onRegister)} style={linkStyle}>
+          注册
+        </a>
+      </Space>
+    );
+  }
   if (session) {
     return (
       <Space size={small ? 6 : 8}>
@@ -3083,10 +3175,12 @@ function PublicShell({
             style={{ marginBottom: 16, textAlign: "left" }}
           />
           <Space size={8}>
-            <Button type="primary" onClick={() => openAuth("login")}>
+            <Button type="primary" size="large" onClick={() => openAuth("login")}>
               会员登录
             </Button>
-            <Button onClick={() => openAuth("register")}>注册</Button>
+            <Button size="large" onClick={() => openAuth("register")}>
+              注册
+            </Button>
           </Space>
         </div>
       )
@@ -3131,11 +3225,12 @@ function PublicShell({
   }, [clearMemberSession, memberSso]);
 
   /** 页眉右侧区：仅会员区（启用会员页时）；员工「登录」已按入口分离口径移至页脚文字链 */
-  const memberArea = (small?: boolean) =>
+  const memberArea = (small?: boolean, links?: boolean) =>
     hasMemberPages ? (
       <MemberArea
         session={memberSession}
         small={small}
+        links={links}
         onLogin={() => openAuth("login")}
         onRegister={() => openAuth("register")}
         onLogout={memberLogout}
@@ -3172,7 +3267,7 @@ function PublicShell({
                 {hasCartPage && (
                   <CartEntry onOpen={() => goPageGuarded("/cart")} />
                 )}
-                {memberArea()}
+                {memberArea(undefined, true)}
               </Space>
             }
           />
