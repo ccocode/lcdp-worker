@@ -14,6 +14,7 @@ import {
   type AdminAssistantOptionsCard,
   type AdminAssistantTask,
 } from "../../api";
+import { TaskRunTimeline } from "./TaskRunTimeline";
 
 /** 任务状态中文（与工作台左栏/详情同一张表） */
 const TASK_STATUS_LABELS: Record<string, string> = {
@@ -243,6 +244,7 @@ export function PlanMessageCard({
             </Button>
           )}
         </div>
+        <TaskRunTimeline appId={appId} taskId={taskId} />
       </div>
     </Card>
   );

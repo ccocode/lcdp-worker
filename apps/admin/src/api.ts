@@ -2061,6 +2061,97 @@ export const api = {
         }
       },
       /**
+       * 任务 run 执行记录流（SSE 订阅，对话框实时时间线）。
+       * 不用浏览器 EventSource：它发不出 Authorization 头，token 只
+       * 能塞 URL；这里用 fetch + ReadableStream 手工解析 SSE，token
+       * 仍走请求头。服务端首包即全量 snapshot（重连天然续播），
+       * terminal 事件后服务端收流、客户端不再重连；其余断流按
+       * 1s→10s 退避重连。404/401 视为无权或任务不在，直接停订
+       * （调用方静默降级，不刷屏报错）。返回取消订阅函数。
+       */
+      streamTaskRun(
+        appId: string,
+        taskId: string,
+        onEvent: (ev: { type: string; data: unknown }) => void,
+      ): () => void {
+        let stopped = false;
+        let terminalSeen = false;
+        let ctrl: AbortController | null = null;
+        const sleep = (ms: number) =>
+          new Promise((resolve) => setTimeout(resolve, ms));
+        const pump = async () => {
+          let delay = 1000;
+          while (!stopped && !terminalSeen) {
+            ctrl = new AbortController();
+            try {
+              const token = getToken();
+              const res = await fetch(
+                `${API_BASE}/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/run/stream`,
+                {
+                  headers: {
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    Accept: "text/event-stream",
+                  },
+                  signal: ctrl.signal,
+                },
+              );
+              if (res.status === 404 || res.status === 401) return;
+              if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
+              delay = 1000;
+              const reader = res.body.getReader();
+              const decoder = new TextDecoder();
+              let buf = "";
+              const handleRaw = (raw: string) => {
+                let name = "message";
+                let payload = "";
+                for (const line of raw.split("\n")) {
+                  if (line.startsWith("event:")) name = line.slice(6).trim();
+                  else if (line.startsWith("data:"))
+                    payload += line.slice(5).trim();
+                  // id: 行与冒号注释行（心跳）直接忽略：重连首包
+                  // 即全量 snapshot，不靠 Last-Event-ID 续播。
+                }
+                if (!payload) return;
+                try {
+                  const data = JSON.parse(payload) as unknown;
+                  if (name === "terminal") terminalSeen = true;
+                  onEvent({ type: name, data });
+                } catch {
+                  // 坏帧跳过，不断流
+                }
+              };
+              for (;;) {
+                if (stopped) break;
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                let idx = buf.indexOf("\n\n");
+                while (idx >= 0) {
+                  handleRaw(buf.slice(0, idx));
+                  buf = buf.slice(idx + 2);
+                  idx = buf.indexOf("\n\n");
+                }
+              }
+            } catch {
+              if (stopped || ctrl?.signal.aborted) break;
+              // 瞬时失败退避重连；terminal 已见时不再重连。
+            }
+            if (stopped || terminalSeen) break;
+            await sleep(delay);
+            delay = Math.min(delay * 2, 10000);
+          }
+        };
+        void pump();
+        return () => {
+          stopped = true;
+          try {
+            ctrl?.abort();
+          } catch {
+            // 忽略
+          }
+        };
+      },
+      /**
        * 任务 run 产物正文（D6 第二批只读）：指定版或最新版，
        * 大产物只回预览；无 run 或版本不存在时调用方静默降级。
        */
