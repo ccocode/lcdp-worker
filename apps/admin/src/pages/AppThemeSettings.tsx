@@ -275,6 +275,39 @@ export default function AppThemeSettings({
   );
 
 
+  /**
+   * 预览（第 83 步片五）：向服务端签发短时效预览地址后新标签打开，
+   * 以该主题版本渲染本应用、不改当前绑定。预览是查看动作，只读档
+   * （领域角色）同样可点。先同步开空标签再回填地址，避免异步签发
+   * 被浏览器弹窗拦截。
+   */
+  const onPreview = useCallback(
+    async (theme: ThemeItem, slot: ThemeSlotName, version: string) => {
+      const key = `${theme.id}@${version}`;
+      setPreviewing(key);
+      const win = window.open("", "_blank");
+      try {
+        const res = await api.themes.preview(appId, {
+          themeId: theme.id,
+          version,
+          slot,
+        });
+        if (win) {
+          win.location.href = res.url;
+        } else {
+          message.warning("新标签被浏览器拦截，请允许弹窗后重试");
+        }
+      } catch (err) {
+        win?.close();
+        message.error(err instanceof Error ? err.message : "预览打开失败");
+      } finally {
+        setPreviewing(null);
+      }
+    },
+    [appId],
+  );
+
+
   const onClonePreviewList = useCallback(async (theme: ThemeItem) => {
     try {
       const list = await api.themes.clonePreviewList(appId, theme.id);
