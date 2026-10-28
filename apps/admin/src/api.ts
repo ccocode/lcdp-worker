@@ -211,6 +211,9 @@ export interface ThemeUploadResult {
   scope?: "builtin" | "app" | "domain";
   ownerAppId?: string | null;
   domainKey?: string | null;
+  /** 10-28 定：重传替换旧版时 true */
+  replaced?: boolean;
+  replacedVersions?: string[];
 }
 
 /** 主题上传校验失败：problems 为服务端逐项原因（契约 §1 校验清单） */

@@ -291,7 +291,9 @@ export default function AppThemeSettings({
         // 10-27 口径：上传主题不设归属，归属只由当前应用上下文决定（恒为本应用私有）。
         const res = await api.themes.upload(file, { appId });
         message.success(
-          `主题包上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
+          res.replaced
+            ? `主题包上传成功，已替换旧版（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`
+            : `主题包上传成功（${res.fileCount} 个文件，${fmtBytes(res.totalBytes)}），仅本应用可见可绑`,
         );
         await load();
       } catch (err) {
