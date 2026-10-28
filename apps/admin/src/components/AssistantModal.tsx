@@ -279,21 +279,26 @@ export default function AssistantModal({
    * 对话内容宽度固定（用户修订）：弹窗宽度跟随可见面板变化——
    * 对话固定 720px，左栏 264px、右栏 300px，收起即减去对应宽度；
    * 窄屏时宽度跟随当前面板；平台面无面板即 720px。
+   * 另加 antd Modal 内容横向内边距 48px（左右各 24）：不加时
+   * 工作台实际可用宽少 48，中栏只剩 672，注释的 720 不成立
+   * （2026-10-29 宽度复现定案）。
    */
   const CHAT_WIDTH = 720;
   const LEFT_WIDTH = 264;
   const RIGHT_WIDTH = 300;
-  const modalWidth = !appId
-    ? CHAT_WIDTH
-    : narrow
-      ? narrowTab === "chat"
-        ? CHAT_WIDTH
-        : narrowTab === "left"
-          ? LEFT_WIDTH
-          : RIGHT_WIDTH
-      : CHAT_WIDTH +
-        (leftCollapsed ? 0 : LEFT_WIDTH) +
-        (rightCollapsed ? 0 : RIGHT_WIDTH);
+  const MODAL_CONTENT_PADDING_X = 48;
+  const modalWidth =
+    (!appId
+      ? CHAT_WIDTH
+      : narrow
+        ? narrowTab === "chat"
+          ? CHAT_WIDTH
+          : narrowTab === "left"
+            ? LEFT_WIDTH
+            : RIGHT_WIDTH
+        : CHAT_WIDTH +
+          (leftCollapsed ? 0 : LEFT_WIDTH) +
+          (rightCollapsed ? 0 : RIGHT_WIDTH)) + MODAL_CONTENT_PADDING_X;
 
   return (
     <Modal

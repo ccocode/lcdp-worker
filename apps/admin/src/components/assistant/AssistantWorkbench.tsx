@@ -347,6 +347,12 @@ export default function AssistantWorkbench({
     <div
       style={{
         display: "flex",
+        // 弹窗里父容器是横向 flex：外层不撑满时容器按内容收缩，
+        // 中栏 flex:1 只能拿到内容固有宽（约 370），两边一开即变窄
+        // （2026-10-29 复现）。flex:1 + width:100% 让它先占满父容器，
+        // 中栏再按剩余宽分配；页内块级父容器下 flex 被忽略、width 生效。
+        flex: 1,
+        width: "100%",
         height: 680,
         border: `1px solid ${tokens.colorDivider}`,
         borderRadius: 8,
