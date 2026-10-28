@@ -655,9 +655,14 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     // 预览模式同样适用（第 90 步修正）：预览只覆盖主题指针、路径归属
     // 与正常分发一致，否则桥接页（购物车/结算等）在预览中被主题吞掉、
     // 点击链永远验不了（1.1.8 预览实证）。
+    // 例外（2026-10-28 根路径承接）：应用内路径 "/" 不在生成端 routes 清单内，
+    // 但主题壳对 "/" 回退首个可见菜单页（即主题首页），故 "/" 豁免清单门、
+    // 由主题层承接（主应用根与路径作用域应用根同口径，themeAppPath 已剥段）；
+    // 空路由内置主题仍由上方守卫先行返回 null，员工登录门不受影响。
     if (
       Array.isArray(theme.routes) &&
       theme.routes.length > 0 &&
+      normalizeRoutePath(themePath) !== "/" &&
       !themeRouteMatches(theme.routes, themePath)
     ) {
       return null;
