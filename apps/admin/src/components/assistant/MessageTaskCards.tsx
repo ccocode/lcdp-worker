@@ -221,11 +221,10 @@ function ChecklistRows({ task }: { task: AdminAssistantTask }) {
 }
 
 /**
- * 对话记录里的计划卡片（去重方案 A）：默认展开清单（2026-10-29
- * 用户定：任务清单默认展开），标题 + 状态 + 下一步 + 目标 +
- * 全部步骤直接可见，可点“收起清单”折叠；清单进度并入按钮
- * （已过/总数），不再单列一行。清单为空时无可折叠内容，
- * 目标直接显示。
+ * 对话记录里的计划卡片（2026-10-29 用户定，墨绿色重测定稿）：
+ * 默认收起清单；目标两态都显示；标题与下一步不进对话框
+ * （标题与目标近乎重复，下一步是内部指令）；展开时显示
+ * 清单项，收起时只显示目标与按钮上的清单进度（已过/总数）。
  */
 export function PlanMessageCard({
   appId,
@@ -246,7 +245,7 @@ export function PlanMessageCard({
 }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const { task, missing } = useTaskCard(appId, taskId, refreshKey);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (!autoOpen || autoOpenedRef.current || !onOpenTask) return;
@@ -342,15 +341,7 @@ export function PlanMessageCard({
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <Typography.Text strong style={{ fontSize: 13 }}>
-          {task.title}
-        </Typography.Text>
-        {task.nextStep && (
-          <Typography.Text style={{ fontSize: 13 }}>
-            下一步：{task.nextStep}
-          </Typography.Text>
-        )}
-        {(expanded || list.length === 0) && task.goal && (
+        {task.goal && (
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
             目标：{task.goal}
           </Typography.Text>
