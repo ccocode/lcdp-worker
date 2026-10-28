@@ -8,7 +8,7 @@
  * 会话」在抽屉里回放子会话原文——列表层就是事后找前因后果
  * 的审计面，详情层不跨实体取数。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Drawer, Segmented, Spin, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -206,6 +206,55 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
     return () => clearInterval(timer);
   }, [hasOpenTask, load]);
 
+  /**
+   * 执行细节行展开（2026-10-29 用户定）：行展开 = 该任务的执行
+   * 细节（节点 + 派发），可手动展开收起；默认展开当前执行的
+   * 任务（新出现即进行中的行自动展开），执行完成（done/closed/
+   * abandoned）时自动收起。等验收 / 等绑定仍是未终态，不强制
+   * 收起；状态未变时不动，避免轮询把用户手动的展开收起打掉。
+   */
+  const [expandedRowKeys, setExpandedRowKeys] = useState<(string | number)[]>([]);
+  const expandedRowKeysRef = useRef<Set<string | number>>(new Set());
+  const prevTaskStatusRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    const prev = prevTaskStatusRef.current;
+    const next: Record<string, string> = {};
+    const keys = expandedRowKeysRef.current;
+    for (const t of tasks) {
+      next[t.id] = t.status;
+      const was = prev[t.id];
+      if (was === undefined) {
+        if (t.status === "active") keys.add(t.id);
+      } else if (was !== t.status) {
+        if (t.status === "active") keys.add(t.id);
+        else if (
+          t.status === "done" ||
+          t.status === "closed" ||
+          t.status === "abandoned"
+        ) {
+          keys.delete(t.id);
+        }
+      }
+    }
+    for (const k of [...keys]) {
+      if (!(k in next)) keys.delete(k);
+    }
+    prevTaskStatusRef.current = next;
+    setExpandedRowKeys([...keys]);
+  }, [tasks]);
+  const onExpandedRowsChange = useCallback(
+    (keys: readonly (string | number | bigint)[]) => {
+      // antd 的 Key 含 bigint，任务 id 恒为字符串，此处只收串/数
+      const next = keys.filter(
+        (k): k is string | number =>
+          typeof k === "string" || typeof k === "number",
+      );
+      expandedRowKeysRef.current = new Set(next);
+      setExpandedRowKeys([...next]);
+    },
+    [],
+  );
+
   const goAssistant = (t: AdminAssistantTask) => {
     openAssistant({ taskId: t.id, nonce: Date.now() });
   };
@@ -351,6 +400,8 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
         dataSource={visibleTasks}
         loading={loading}
         expandable={{
+          expandedRowKeys,
+          onExpandedRowsChange,
           rowExpandable: (t) => readDelegations(t).length > 0 || !!t.runId,
           expandedRowRender: (t) => (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
