@@ -38,6 +38,7 @@ interface StreamArtifact {
 interface StreamVerdict {
   round: number;
   verdict: string | null;
+  reasoning?: string | null;
   createdAt: string | null;
 }
 
@@ -93,9 +94,13 @@ function nodeLine(node: StreamNode): Line {
 function verdictLine(v: StreamVerdict): Line {
   const verdict =
     v.verdict === "pass" ? "通过" : v.verdict === "fail" ? "未通过" : (v.verdict ?? "未知");
+  const reasoning =
+    typeof v.reasoning === "string" && v.reasoning.length > 0
+      ? v.reasoning.slice(0, 200)
+      : "";
   return {
     key: `verdict:${v.round}@${v.createdAt ?? ""}`,
-    text: `终审第 ${v.round} 轮：${verdict}`,
+    text: `终审第 ${v.round} 轮：${verdict}${reasoning ? `（${reasoning}）` : ""}`,
     tone: v.verdict === "fail" ? "danger" : v.verdict === "pass" ? "success" : undefined,
   };
 }
