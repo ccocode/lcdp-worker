@@ -432,6 +432,29 @@ export default function AppThemeSettings({
     }
   }, [appId, load]);
 
+  /** 删除主题模板（本应用私有、非内置）：已绑定时服务端回 409，须先解绑再删。 */
+  const onDeleteTheme = useCallback((theme: ThemeItem) => {
+    Modal.confirm({
+      title: `删除主题 ${theme.name}？`,
+      content: "删除后该主题及其全部版本一并清除，不可恢复；已绑定的主题须先解绑才能删。",
+      okText: "删除",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: async () => {
+        setCloneActing(`delete:${theme.id}`);
+        try {
+          await api.themes.remove(theme.id);
+          message.success(`主题已删除：${theme.id}`);
+          await load();
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : "主题删除失败");
+        } finally {
+          setCloneActing(null);
+        }
+      },
+    });
+  }, [load]);
+
   /** 删除克隆（测试完即可删）：已绑定时服务端回 409，须先解绑再删。 */
   const onCloneDelete = useCallback((theme: ThemeItem) => {
     Modal.confirm({
@@ -617,22 +640,13 @@ export default function AppThemeSettings({
           return <Typography.Text type="secondary">—</Typography.Text>;
         }
         const active = marksFor(t.id, current.version).includes(slot);
+        // 版本记录不在列表里展开：只显当前版本，历史走操作栏的版本记录按钮弹窗看。
         return (
           <Space size={4} wrap>
             <Tag color={active ? "processing" : undefined}>
               {current.version}（{current.fileCount} 文件 / {fmtBytes(current.totalBytes)} ·{" "}
               {versionTargetLabel(current)}）{active ? " · 激活中" : ""}
             </Tag>
-            {slotVersions.length > 1 && (
-              <Button
-                type="link"
-                size="small"
-                style={{ padding: 0, height: "auto" }}
-                onClick={() => setHistory({ theme: t, slot })}
-              >
-                历史版本（{slotVersions.length}）
-              </Button>
-            )}
           </Space>
         );
       },
@@ -690,6 +704,14 @@ export default function AppThemeSettings({
               <Button
                 type="link"
                 size="small"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => setHistory({ theme: t, slot })}
+              >
+                版本记录
+              </Button>
+              <Button
+                type="link"
+                size="small"
                 danger
                 style={{ padding: 0, height: "auto" }}
                 disabled={readOnly}
@@ -701,6 +723,9 @@ export default function AppThemeSettings({
             </Space>
           );
         }
+        // 主题模板删除：只给本应用私有、非内置的行；领域货架、他应用私有、
+        // 内置行不渲染删除入口（内置服务端也禁删，货架属共享供给）。
+        const deletable = t.ownerAppId === appId && t.kind !== "builtin";
         return (
           <Space direction="vertical" size={2}>
             <Button
@@ -720,6 +745,27 @@ export default function AppThemeSettings({
                 onClick={() => void onPreview(t, slot, current.version)}
               >
                 预览 {current.version}
+              </Button>
+            )}
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => setHistory({ theme: t, slot })}
+            >
+              版本记录
+            </Button>
+            {deletable && (
+              <Button
+                type="link"
+                size="small"
+                danger
+                style={{ padding: 0, height: "auto" }}
+                disabled={readOnly}
+                loading={cloneActing === `delete:${t.id}`}
+                onClick={() => onDeleteTheme(t)}
+              >
+                删除
               </Button>
             )}
           </Space>
@@ -1254,14 +1300,17 @@ export default function AppThemeSettings({
       <Modal
         title={
           history
-            ? `历史版本 · ${history.theme.name}（${THEME_SLOT_LABEL[history.slot]}）`
-            : "历史版本"
+            ? `版本记录 · ${history.theme.name}（${THEME_SLOT_LABEL[history.slot]}）`
+            : "版本记录"
         }
         open={history !== null}
         onCancel={() => setHistory(null)}
         footer={null}
         width={640}
       >
+        {history && history.theme.versions.filter((v) => versionFitsSlot(v, history.slot)).length === 0 && (
+          <Typography.Text type="secondary">暂无版本记录</Typography.Text>
+        )}
         {history && (
           <Space direction="vertical" size={8} style={{ width: "100%" }}>
             {history.theme.versions
