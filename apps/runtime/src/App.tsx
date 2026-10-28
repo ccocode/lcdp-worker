@@ -25,9 +25,10 @@ import { SchemaRenderer, cartStore } from "@lcdp/renderer";
 import {
   EmptyState,
   LoadingState,
-  desktopTheme,
   fmtTime,
   mobileNavOffset,
+  runtimeTheme,
+  runtimeTokens,
   tokens,
 } from "@lcdp/ui";
 import QRCode from "qrcode";
@@ -287,7 +288,7 @@ export default function App() {
   const previewInPath = match?.[2] ?? "/";
 
   return (
-    <ConfigProvider locale={zhCN} theme={desktopTheme}>
+    <ConfigProvider locale={zhCN} theme={runtimeTheme}>
       {/* 站点主题兜底（第 93 步线 B2）：边缘注入的 :root 变量 --lcdp-background /
           --lcdp-text 在此落到 SPA 根——非 antd 区域（加载屏、空白态）也垫站点
           底色与文字色、不跳色。无注入时回退值与现行为等效（透明=不涂、
@@ -359,7 +360,7 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f5f5",
+        background: "#f7f8fa",
       }}
     >
       <Card style={{ width: 360 }}>
@@ -582,7 +583,7 @@ function SsoCallbackPage({ params }: { params: Record<string, string> }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f5f5",
+        background: "#f7f8fa",
         padding: 16,
       }}
     >
@@ -624,7 +625,7 @@ function CenterFrame({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f5f5",
+        background: "#f7f8fa",
         padding: 16,
       }}
     >
@@ -1549,7 +1550,7 @@ function MobileShell({
           justifyContent: "center",
           gap: 2,
           fontSize: 11,
-          color: active ? "#1677ff" : "#646a73",
+          color: active ? "#2563eb" : "#6b7280",
           fontWeight: active ? 600 : 400,
           padding: "4px 2px",
         }}
@@ -1575,7 +1576,7 @@ function MobileShell({
           top: 0,
           zIndex: 20,
           background: "#fff",
-          borderBottom: "1px solid #f0f0f0",
+          borderBottom: "1px solid #e6e8ec",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -1615,7 +1616,7 @@ function MobileShell({
           bottom: 0,
           zIndex: 20,
           background: "#fff",
-          borderTop: "1px solid #f0f0f0",
+          borderTop: "1px solid #e6e8ec",
           display: "flex",
           alignItems: "stretch",
           minHeight: 56,
@@ -1635,7 +1636,7 @@ function MobileShell({
               background: "transparent",
               cursor: "pointer",
               fontSize: 13,
-              color: "#646a73",
+              color: "#6b7280",
               padding: "4px 2px",
             }}
           >
@@ -1720,7 +1721,7 @@ function SiteHeader({
     <Layout.Header
       style={{
         background: "#fff",
-        borderBottom: "1px solid #f0f0f0",
+        borderBottom: "1px solid #e6e8ec",
         display: "flex",
         alignItems: "center",
         gap: 16,
@@ -1784,9 +1785,9 @@ function SiteFooter({
     <Layout.Footer
       style={{
         textAlign: "center",
-        color: "#8c8c8c",
-        background: "#fafafa",
-        borderTop: "1px solid #f0f0f0",
+        color: "#6b7280",
+        background: "#f7f8fa",
+        borderTop: "1px solid #e6e8ec",
         padding: "18px 24px",
       }}
     >
@@ -3222,7 +3223,7 @@ function PublicShell({
         <Layout.Header
           style={{
             background: "#fff",
-            borderBottom: "1px solid #f0f0f0",
+            borderBottom: "1px solid #e6e8ec",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -3241,7 +3242,7 @@ function PublicShell({
           <Layout.Sider
             theme="light"
             width={220}
-            style={{ borderRight: "1px solid #f0f0f0" }}
+            style={{ borderRight: "1px solid #e6e8ec" }}
           >
             <Menu
               mode="inline"
@@ -3692,9 +3693,9 @@ function themeTokenOf(appConfig: {
     colorTextSecondary?: string;
     fontFamily?: string;
   } = {
-    colorPrimary: tokens.colorPrimary,
+    colorPrimary: runtimeTokens.colorPrimary,
     borderRadius: tokens.borderRadius,
-    colorBorder: tokens.colorBorder,
+    colorBorder: runtimeTokens.colorBorder,
   };
   if (typeof themeCfg.colorPrimary === "string") {
     token.colorPrimary = themeCfg.colorPrimary;
@@ -4162,7 +4163,7 @@ function AppView({
         token,
         components: {
           Menu: {
-            groupTitleColor: tokens.colorTextTertiary,
+            groupTitleColor: runtimeTokens.colorTextTertiary,
             itemBorderRadius: tokens.borderRadius,
           },
         },
@@ -4177,7 +4178,7 @@ function AppView({
           collapsed={siderCollapsed}
           trigger={null}
           style={{
-            borderRight: "1px solid #e4e7ec",
+            borderRight: "1px solid #e6e8ec",
             position: "sticky",
             top: 0,
             height: "100vh",
@@ -4271,7 +4272,7 @@ function AppView({
             </Button>
           </div>
         </Layout.Sider>
-        <Layout.Content style={{ padding: "24px 28px", background: "#f5f6f8" }}>
+        <Layout.Content style={{ padding: "24px 28px", background: "#f7f8fa" }}>
           {content}
         </Layout.Content>
       </Layout>

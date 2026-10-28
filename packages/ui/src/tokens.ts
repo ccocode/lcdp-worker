@@ -77,6 +77,54 @@ export const desktopTheme: ThemeConfig = {
 };
 
 /**
+ * 运行态 C 端外壳令牌（2026-10-28 运行态全页统一外壳）：与内置主题壳同源——
+ * 主色 #2563eb、hover #1d4ed8、底色 #f7f8fa、文字 #111827、次要文字 #6b7280、
+ * 边框 #e6e8ec（platform builtin-theme.ts 约 206、219 行）。
+ * 仅 runtime 消费；admin / studio 仍用 B 端 desktopTheme，不得混用。
+ * 圆角沿用 B 端基线（6/8），不改数据组件几何；info 种子同步主色，使登录
+ * 提示页的 info 提示与主题同蓝。
+ */
+export const runtimeTokens = {
+  colorPrimary: "#2563eb",
+  colorPrimaryHover: "#1d4ed8",
+  colorInfo: "#2563eb",
+  colorBorder: "#e6e8ec",
+  colorBgLayout: "#f7f8fa",
+  colorText: "#111827",
+  colorTextSecondary: "#6b7280",
+  colorTextTertiary: "#6b7280",
+} as const;
+
+/**
+ * 运行态外壳主题（antd ThemeConfig）：runtime 根 Provider 与 themeTokenOf 基线用；
+ * 应用主题 / 站点主题令牌仍在其上叠加覆盖（自定义主题品牌不受影响）。
+ */
+export const runtimeTheme: ThemeConfig = {
+  token: {
+    colorPrimary: runtimeTokens.colorPrimary,
+    colorPrimaryHover: runtimeTokens.colorPrimaryHover,
+    colorInfo: runtimeTokens.colorInfo,
+    borderRadius: tokens.borderRadius,
+    borderRadiusLG: tokens.borderRadiusLG,
+    colorBorder: runtimeTokens.colorBorder,
+    colorBgLayout: runtimeTokens.colorBgLayout,
+    colorText: runtimeTokens.colorText,
+    colorTextSecondary: runtimeTokens.colorTextSecondary,
+    colorTextTertiary: runtimeTokens.colorTextTertiary,
+  },
+  components: {
+    Menu: {
+      itemBorderRadius: tokens.borderRadius,
+      itemSelectedColor: runtimeTokens.colorPrimary,
+      groupTitleColor: runtimeTokens.colorTextTertiary,
+      groupTitleFontSize: 12,
+    },
+    Layout: { siderBg: tokens.colorBgContainer, headerBg: tokens.colorBgContainer },
+    Table: { headerBg: runtimeTokens.colorBgLayout },
+  },
+};
+
+/**
  * PC 密度档（最终文档 §17.3 预留 4 的 PC 半边，与移动档并列维护）：
  * default = antd middle；dense 供数据密集页组件级消费（手写 size="small" 的收编目标，片二起改接）。
  */
