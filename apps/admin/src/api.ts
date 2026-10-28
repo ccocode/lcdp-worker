@@ -194,6 +194,11 @@ export interface ThemeItem {
   ownerAppId?: string | null;
   /** scope=domain 时的领域 key；其余为 null */
   domainKey?: string | null;
+  /** 内置主题克隆：builtin = 系统内置（只可克隆、不可改删），custom = 上传/克隆 */
+  kind?: "builtin" | "custom";
+  /** 克隆的来源内置主题 id / 版本；非克隆为 null */
+  sourceThemeId?: string | null;
+  sourceVersion?: string | null;
   versions: ThemeVersionView[];
   boundEntries: ThemeBoundEntry[];
 }
@@ -1042,6 +1047,69 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       });
+    },
+    /**
+     * 内置主题克隆（第二阶段）：创建只落注册表行与改动层，不写版本、
+     * 不写绑定指针，线上呈现零变化；生效、预览、绑定另走专属端点。
+     * 改动层四段只许 tokens/layout/config/navigation，顶层禁项整单拒绝。
+     */
+    async createClone(
+      appId: string,
+      body: { sourceThemeId: string; sourceVersion: string; changeLayer: Record<string, unknown> },
+    ): Promise<{ cloneId: string; sourceThemeId: string; sourceVersion: string; target: string }> {
+      return apiFetch(`/admin/apps/${encodeURIComponent(appId)}/themes/clone`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    async clonePreviewList(
+      appId: string,
+      cloneId: string,
+    ): Promise<{
+      cloneId: string;
+      sourceThemeId: string;
+      sourceVersion: string;
+      target: string;
+      routes: string[];
+      routeCount: number;
+      preview: {
+        tokenChanges: Array<{ key: string; from: unknown; to: unknown }>;
+        configChanges: Array<{ key: string; from: unknown; to: unknown }>;
+        layoutChanges: string[];
+        navigationChanges: Array<{ route: string; hidden?: boolean; order?: number }>;
+        skippedNavigation: Array<{ route: string; reason: string }>;
+      };
+    }> {
+      return apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/themes/${encodeURIComponent(cloneId)}/preview-list`,
+      );
+    },
+    async clonePreview(
+      appId: string,
+      cloneId: string,
+    ): Promise<{ cloneId: string; version: string; url: string; expiresAt: string }> {
+      return apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/themes/${encodeURIComponent(cloneId)}/preview`,
+        { method: "POST" },
+      );
+    },
+    async cloneBind(
+      appId: string,
+      cloneId: string,
+    ): Promise<{ cloneId: string; version: string; target: string }> {
+      return apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/themes/${encodeURIComponent(cloneId)}/bind`,
+        { method: "POST" },
+      );
+    },
+    async cloneUnbind(
+      appId: string,
+      cloneId: string,
+    ): Promise<{ cloneId: string; target: string; builtinId: string; builtinVersion: string }> {
+      return apiFetch(
+        `/admin/apps/${encodeURIComponent(appId)}/themes/${encodeURIComponent(cloneId)}/unbind`,
+        { method: "POST" },
+      );
     },
     /**
      * multipart 上传主题包 zip：校验失败抛 ThemeUploadError（带逐项 problems）。

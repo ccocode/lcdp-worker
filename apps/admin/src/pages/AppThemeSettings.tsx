@@ -170,6 +170,39 @@ export default function AppThemeSettings({
   /** 正在签发预览的主题版本（`${themeId}@${version}`），仅按钮 loading 态用 */
   const [previewing, setPreviewing] = useState<string | null>(null);
 
+  /**
+   * 克隆创建表单（第二阶段）：来源只列本应用的系统内置主题（kind=builtin），
+   * 改动层只许四段；导航只提供“隐藏路由”勾选（顺序走默认，改动层仍可由接口传 order）。
+   * 创建本身不写版本、不写指针，生效与绑定另走克隆卡片上的专属动作。
+   */
+  const [cloneSource, setCloneSource] = useState<string>("");
+  const [cloneVersion, setCloneVersion] = useState<string>("");
+  const [clonePrimary, setClonePrimary] = useState("#2563eb");
+  const [cloneRadius, setCloneRadius] = useState<number>(8);
+  const [cloneSiteName, setCloneSiteName] = useState("");
+  const [cloneFooter, setCloneFooter] = useState("");
+  const [cloneHeader, setCloneHeader] = useState<"standard" | "compact">("standard");
+  const [cloneDensity, setCloneDensity] = useState<"comfortable" | "compact">("comfortable");
+  const [cloneCardLayout, setCloneCardLayout] = useState<"grid" | "list">("grid");
+  const [cloneHidden, setCloneHidden] = useState<string[]>([]);
+  const [cloneCreating, setCloneCreating] = useState(false);
+  const [clonePreviewList, setClonePreviewList] = useState<{
+    cloneId: string;
+    sourceThemeId: string;
+    sourceVersion: string;
+    target: string;
+    routes: string[];
+    routeCount: number;
+    preview: {
+      tokenChanges: Array<{ key: string; from: unknown; to: unknown }>;
+      configChanges: Array<{ key: string; from: unknown; to: unknown }>;
+      layoutChanges: string[];
+      navigationChanges: Array<{ route: string; hidden?: boolean; order?: number }>;
+      skippedNavigation: Array<{ route: string; reason: string }>;
+    };
+  } | null>(null);
+  const [cloneActing, setCloneActing] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -289,6 +322,116 @@ export default function AppThemeSettings({
     [appId],
   );
 
+  /** 本应用的系统内置主题（克隆来源；内置行只可克隆、不可改删） */
+  const builtinThemes = useMemo(
+    () =>
+      themes.filter(
+        (t) => t.kind === "builtin" && t.ownerAppId === appId,
+      ),
+    [themes, appId],
+  );
+  const cloneSourceTheme = builtinThemes.find((t) => t.id === cloneSource);
+  const cloneSourceRoutes = useMemo(() => {
+    const v = cloneSourceTheme?.versions.find((x) => x.version === cloneVersion);
+    return Array.isArray(v?.manifest?.routes) ? (v!.manifest.routes as string[]) : [];
+  }, [cloneSourceTheme, cloneVersion]);
+
+  const buildChangeLayer = useCallback(() => {
+    const layer: Record<string, unknown> = {};
+    const tokens: Record<string, unknown> = {};
+    if (clonePrimary) tokens.primary = clonePrimary;
+    if (Number.isFinite(cloneRadius)) tokens.radius = cloneRadius;
+    if (Object.keys(tokens).length > 0) layer.tokens = tokens;
+    const config: Record<string, unknown> = {};
+    if (cloneSiteName.trim()) config.siteName = cloneSiteName.trim();
+    if (cloneFooter.trim()) config.footerText = cloneFooter.trim();
+    if (Object.keys(config).length > 0) layer.config = config;
+    const layout: Record<string, unknown> = {};
+    if (cloneHeader !== "standard") layout.headerStyle = cloneHeader;
+    if (cloneDensity !== "comfortable") layout.listDensity = cloneDensity;
+    if (cloneCardLayout !== "grid") layout.cardLayout = cloneCardLayout;
+    if (Object.keys(layout).length > 0) layer.layout = layout;
+    if (cloneHidden.length > 0) {
+      layer.navigation = {
+        items: cloneHidden.map((route) => ({ route, hidden: true })),
+      };
+    }
+    return layer;
+  }, [clonePrimary, cloneRadius, cloneSiteName, cloneFooter, cloneHeader, cloneDensity, cloneCardLayout, cloneHidden]);
+
+  const onCreateClone = useCallback(async () => {
+    if (!cloneSource || !cloneVersion) {
+      message.warning("请先选择内置主题与来源版本");
+      return;
+    }
+    const layer = buildChangeLayer();
+    if (Object.keys(layer).length === 0) {
+      message.warning("请至少改一项（颜色、站名、布局或隐藏路由），空改动层会被拒绝");
+      return;
+    }
+    setCloneCreating(true);
+    try {
+      const res = await api.themes.createClone(appId, {
+        sourceThemeId: cloneSource,
+        sourceVersion: cloneVersion,
+        changeLayer: layer,
+      });
+      message.success(`克隆已创建：${res.cloneId}（来源 ${res.sourceThemeId}@${res.sourceVersion}，尚未生效，线上呈现无变化）`);
+      await load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "克隆创建失败");
+    } finally {
+      setCloneCreating(false);
+    }
+  }, [appId, cloneSource, cloneVersion, buildChangeLayer, load]);
+
+  const onClonePreviewList = useCallback(async (theme: ThemeItem) => {
+    try {
+      const list = await api.themes.clonePreviewList(appId, theme.id);
+      setClonePreviewList(list);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "预览清单加载失败");
+    }
+  }, [appId]);
+
+  const onClonePreview = useCallback(async (theme: ThemeItem) => {
+    const win = window.open("", "_blank");
+    try {
+      const res = await api.themes.clonePreview(appId, theme.id);
+      if (win) win.location.href = res.url;
+      else message.warning("新标签被浏览器拦截，请允许弹窗后重试");
+    } catch (err) {
+      win?.close();
+      message.error(err instanceof Error ? err.message : "克隆预览打开失败");
+    }
+  }, [appId]);
+
+  const onCloneBind = useCallback(async (theme: ThemeItem) => {
+    setCloneActing(`bind:${theme.id}`);
+    try {
+      const res = await api.themes.cloneBind(appId, theme.id);
+      message.success(`已绑定克隆：${res.cloneId}@${res.version}（${res.target === "mobile" ? "移动端" : "桌面端"}）`);
+      await load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "克隆绑定失败");
+    } finally {
+      setCloneActing(null);
+    }
+  }, [appId, load]);
+
+  const onCloneUnbind = useCallback(async (theme: ThemeItem) => {
+    setCloneActing(`unbind:${theme.id}`);
+    try {
+      const res = await api.themes.cloneUnbind(appId, theme.id);
+      message.success(`已解绑回内置：${res.builtinId}@${res.builtinVersion}`);
+      await load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "克隆解绑失败");
+    } finally {
+      setCloneActing(null);
+    }
+  }, [appId, load]);
+
   /** 弹窗内切换 主题/槽位/版本 后，同步 values 编辑初值 */
   const syncBindingValues = useCallback(
     (b: BindingState) => {
@@ -403,8 +546,16 @@ export default function AppThemeSettings({
     }
   }, [binding, slots, appId, load]);
 
-  /** 主题来源标记：本应用私有 / 领域货架 / 已退役内置 / 他应用私有（仅已绑保底呈现） */
+  /** 主题来源标记：克隆 / 本应用私有 / 领域货架 / 已退役内置 / 他应用私有（仅已绑保底呈现） */
   const originTag = (t: ThemeItem) => {
+    if (t.kind === "builtin") return <Tag color="purple">系统内置</Tag>;
+    if (t.sourceThemeId) {
+      return (
+        <Tag color="cyan">
+          克隆 · 来源 {t.sourceThemeId}@{t.sourceVersion ?? "—"}
+        </Tag>
+      );
+    }
     if (t.ownerAppId === appId) return <Tag color="blue">本应用私有</Tag>;
     if (t.scope === "domain") {
       return null;
@@ -471,6 +622,51 @@ export default function AppThemeSettings({
         const current =
           slotVersions.find((v) => marksFor(t.id, v.version).includes(slot)) ??
           slotVersions[0];
+        // 克隆行不走通用“设为当前”：克隆须经专属绑定生成生效版本后才可指指针，
+        // 直接绑克隆 id 会因无生效版本而失败；绑定/解绑/预览均走克隆端点。
+        if (t.sourceThemeId) {
+          const active = marksFor(t.id, current?.version ?? "").includes(slot);
+          return (
+            <Space direction="vertical" size={2}>
+              <Button
+                type="primary"
+                size="small"
+                disabled={readOnly}
+                loading={cloneActing === `bind:${t.id}`}
+                onClick={() => void onCloneBind(t)}
+              >
+                绑定
+              </Button>
+              {active && (
+                <Button
+                  size="small"
+                  danger
+                  disabled={readOnly}
+                  loading={cloneActing === `unbind:${t.id}`}
+                  onClick={() => void onCloneUnbind(t)}
+                >
+                  解绑回内置
+                </Button>
+              )}
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => void onClonePreviewList(t)}
+              >
+                预览清单
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0, height: "auto" }}
+                onClick={() => void onClonePreview(t)}
+              >
+                预览
+              </Button>
+            </Space>
+          );
+        }
         return (
           <Space direction="vertical" size={2}>
             <Button
@@ -507,6 +703,171 @@ export default function AppThemeSettings({
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
       {error && <Alert type="error" showIcon message={error} />}
+
+      <Card title="克隆内置主题">
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          从系统内置主题克隆一份运营改动层：只改颜色、站名、布局与隐藏路由，
+          不改页面结构与路由。创建后线上呈现无变化，须在下方主题列表的克隆行上
+          预览、确认清单后再点绑定。
+        </Typography.Paragraph>
+        {builtinThemes.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="本应用暂无系统内置主题，无法创建克隆（先重生成内置主题）"
+          />
+        ) : (
+          <Space direction="vertical" size={10} style={{ width: "100%" }}>
+            <Space size={8} wrap>
+              <Typography.Text style={{ width: 72, display: "inline-block" }}>
+                来源内置
+              </Typography.Text>
+              <Select
+                style={{ width: 280 }}
+                placeholder="选择内置主题"
+                value={cloneSource || undefined}
+                options={builtinThemes.map((t) => ({
+                  value: t.id,
+                  label: `${t.name}（${t.id}）`,
+                }))}
+                onChange={(v) => {
+                  setCloneSource(v);
+                  const first = builtinThemes.find((t) => t.id === v)?.versions[0]?.version ?? "";
+                  setCloneVersion(first);
+                  setCloneHidden([]);
+                }}
+              />
+              <Select
+                style={{ width: 160 }}
+                placeholder="来源版本"
+                value={cloneVersion || undefined}
+                options={(cloneSourceTheme?.versions ?? []).map((v) => ({
+                  value: v.version,
+                  label: `${v.version} · ${versionTargetLabel(v)}`,
+                }))}
+                onChange={(v) => {
+                  setCloneVersion(v);
+                  setCloneHidden([]);
+                }}
+              />
+            </Space>
+            <Space size={8} wrap>
+              <Typography.Text style={{ width: 72, display: "inline-block" }}>
+                主色
+              </Typography.Text>
+              <input
+                type="color"
+                value={clonePrimary}
+                onChange={(ev) => setClonePrimary(ev.target.value)}
+              />
+              <Input
+                style={{ width: 120 }}
+                value={clonePrimary}
+                onChange={(ev) => setClonePrimary(ev.target.value)}
+              />
+              <Typography.Text style={{ width: 56, display: "inline-block" }}>
+                圆角
+              </Typography.Text>
+              <Input
+                type="number"
+                style={{ width: 90 }}
+                value={cloneRadius}
+                onChange={(ev) => setCloneRadius(Number(ev.target.value))}
+              />
+              <Typography.Text type="secondary">px</Typography.Text>
+            </Space>
+            <Space size={8} wrap>
+              <Typography.Text style={{ width: 72, display: "inline-block" }}>
+                站名
+              </Typography.Text>
+              <Input
+                style={{ width: 240 }}
+                placeholder="留空表示不改"
+                value={cloneSiteName}
+                onChange={(ev) => setCloneSiteName(ev.target.value)}
+              />
+              <Typography.Text style={{ width: 72, display: "inline-block" }}>
+                页脚
+              </Typography.Text>
+              <Input
+                style={{ width: 320 }}
+                placeholder="留空表示不改"
+                value={cloneFooter}
+                onChange={(ev) => setCloneFooter(ev.target.value)}
+              />
+            </Space>
+            <Space size={8} wrap>
+              <Typography.Text style={{ width: 72, display: "inline-block" }}>
+                布局
+              </Typography.Text>
+              <Select
+                style={{ width: 140 }}
+                value={cloneHeader}
+                options={[
+                  { value: "standard", label: "页眉标准" },
+                  { value: "compact", label: "页眉紧凑" },
+                ]}
+                onChange={(v) => setCloneHeader(v)}
+              />
+              <Select
+                style={{ width: 140 }}
+                value={cloneDensity}
+                options={[
+                  { value: "comfortable", label: "列表宽松" },
+                  { value: "compact", label: "列表紧凑" },
+                ]}
+                onChange={(v) => setCloneDensity(v)}
+              />
+              <Select
+                style={{ width: 140 }}
+                value={cloneCardLayout}
+                options={[
+                  { value: "grid", label: "卡片网格" },
+                  { value: "list", label: "卡片单列" },
+                ]}
+                onChange={(v) => setCloneCardLayout(v)}
+              />
+            </Space>
+            {cloneSourceRoutes.length > 0 && (
+              <Space direction="vertical" size={4}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  隐藏路由（勾选后该页不在导航中出现；全部隐藏会被服务端拒绝）
+                </Typography.Text>
+                <Space size={8} wrap>
+                  {cloneSourceRoutes.map((route) => (
+                    <label key={route} style={{ fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={cloneHidden.includes(route)}
+                        onChange={(ev) =>
+                          setCloneHidden((prev) =>
+                            ev.target.checked
+                              ? [...prev, route]
+                              : prev.filter((r) => r !== route),
+                          )
+                        }
+                      />{" "}
+                      {route}
+                    </label>
+                  ))}
+                </Space>
+              </Space>
+            )}
+            <Space>
+              <Button
+                type="primary"
+                loading={cloneCreating}
+                disabled={readOnly || !cloneSource || !cloneVersion}
+                onClick={() => void onCreateClone()}
+              >
+                创建克隆
+              </Button>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                创建只落注册表与改动层，不写版本、不写指针；绑定在下方克隆行操作。
+              </Typography.Text>
+            </Space>
+          </Space>
+        )}
+      </Card>
 
       <Card
         title="本应用的主题"
@@ -567,8 +928,12 @@ export default function AppThemeSettings({
         ) : (
           THEME_SLOTS.map((slot) => {
             const ptr = slots[slot];
-            const rows = myThemes.filter((t) =>
-              t.versions.some((v) => versionFitsSlot(v, slot)),
+            // 克隆行刚创建时还没有生效版本，仍须列出（否则绑定/预览无入口）；
+            // 槽位归属以克隆目标为准，目标未明时两槽都列出，绑定时服务端定槽。
+            const rows = myThemes.filter(
+              (t) =>
+                t.versions.some((v) => versionFitsSlot(v, slot)) ||
+                Boolean(t.sourceThemeId),
             );
             return (
               <div key={slot} style={{ marginTop: slot === "mobile" ? 24 : 0 }}>
@@ -758,6 +1123,96 @@ export default function AppThemeSettings({
                   onChange={(ev) => setBValsJson(ev.target.value)}
                 />
               ))}
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
+        title={
+          clonePreviewList
+            ? `预览清单 · ${clonePreviewList.cloneId}（来源 ${clonePreviewList.sourceThemeId}@${clonePreviewList.sourceVersion}）`
+            : "预览清单"
+        }
+        open={clonePreviewList !== null}
+        onCancel={() => setClonePreviewList(null)}
+        footer={null}
+        width={720}
+      >
+        {clonePreviewList && (
+          <Space direction="vertical" size={10} style={{ width: "100%" }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              系统算出、逐项核对：路由覆盖 {clonePreviewList.routeCount} 条，
+              目标端 {clonePreviewList.target === "mobile" ? "移动端" : "桌面端"}。
+              清单不等于生效，生效须点克隆行的绑定。
+            </Typography.Text>
+            {clonePreviewList.preview.tokenChanges.length > 0 && (
+              <div>
+                <Typography.Text strong>令牌</Typography.Text>
+                <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
+                  {clonePreviewList.preview.tokenChanges.map((c) => (
+                    <li key={c.key}>
+                      {c.key}：{String(c.from)} → {String(c.to)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {clonePreviewList.preview.configChanges.length > 0 && (
+              <div>
+                <Typography.Text strong>配置</Typography.Text>
+                <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
+                  {clonePreviewList.preview.configChanges.map((c) => (
+                    <li key={c.key}>
+                      {c.key}：{String(c.from)} → {String(c.to)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {clonePreviewList.preview.layoutChanges.length > 0 && (
+              <div>
+                <Typography.Text strong>布局</Typography.Text>
+                <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
+                  {clonePreviewList.preview.layoutChanges.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {clonePreviewList.preview.navigationChanges.length > 0 && (
+              <div>
+                <Typography.Text strong>导航</Typography.Text>
+                <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
+                  {clonePreviewList.preview.navigationChanges.map((c) => (
+                    <li key={c.route}>
+                      {c.route}
+                      {c.hidden !== undefined ? ` · 隐藏=${String(c.hidden)}` : ""}
+                      {c.order !== undefined ? ` · 顺序=${c.order}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {clonePreviewList.preview.skippedNavigation.length > 0 && (
+              <div>
+                <Typography.Text strong>未生效的导航项（无菜单页，不新增入口）</Typography.Text>
+                <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
+                  {clonePreviewList.preview.skippedNavigation.map((c) => (
+                    <li key={c.route}>
+                      {c.route}：{c.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div>
+              <Typography.Text strong>路由覆盖（逐项）</Typography.Text>
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                {clonePreviewList.routes.map((r) => (
+                  <Tag key={r} style={{ marginBottom: 4 }}>{r}</Tag>
+                ))}
+              </div>
+            </div>
           </Space>
         )}
       </Modal>
