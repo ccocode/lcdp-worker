@@ -14,7 +14,7 @@
  * onHandlePending 注入（工作台：切到本任务会话；任务记录页：
  * 去助手查看）；不传则只展示待决、不给入口。
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, message, Modal, Spin, Tag, Typography } from "antd";
 import {
   api,
@@ -224,6 +224,28 @@ export default function TaskDetail({
     };
   }, [appId, task.id, task.runId, runTick]);
   /**
+   * 详情自动滚到底部（2026-10-29 用户定）：内容变化（节点/产物/
+   * 终审/终态重拉、切任务）后，把最近的可滚动祖先（工作台右栏
+   * 或任务记录页抽屉体）滚到底部，最新内容始终可见。
+   */
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    let p: HTMLElement | null = el.parentElement;
+    while (p) {
+      const overflowY = window.getComputedStyle(p).overflowY;
+      if (
+        (overflowY === "auto" || overflowY === "scroll") &&
+        p.scrollHeight > p.clientHeight
+      ) {
+        p.scrollTop = p.scrollHeight;
+        break;
+      }
+      p = p.parentElement;
+    }
+  }, [runDetail, task.id]);
+  /**
    * 详情实时刷新（2026-10-29 用户定）：详情开着时订阅同一条
    * run SSE，流里有动静（节点/产物/终审/终态）就重拉一次详情，
    * 不再只靠打开时那一次和详情内操作后那一次。首包 snapshot
@@ -317,7 +339,10 @@ export default function TaskDetail({
   );
   const decisionRows = renderLoose(task.decisions, new Set());
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    <div
+      ref={rootRef}
+      style={{ display: "flex", flexDirection: "column", gap: 8 }}
+    >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <Typography.Text
           style={{ fontSize: 13, flex: 1 }}

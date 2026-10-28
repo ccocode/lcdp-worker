@@ -7,7 +7,7 @@
  * 卡片随之翻状态，不往父会话插消息。
  */
 import { useEffect, useRef, useState } from "react";
-import { Button, Card, Tag, Typography } from "antd";
+import { Button, Card, Spin, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
   api,
@@ -16,7 +16,6 @@ import {
   type AdminTaskRunDetail,
   type AdminTaskRunPending,
 } from "../../api";
-import { TaskRunTimeline } from "./TaskRunTimeline";
 
 /** 任务状态中文（与工作台左栏/详情同一张表） */
 const TASK_STATUS_LABELS: Record<string, string> = {
@@ -374,9 +373,28 @@ export function PlanMessageCard({
             </Button>
           )}
         </div>
-        <TaskRunTimeline appId={appId} taskId={taskId} />
       </div>
     </Card>
+    {/*
+      执行动画（2026-10-29 用户定）：计划卡里不放执行记录，
+      动画在计划卡外面、下方，只表示对话没有停止；任务进行中
+      才转，等验收 / 终态即停。执行记录与细节只在右侧详情里。
+    */}
+    {task.status === "active" && (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "2px 0",
+        }}
+      >
+        <Spin size="small" />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          执行中…
+        </Typography.Text>
+      </div>
+    )}
     {awaitingPreview && (
       <Card
         size="small"
