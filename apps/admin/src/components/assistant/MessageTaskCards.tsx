@@ -221,11 +221,11 @@ function ChecklistRows({ task }: { task: AdminAssistantTask }) {
 }
 
 /**
- * 对话记录里的计划卡片（去重方案 A）：默认只显示标题 + 状态 +
- * 下一步，目标与全部步骤收在“展开清单”之后——完整清单只在
- * 右侧详情里常驻，消息区不再与详情重复展开同一份清单；清单
- * 进度并入展开按钮（已过/总数），不再单列一行。清单为空时
- * 无可折叠内容，目标直接显示。
+ * 对话记录里的计划卡片（去重方案 A）：默认展开清单（2026-10-29
+ * 用户定：任务清单默认展开），标题 + 状态 + 下一步 + 目标 +
+ * 全部步骤直接可见，可点“收起清单”折叠；清单进度并入按钮
+ * （已过/总数），不再单列一行。清单为空时无可折叠内容，
+ * 目标直接显示。
  */
 export function PlanMessageCard({
   appId,
@@ -246,7 +246,7 @@ export function PlanMessageCard({
 }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const { task, missing } = useTaskCard(appId, taskId, refreshKey);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (!autoOpen || autoOpenedRef.current || !onOpenTask) return;

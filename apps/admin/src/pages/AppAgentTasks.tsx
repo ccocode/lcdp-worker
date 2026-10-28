@@ -169,20 +169,42 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
   const [childLoading, setChildLoading] = useState(false);
   const { openAssistant } = useAssistantShell();
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      setTasks(await api.assistant.app.tasks(appId, { status: "all" }));
-    } catch {
-      setTasks([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [appId]);
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        setTasks(await api.assistant.app.tasks(appId, { status: "all" }));
+      } catch {
+        if (!silent) setTasks([]);
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [appId],
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * 任务列表动态更新（2026-10-29 用户定）：只要还有未终态任务
+   * （进行中 / 等验收预览 / 等确认绑定），每 20 秒静默重拉一次，
+   * 进行中翻已完成、已收尾都实时跟上，不用手动刷新页面；全部
+   * 终态后停轮询，手动“刷新”仍可拉取别处新起的任务。静默重拉
+   * 不动 loading，避免表格闪烁；失败时保留旧列表。
+   */
+  const hasOpenTask = tasks.some(
+    (t) =>
+      t.status === "active" ||
+      t.status === "awaiting_preview" ||
+      t.status === "awaiting_bind",
+  );
+  useEffect(() => {
+    if (!hasOpenTask) return;
+    const timer = setInterval(() => void load(true), 20000);
+    return () => clearInterval(timer);
+  }, [hasOpenTask, load]);
 
   const goAssistant = (t: AdminAssistantTask) => {
     openAssistant({ taskId: t.id, nonce: Date.now() });
@@ -307,7 +329,9 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
 
   return (
     <div>
-      <div style={{ marginBottom: 12 }}>
+      <div
+        style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}
+      >
         <Segmented
           options={[
             { label: "进行中", value: "active" },
@@ -317,6 +341,9 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
           value={statusView}
           onChange={(v) => setStatusView(v as "active" | "closed" | "all")}
         />
+        <Button size="small" onClick={() => void load()}>
+          刷新
+        </Button>
       </div>
       <Table
         rowKey="id"
@@ -396,7 +423,11 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
         title={detail?.title ?? "任务记录"}
         width={"min(520px, 100vw)"}
         open={detail !== null}
-        onClose={() => setDetail(null)}
+        onClose={() => {
+          setDetail(null);
+          // 抽屉里可能刚做过验收/绑定等操作，关闭即静默重拉一次列表
+          void load(true);
+        }}
       >
         {detail && (
           <TaskDetail
