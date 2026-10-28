@@ -223,6 +223,40 @@ export default function TaskDetail({
       alive = false;
     };
   }, [appId, task.id, task.runId, runTick]);
+  /**
+   * 详情实时刷新（2026-10-29 用户定）：详情开着时订阅同一条
+   * run SSE，流里有动静（节点/产物/终审/终态）就重拉一次详情，
+   * 不再只靠打开时那一次和详情内操作后那一次。首包 snapshot
+   * 跳过（打开时已拉过一次，跳过可省一次重复请求）；服务端
+   * 3 秒推一次增量，重拉频率与之同频；终态后服务端收流，
+   * 客户端不再重连。订阅失败静默降级为打开时那一次。
+   */
+  useEffect(() => {
+    if (!appId || !task.runId) return;
+    let first = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = api.assistant.app.streamTaskRun(
+      appId,
+      task.id,
+      (ev) => {
+        if (first) {
+          first = false;
+          return;
+        }
+        if (ev.type === "snapshot") return;
+        // 同一轮多个事件只合成为一次重拉（500ms 节流）。
+        if (timer) return;
+        timer = setTimeout(() => {
+          timer = null;
+          setRunTick((t) => t + 1);
+        }, 500);
+      },
+    );
+    return () => {
+      if (timer) clearTimeout(timer);
+      off();
+    };
+  }, [appId, task.id, task.runId]);
   const runAction = async (
     kind:
       | "resume"

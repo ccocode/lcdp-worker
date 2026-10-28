@@ -6,7 +6,7 @@
  * 计划进行中时每 20 秒轮询一次、终态即停——子回合收尾只改任务行，
  * 卡片随之翻状态，不往父会话插消息。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Card, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
@@ -165,14 +165,28 @@ export function PlanMessageCard({
   appId,
   taskId,
   onOpenTask,
+  autoOpen,
 }: {
   appId: string;
   taskId: string;
   /** 工作台：卡片“查看详情”（右侧打开该任务详情）；不传则不渲染 */
   onOpenTask?: (taskId: string) => void;
+  /**
+   * 执行中自动打开详情（2026-10-29 用户定）：最新一张计划卡、
+   * 任务进行中时挂载即打开右侧详情一次，不等用户点“查看详情”；
+   * 终态任务不自动打开，用户手动点才开。
+   */
+  autoOpen?: boolean;
 }) {
   const { task, missing } = useTaskCard(appId, taskId);
   const [expanded, setExpanded] = useState(false);
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!autoOpen || autoOpenedRef.current || !onOpenTask) return;
+    if (!task || task.status !== "active") return;
+    autoOpenedRef.current = true;
+    onOpenTask(taskId);
+  }, [autoOpen, task, taskId, onOpenTask]);
   if (missing) {
     return (
       <Card size="small" title="计划">

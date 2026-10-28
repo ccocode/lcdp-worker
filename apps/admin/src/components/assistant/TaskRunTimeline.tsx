@@ -1,14 +1,15 @@
 /**
  * 任务 run 执行记录时间线（对话框内实时显示）。
  *
- * 订阅 api.assistant.streamTaskRun：首包 snapshot 建初始行，增量
- * 事件按 key upsert（节点行就地更新状态、产物/终审追加），终态
- * 行常驻——失败原因（节点 error、终审未通过）直接留在对话框里，
- * 不再只躺在任务卡账本里。无 run 或订阅失败时渲染空（静默降级，
- * 与 taskRun 的 null 口径一致）。
+ * 对话窗口口径（2026-10-29 用户定）：对话框只显任务状态与步骤，
+ * 加执行中动画；产物版本、终审理由等细节不在对话框展开，统一
+ * 走自动打开的右侧详情。订阅 api.assistant.streamTaskRun：首包
+ * snapshot 建初始行，增量事件按 key upsert（节点行就地更新状态），
+ * 终态行常驻。无 run 或订阅失败时渲染空（静默降级，与 taskRun
+ * 的 null 口径一致）。
  */
 import { useEffect, useState } from "react";
-import { Typography } from "antd";
+import { Spin, Typography } from "antd";
 import { api } from "../../api";
 
 type Tone = "danger" | "success" | "secondary" | undefined;
@@ -233,6 +234,18 @@ function applyEvent(lines: Line[], ev: { type: string; data: unknown }): Line[] 
   }
 }
 
+/** 对话窗口只显状态与步骤：产物、终审细节过滤掉（详情里看）。 */
+function dialogLines(lines: Line[]): Line[] {
+  return lines.filter(
+    (l) =>
+      l.key === "run" ||
+      l.key === "task" ||
+      l.key === "checklist" ||
+      l.key === "terminal" ||
+      l.key.startsWith("node:"),
+  );
+}
+
 export function TaskRunTimeline({
   appId,
   taskId,
@@ -241,14 +254,26 @@ export function TaskRunTimeline({
   taskId: string;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
+  const [runStatus, setRunStatus] = useState<string | null>(null);
   useEffect(() => {
     setLines([]);
+    setRunStatus(null);
     const off = api.assistant.app.streamTaskRun(appId, taskId, (ev) => {
+      const data = (ev.data ?? {}) as Record<string, unknown>;
+      const snap = data.snapshot as RunSnapshot | undefined;
+      const status =
+        snap?.runStatus ??
+        (typeof data.runStatus === "string" ? data.runStatus : null);
+      if (status) setRunStatus(status);
       setLines((prev) => applyEvent(prev, ev));
     });
     return off;
   }, [appId, taskId]);
-  if (lines.length === 0) return null;
+  const shown = dialogLines(lines);
+  if (shown.length === 0) return null;
+  // 执行中动画：run 正在跑（pending/running）时才转；暂停、等验收、
+  // 等绑定、终态都不转——转圈 = 还在执行，不是“窗口卡住”。
+  const executing = runStatus === "pending" || runStatus === "running";
   return (
     <div
       style={{
@@ -263,7 +288,13 @@ export function TaskRunTimeline({
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         执行记录
       </Typography.Text>
-      {lines.map((line) => (
+      {executing && (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Spin size="small" style={{ marginRight: 6 }} />
+          执行中…
+        </Typography.Text>
+      )}
+      {shown.map((line) => (
         <Typography.Text
           key={line.key}
           type={line.tone}

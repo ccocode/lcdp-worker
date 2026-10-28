@@ -822,6 +822,12 @@ export default function ChatPane({
             appId={appId}
             taskId={msg.payload.planCard.taskId}
             onOpenTask={onOpenTask}
+            // 执行中自动打开详情：只对本会话最新一张计划卡生效，
+            // 历史卡不抢详情（2026-10-29 用户定）。
+            autoOpen={messages.reduce(
+              (last, m, i) => (m.payload?.planCard ? i : last),
+              -1,
+            ) === index}
           />
         )}
         {!isUser && appId && msg.payload?.delegationCard && (
