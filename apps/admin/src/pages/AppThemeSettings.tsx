@@ -432,6 +432,29 @@ export default function AppThemeSettings({
     }
   }, [appId, load]);
 
+  /** 删除克隆（测试完即可删）：已绑定时服务端回 409，须先解绑再删。 */
+  const onCloneDelete = useCallback((theme: ThemeItem) => {
+    Modal.confirm({
+      title: `删除克隆 ${theme.id}？`,
+      content: "删除后该克隆及其生效版本一并清除，不可恢复；线上绑定不受影响（已解绑时指针早已回到内置）。",
+      okText: "删除",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: async () => {
+        setCloneActing(`delete:${theme.id}`);
+        try {
+          await api.themes.remove(theme.id);
+          message.success(`克隆已删除：${theme.id}`);
+          await load();
+        } catch (err) {
+          message.error(err instanceof Error ? err.message : "克隆删除失败");
+        } finally {
+          setCloneActing(null);
+        }
+      },
+    });
+  }, [appId, load]);
+
   /** 弹窗内切换 主题/槽位/版本 后，同步 values 编辑初值 */
   const syncBindingValues = useCallback(
     (b: BindingState) => {
@@ -663,6 +686,17 @@ export default function AppThemeSettings({
                 onClick={() => void onClonePreview(t)}
               >
                 预览
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                danger
+                style={{ padding: 0, height: "auto" }}
+                disabled={readOnly}
+                loading={cloneActing === `delete:${t.id}`}
+                onClick={() => onCloneDelete(t)}
+              >
+                删除克隆
               </Button>
             </Space>
           );

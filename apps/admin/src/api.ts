@@ -1112,6 +1112,16 @@ export const api = {
       );
     },
     /**
+     * 删除主题（服务端：仅平台管理员，内置不可删、已绑定回 409）。
+     * 管理台只给克隆行渲染删除入口：克隆是智能体用的中间产物，
+     * 测试完即可删；内置与上传主题不在此入口内。
+     */
+    async remove(themeId: string): Promise<{ ok: boolean; themeId: string }> {
+      return apiFetch(`/admin/themes/${encodeURIComponent(themeId)}`, {
+        method: "DELETE",
+      });
+    },
+    /**
      * multipart 上传主题包 zip：校验失败抛 ThemeUploadError（带逐项 problems）。
      * 归属二选一（第 74 步起服务端必填）：appId → 应用私有通道（服务端按该
      * 应用的运营授权执法，落 scope=app / owner=appId）；domainKey → 领域
