@@ -1307,6 +1307,22 @@ export function EntityForm({ node }: NodeProps) {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 锚定表单（论坛三层门控第 2 层）：新建表单的实体带 parentField、且 URL 参数
+  // 携同名父行 id 时（如 /reply?topic_id=X），先取父行验存在：父行不存在则整
+  // 页改呈不可提交提示，不渲染表单；父行存在则把该字段预填为锚定值。
+  // 发布态（如主题是否正常）不在此层判定——渲染器保持领域无关，
+  // 发布态 enforcement 在服务端（回复创建时校验父主题状态）。
+  const anchorField =
+    !isEdit && !ctx.design && entity?.parentField
+      ? entity.fields.find(
+          (f) =>
+            f.key === entity.parentField && f.type === "ref" && f.refEntity,
+        )
+      : undefined;
+  const anchorParam = anchorField ? ctx.params[anchorField.key] : undefined;
+  const [anchorState, setAnchorState] = useState<
+    "idle" | "checking" | "ok" | "missing"
+  >(anchorParam ? "checking" : "idle");
   // 回填保真（第 84 步片三 / 第 85 步断言真实化）：助手回填后逐字段回读
   // 得出的未落字段（key = 主表字段键；子表类未落为 null）；渲染时按当前值
   // 过滤，用户补齐即消。无法核对的字段单独一桶（标签无处解析、引用选项
@@ -1359,6 +1375,31 @@ export function EntityForm({ node }: NodeProps) {
       alive = false;
     };
     // 仅在挂载时加载一次（children 由 entity 决定，同页内不变）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 锚定校验（与编辑态加载同口径，仅挂载时一次）：锚定父行存在则预填，
+  // 不存在（取不到行或取行失败）则整页改呈不可提交提示。
+  useEffect(() => {
+    if (!entity || !anchorField || !anchorParam) return;
+    let alive = true;
+    (async () => {
+      try {
+        const row = await ctx.adapter.get(anchorField.refEntity!, anchorParam);
+        if (!alive) return;
+        if (row) {
+          setValues((prev) => ({ ...prev, [anchorField.key]: anchorParam }));
+          setAnchorState("ok");
+        } else {
+          setAnchorState("missing");
+        }
+      } catch {
+        if (alive) setAnchorState("missing");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1704,6 +1745,22 @@ export function EntityForm({ node }: NodeProps) {
 
   if (!entity) return <UnboundSourceAlert />;
   if (loading) return <LoadingState block />;
+  if (anchorState === "checking") return <LoadingState block />;
+  if (anchorState === "missing") {
+    return (
+      <div style={{ padding: 24 }}>
+        <Alert
+          type="warning"
+          message="关联内容不存在，无法提交"
+          description="链接指向的内容已被删除或不存在，请返回列表重新选择。"
+          style={{ marginBottom: 16 }}
+        />
+        <Button type="primary" onClick={() => ctx.adapter.navigate(listRoute)}>
+          返回列表
+        </Button>
+      </div>
+    );
+  }
 
   const save = async () => {
     setSaving(true);
