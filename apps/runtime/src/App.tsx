@@ -1818,16 +1818,10 @@ function SiteHeader({
 
 /**
  * 站点型页脚：居中一行文案（配置文案或版权占位）。
- * 公开外壳可传入 onStaffLogin：员工入口不与页眉会员区并列（用户 2026-10-17 拍板），
- * 只在页脚以低调文字链呈现；登录态外壳不传、行为不变。
+ * 公共页页脚不再设员工入口（用户 2026-10-30 定：C 端应用出现员工入口很变扭）；
+ * 员工走应用登录页 / 员工壳登录，不再经公共页页脚进入。
  */
-function SiteFooter({
-  text,
-  onStaffLogin,
-}: {
-  text: string;
-  onStaffLogin?: () => void;
-}) {
+function SiteFooter({ text }: { text: string }) {
   return (
     <Layout.Footer
       style={{
@@ -1839,18 +1833,6 @@ function SiteFooter({
       }}
     >
       <div>{text}</div>
-      {onStaffLogin && (
-        <div style={{ marginTop: 4 }}>
-          <Button
-            type="link"
-            size="small"
-            onClick={onStaffLogin}
-            style={{ color: "#bfbfbf", fontSize: 12, padding: 0, height: "auto" }}
-          >
-            员工登录
-          </Button>
-        </div>
-      )}
     </Layout.Footer>
   );
 }
@@ -2520,7 +2502,7 @@ function MemberAuthModal({
   );
 }
 
-/** 页眉会员区：已登录显示昵称/标识 + 退出；未登录显示「会员登录」「注册」。站点页眉只留会员区，员工入口在页脚（SiteFooter 的低调文字链） */
+/** 页眉会员区：已登录显示昵称/标识 + 退出；未登录显示「会员登录」「注册」。站点页眉只留会员区，公共页页脚不再设员工入口（用户 2026-10-30 定） */
 function MemberArea({
   session,
   small,
@@ -3254,7 +3236,7 @@ function PublicShell({
     }
   }, [clearMemberSession, memberSso]);
 
-  /** 页眉右侧区：仅会员区（启用会员页时）；员工「登录」已按入口分离口径移至页脚文字链 */
+  /** 页眉右侧区：仅会员区（启用会员页时）；公共页页脚不再设员工入口（用户 2026-10-30 定） */
   const memberArea = (small?: boolean, links?: boolean) =>
     hasMemberPages ? (
       <MemberArea
@@ -3309,7 +3291,7 @@ function PublicShell({
           >
             {pageContent}
           </Layout.Content>
-          <SiteFooter text={siteFooterText(cfg, brand)} onStaffLogin={onLogin} />
+          <SiteFooter text={siteFooterText(cfg, brand)} />
         </Layout>
         {memberModal}
       </ConfigProvider>
