@@ -151,6 +151,9 @@ function readThemePreview(p: AdminTaskRunPending): {
   styleSummary: string | null;
   pages: string[];
   changes: string[];
+  previewUrl: string | null;
+  previewExpiresAt: string | null;
+  previewError: string | null;
 } {
   const inner = p.preview ?? null;
   const text = (v: unknown): string | null =>
@@ -166,6 +169,10 @@ function readThemePreview(p: AdminTaskRunPending): {
     styleSummary: text(inner?.styleSummary) ?? text(p.styleSummary),
     pages: pages.length > 0 ? pages : list(p.pages),
     changes: changes.length > 0 ? changes : list(p.changes),
+    previewUrl: text(inner?.previewUrl) ?? text(p.previewUrl),
+    previewExpiresAt:
+      text(inner?.previewExpiresAt) ?? text(p.previewExpiresAt),
+    previewError: text(inner?.previewError) ?? text(p.previewError),
   };
 }
 
@@ -285,6 +292,7 @@ export default function TaskDetail({
       | "retry-nodes"
       | "preview-accept"
       | "preview-reject"
+      | "preview-reissue"
       | "bind-approve"
       | "bind-reject",
   ) => {
@@ -298,6 +306,8 @@ export default function TaskDetail({
         await api.assistant.app.acceptPreview(appId, task.id);
       else if (kind === "preview-reject")
         await api.assistant.app.rejectPreview(appId, task.id);
+      else if (kind === "preview-reissue")
+        await api.assistant.app.reissuePreview(appId, task.id);
       else if (kind === "bind-approve")
         await api.assistant.app.approveBind(appId, task.id);
       else await api.assistant.app.rejectBind(appId, task.id);
@@ -765,6 +775,59 @@ export default function TaskDetail({
                       >
                         暂不验收时，草稿会保留在原处。
                       </Typography.Text>
+                      {preview.previewUrl ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                          }}
+                        >
+                          <Button
+                            type="primary"
+                            size="small"
+                            href={preview.previewUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            disabled={acting !== null}
+                          >
+                            打开预览
+                          </Button>
+                          <Typography.Text
+                            type="secondary"
+                            style={{ fontSize: 12 }}
+                          >
+                            预览与线上绑定隔离，不影响线上呈现
+                          </Typography.Text>
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                          }}
+                        >
+                          <Typography.Text
+                            type="warning"
+                            style={{ fontSize: 12 }}
+                          >
+                            预览地址暂不可用
+                            {preview.previewError
+                              ? `：${preview.previewError}`
+                              : ""}
+                            ，请重新签发后再预览验收。
+                          </Typography.Text>
+                          <Button
+                            size="small"
+                            loading={acting === "preview-reissue"}
+                            disabled={acting !== null}
+                            onClick={() => void runAction("preview-reissue")}
+                          >
+                            重新签发预览
+                          </Button>
+                        </div>
+                      )}
                       <div style={{ display: "flex", gap: 8 }}>
                         <Button
                           type="primary"

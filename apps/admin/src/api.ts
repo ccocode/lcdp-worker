@@ -579,11 +579,18 @@ export interface AdminTaskRunPending {
   styleSummary?: string | null;
   pages?: string[] | null;
   changes?: string[] | null;
+  /** 机械签发的预览地址（2026-10-29 修复）与签发失败原因 */
+  previewUrl?: string | null;
+  previewExpiresAt?: string | null;
+  previewError?: string | null;
   preview?: {
     themeName?: string | null;
     styleSummary?: string | null;
     pages?: string[] | null;
     changes?: string[] | null;
+    previewUrl?: string | null;
+    previewExpiresAt?: string | null;
+    previewError?: string | null;
   } | null;
 }
 
@@ -2230,6 +2237,28 @@ export const api = {
           taskStatus?: string | null;
         }>(
           `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/preview/reject`,
+          { method: "POST" },
+        );
+        return res && typeof res === "object" ? res : {};
+      },
+      async reissuePreview(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        ok?: boolean;
+        previewUrl?: string | null;
+        previewExpiresAt?: string | null;
+        themeId?: string | null;
+        version?: string | null;
+      }> {
+        const res = await apiFetch<{
+          ok?: boolean;
+          previewUrl?: string | null;
+          previewExpiresAt?: string | null;
+          themeId?: string | null;
+          version?: string | null;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/preview/reissue`,
           { method: "POST" },
         );
         return res && typeof res === "object" ? res : {};

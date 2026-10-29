@@ -133,6 +133,9 @@ function readDialogPreview(p: AdminTaskRunPending): {
   styleSummary: string | null;
   pages: string[];
   changes: string[];
+  previewUrl: string | null;
+  previewExpiresAt: string | null;
+  previewError: string | null;
 } {
   const inner = p.preview ?? null;
   const text = (v: unknown): string | null =>
@@ -148,6 +151,10 @@ function readDialogPreview(p: AdminTaskRunPending): {
     styleSummary: text(inner?.styleSummary) ?? text(p.styleSummary),
     pages: pages.length > 0 ? pages : list(p.pages),
     changes: changes.length > 0 ? changes : list(p.changes),
+    previewUrl: text(inner?.previewUrl) ?? text(p.previewUrl),
+    previewExpiresAt:
+      text(inner?.previewExpiresAt) ?? text(p.previewExpiresAt),
+    previewError: text(inner?.previewError) ?? text(p.previewError),
   };
 }
 
@@ -278,7 +285,12 @@ export function PlanMessageCard({
   const [acting, setActing] = useState<string | null>(null);
   const [actError, setActError] = useState<string | null>(null);
   const act = async (
-    kind: "preview-accept" | "preview-reject" | "bind-approve" | "bind-reject",
+    kind:
+      | "preview-accept"
+      | "preview-reject"
+      | "preview-reissue"
+      | "bind-approve"
+      | "bind-reject",
   ) => {
     if (acting) return;
     setActing(kind);
@@ -288,6 +300,8 @@ export function PlanMessageCard({
         await api.assistant.app.acceptPreview(appId, taskId);
       else if (kind === "preview-reject")
         await api.assistant.app.rejectPreview(appId, taskId);
+      else if (kind === "preview-reissue")
+        await api.assistant.app.reissuePreview(appId, taskId);
       else if (kind === "bind-approve")
         await api.assistant.app.approveBind(appId, taskId);
       else await api.assistant.app.rejectBind(appId, taskId);
@@ -440,6 +454,43 @@ export function PlanMessageCard({
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             暂不验收时，草稿会保留在原处；请在输入框告诉我哪里有问题，我按你的意见改。
           </Typography.Text>
+          {preview?.previewUrl ? (
+            <div
+              style={{ display: "flex", gap: 8, alignItems: "center" }}
+            >
+              <Button
+                type="primary"
+                size="small"
+                href={preview.previewUrl}
+                target="_blank"
+                rel="noreferrer"
+                disabled={acting !== null}
+              >
+                打开预览
+              </Button>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                预览与线上绑定隔离，不影响线上呈现
+              </Typography.Text>
+            </div>
+          ) : (
+            <div
+              style={{ display: "flex", gap: 8, alignItems: "center" }}
+            >
+              <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                预览地址暂不可用
+                {preview?.previewError ? `：${preview.previewError}` : ""}
+                ，请重新签发后再预览验收。
+              </Typography.Text>
+              <Button
+                size="small"
+                loading={acting === "preview-reissue"}
+                disabled={acting !== null}
+                onClick={() => void act("preview-reissue")}
+              >
+                重新签发预览
+              </Button>
+            </div>
+          )}
           {actError && (
             <Typography.Text type="danger" style={{ fontSize: 12 }}>
               {actError}
