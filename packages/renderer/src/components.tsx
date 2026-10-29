@@ -1310,8 +1310,9 @@ export function EntityForm({ node }: NodeProps) {
   // 锚定表单（论坛三层门控第 2 层）：新建表单的实体带 parentField、且 URL 参数
   // 携同名父行 id 时（如 /reply?topic_id=X），先取父行验存在：父行不存在则整
   // 页改呈不可提交提示，不渲染表单；父行存在则把该字段预填为锚定值。
-  // 发布态（如主题是否正常）不在此层判定——渲染器保持领域无关，
-  // 发布态 enforcement 在服务端（回复创建时校验父主题状态）。
+  // 设计页可再以 anchorGuard 追加状态门（设计变更 v5 口径）：父行状态字段
+  // 不等于给定值时同样不渲染表单、改呈 blockedText（如已下架主题不可回复）。
+  // 发布态 enforcement 的兜底在服务端（回复创建时校验父主题状态）。
   const anchorField =
     !isEdit && !ctx.design && entity?.parentField
       ? entity.fields.find(
@@ -1320,8 +1321,22 @@ export function EntityForm({ node }: NodeProps) {
         )
       : undefined;
   const anchorParam = anchorField ? ctx.params[anchorField.key] : undefined;
+  const anchorGuard = (() => {
+    const g = (node.props as Record<string, unknown> | undefined)?.anchorGuard;
+    if (!g || typeof g !== "object") return undefined;
+    const statusField = (g as { statusField?: unknown }).statusField;
+    const statusValue = (g as { statusValue?: unknown }).statusValue;
+    const blockedText = (g as { blockedText?: unknown }).blockedText;
+    if (typeof statusField !== "string" || typeof statusValue !== "string")
+      return undefined;
+    return {
+      statusField,
+      statusValue,
+      blockedText: typeof blockedText === "string" ? blockedText : undefined,
+    };
+  })();
   const [anchorState, setAnchorState] = useState<
-    "idle" | "checking" | "ok" | "missing"
+    "idle" | "checking" | "ok" | "missing" | "blocked"
   >(anchorParam ? "checking" : "idle");
   // 回填保真（第 84 步片三 / 第 85 步断言真实化）：助手回填后逐字段回读
   // 得出的未落字段（key = 主表字段键；子表类未落为 null）；渲染时按当前值
@@ -1379,7 +1394,8 @@ export function EntityForm({ node }: NodeProps) {
   }, []);
 
   // 锚定校验（与编辑态加载同口径，仅挂载时一次）：锚定父行存在则预填，
-  // 不存在（取不到行或取行失败）则整页改呈不可提交提示。
+  // 不存在（取不到行或取行失败）则整页改呈不可提交提示；
+  // 设计页带 anchorGuard 时，父行状态不符同样改呈 blockedText、不渲染表单。
   useEffect(() => {
     if (!entity || !anchorField || !anchorParam) return;
     let alive = true;
@@ -1387,11 +1403,16 @@ export function EntityForm({ node }: NodeProps) {
       try {
         const row = await ctx.adapter.get(anchorField.refEntity!, anchorParam);
         if (!alive) return;
-        if (row) {
+        if (!row) {
+          setAnchorState("missing");
+        } else if (
+          anchorGuard &&
+          row[anchorGuard.statusField] !== anchorGuard.statusValue
+        ) {
+          setAnchorState("blocked");
+        } else {
           setValues((prev) => ({ ...prev, [anchorField.key]: anchorParam }));
           setAnchorState("ok");
-        } else {
-          setAnchorState("missing");
         }
       } catch {
         if (alive) setAnchorState("missing");
@@ -1746,13 +1767,22 @@ export function EntityForm({ node }: NodeProps) {
   if (!entity) return <UnboundSourceAlert />;
   if (loading) return <LoadingState block />;
   if (anchorState === "checking") return <LoadingState block />;
-  if (anchorState === "missing") {
+  if (anchorState === "missing" || anchorState === "blocked") {
+    const blocked = anchorState === "blocked";
     return (
       <div style={{ padding: 24 }}>
         <Alert
           type="warning"
-          message="关联内容不存在，无法提交"
-          description="链接指向的内容已被删除或不存在，请返回列表重新选择。"
+          message={
+            blocked
+              ? (anchorGuard?.blockedText ?? "关联内容暂不可提交")
+              : "关联内容不存在，无法提交"
+          }
+          description={
+            blocked
+              ? undefined
+              : "链接指向的内容已被删除或不存在，请返回列表重新选择。"
+          }
           style={{ marginBottom: 16 }}
         />
         <Button type="primary" onClick={() => ctx.adapter.navigate(listRoute)}>
