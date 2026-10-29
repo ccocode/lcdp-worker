@@ -1820,16 +1820,25 @@ function SiteHeader({
  * 站点型页脚：居中一行文案（配置文案或版权占位）。
  * 公共页页脚不再设员工入口（用户 2026-10-30 定：C 端应用出现员工入口很变扭）；
  * 员工走应用登录页 / 员工壳登录，不再经公共页页脚进入。
+ * themeFooter 为公共壳变体（用户 2026-10-30 定：/post、/reply 走新主题风格）：
+ * 与主题壳 .bt-foot 同口径（白底、13px、20px 内边距）；员工壳不传，行为不变。
  */
-function SiteFooter({ text }: { text: string }) {
+function SiteFooter({
+  text,
+  themeFooter,
+}: {
+  text: string;
+  themeFooter?: boolean;
+}) {
   return (
     <Layout.Footer
       style={{
         textAlign: "center",
         color: "#6b7280",
-        background: "#f7f8fa",
+        background: themeFooter ? "#fff" : "#f7f8fa",
         borderTop: "1px solid #e6e8ec",
-        padding: "18px 24px",
+        padding: themeFooter ? "20px" : "18px 24px",
+        fontSize: themeFooter ? 13 : undefined,
       }}
     >
       <div>{text}</div>
@@ -3108,7 +3117,7 @@ function PublicShell({
 
   const menu = assembleMenu(primary.pages, primary.data.entities);
   const current = resolveCurrentPage(primary.pages, menu, inPath);
-  const token = themeTokenOf(primary.appConfig);
+  const token = themeTokenOf(primary.appConfig, "c-end");
 
   // 呈现门控与公开策略对齐：可读实体只读、公开表单实体可新建，避免露出无权入口（服务端仍强制）
   const access = useMemo(() => {
@@ -3267,7 +3276,7 @@ function PublicShell({
     const brand = brandTextOf(cfg, primary.name);
     return (
       <ConfigProvider locale={zhCN} theme={{ token }}>
-        <Layout style={{ minHeight: "100vh" }}>
+        <Layout style={{ minHeight: "100vh", background: "#fff" }}>
           <SiteHeader
             brand={brand}
             navItems={flatNavItems(menu.items)}
@@ -3285,13 +3294,16 @@ function PublicShell({
           />
           <Layout.Content
             style={{
-              padding: device === "mobile" ? "16px 12px" : "24px 28px",
+              padding: device === "mobile" ? "16px 12px" : "28px 20px",
               background: "#fff",
+              width: "100%",
+              maxWidth: 1080,
+              margin: "0 auto",
             }}
           >
             {pageContent}
           </Layout.Content>
-          <SiteFooter text={siteFooterText(cfg, brand)} />
+          <SiteFooter text={siteFooterText(cfg, brand)} themeFooter />
         </Layout>
         {memberModal}
       </ConfigProvider>
@@ -3777,9 +3789,10 @@ function siteThemeTokensOf(): SiteThemeTokens | null {
 /** 主题令牌：应用配置里的 colorPrimary / borderRadius 注入 antd 主题 */
 function themeTokenOf(appConfig: {
   theme: Record<string, unknown>;
-} | null): {
+} | null, baseline: "b-end" | "c-end" = "b-end"): {
   colorPrimary?: string;
   borderRadius?: number;
+  borderRadiusLG?: number;
   colorBorder?: string;
   colorBgLayout?: string;
   colorBgContainer?: string;
@@ -3788,11 +3801,14 @@ function themeTokenOf(appConfig: {
   fontFamily?: string;
 } {
   const themeCfg = appConfig?.theme ?? {};
-  // B 端视觉基线默认值（第 49 步立、现由 @lcdp/ui 令牌源统一供值，第 73 步）：
-  // 应用主题未声明时按基线令牌走，声明了以应用为准
+  // 视觉基线默认值（第 49 步立、现由 @lcdp/ui 令牌源统一供值，第 73 步）：
+  // 应用主题未声明时按基线令牌走，声明了以应用为准。
+  // 公共壳用 C 端基线（用户 2026-10-30 定：/post、/reply 走新主题风格）：
+  // 圆角取主题半径 10（B 端基线为 6）；员工壳不传 baseline，行为不变。
   const token: {
     colorPrimary?: string;
     borderRadius?: number;
+    borderRadiusLG?: number;
     colorBorder?: string;
     colorBgLayout?: string;
     colorBgContainer?: string;
@@ -3801,9 +3817,12 @@ function themeTokenOf(appConfig: {
     fontFamily?: string;
   } = {
     colorPrimary: runtimeTokens.colorPrimary,
-    borderRadius: tokens.borderRadius,
+    borderRadius: baseline === "c-end" ? 10 : tokens.borderRadius,
     colorBorder: runtimeTokens.colorBorder,
   };
+  if (baseline === "c-end") {
+    token.borderRadiusLG = 10;
+  }
   if (typeof themeCfg.colorPrimary === "string") {
     token.colorPrimary = themeCfg.colorPrimary;
   }
