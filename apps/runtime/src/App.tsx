@@ -52,6 +52,7 @@ import type {
 } from "./api.js";
 import AssistantPanel from "./AssistantPanel.js";
 import SupportWidget, { SupportAutoMount } from "./SupportWidget.js";
+import { ErrorStatePage, statusToVariant } from "./ErrorState.js";
 import {
   EMPTY_MEMBER_POLICY,
   SSO_APP_KEY,
@@ -3159,7 +3160,11 @@ function PublicShell({
       theme={primary.appConfig?.theme}
     />
   ) : (
-    <Typography.Text type="secondary">页面不存在：{inPath}</Typography.Text>
+    <ErrorStatePage
+      variant="404"
+      onHome={() => goPage("/")}
+      onBack={() => window.history.back()}
+    />
   );
 
   /** 当前页是否会员页：会员页登录后以会员适配器渲染，未登录呈占位引导（不跳员工登录页） */
@@ -3405,7 +3410,10 @@ function EntryView({
   device: Device;
 }) {
   const [site, setSite] = useState<SiteInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{
+    message: string;
+    status?: number;
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -3416,7 +3424,10 @@ function EntryView({
       })
       .catch((err) => {
         if (alive)
-          setError(err instanceof Error ? err.message : String(err));
+          setError({
+            message: err instanceof Error ? err.message : String(err),
+            status: (err as { status?: number } | null)?.status,
+          });
       });
     return () => {
       alive = false;
@@ -3429,10 +3440,13 @@ function EntryView({
 
   if (error) {
     return (
-      <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
-        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
-        <Button onClick={onLogout}>退出登录</Button>
-      </div>
+      <ErrorStatePage
+        variant={statusToVariant(error.status)}
+        detail={error.message}
+        fullPage
+        onHome={() => window.location.assign("/")}
+        onRetry={() => window.location.reload()}
+      />
     );
   }
   if (!site || site.mode === "redirect") {
@@ -3878,7 +3892,10 @@ function AppView({
   const primaryAppId = apps[0]?.id ?? "";
   const appIdsKey = apps.map((a) => a.id).join(",");
   const [loaded, setLoaded] = useState<LoadedApp[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{
+    message: string;
+    status?: number;
+  } | null>(null);
   /** 待办数（菜单 Badge）：多应用时为各应用待办之和 */
   const [todoCount, setTodoCount] = useState(0);
   /** 待办/助手跟随的当前应用：随当前页归属更新；停在外壳级视图（#/flow）时保持最近归属 */
@@ -3921,7 +3938,11 @@ function AppView({
         setLoaded(results.filter((r): r is LoadedApp => r !== null));
       }
     })().catch((err: unknown) => {
-      if (alive) setError(err instanceof Error ? err.message : String(err));
+      if (alive)
+        setError({
+          message: err instanceof Error ? err.message : String(err),
+          status: (err as { status?: number } | null)?.status,
+        });
     });
     return () => {
       alive = false;
@@ -4007,16 +4028,15 @@ function AppView({
 
   if (error) {
     return (
-      <div style={{ maxWidth: 720, margin: "60px auto", padding: "0 24px" }}>
-        <Alert type="error" message={error} style={{ marginBottom: 12 }} />
-        <Button
-          onClick={() => {
-            navigateTo(preview ? "/" : basePrefix || "/");
-          }}
-        >
-          返回入口首页
-        </Button>
-      </div>
+      <ErrorStatePage
+        variant={statusToVariant(error.status)}
+        detail={error.message}
+        fullPage
+        onHome={() => {
+          navigateTo(preview ? "/" : basePrefix || "/");
+        }}
+        onRetry={() => window.location.reload()}
+      />
     );
   }
   if (!loaded || !union || !mergedMenu) {
@@ -4176,7 +4196,11 @@ function AppView({
       theme={currentLoaded.snapshot.appConfig?.theme}
     />
   ) : (
-    <Typography.Text type="secondary">页面不存在：{inPath}</Typography.Text>
+    <ErrorStatePage
+      variant="404"
+      onHome={() => goPage("/")}
+      onBack={() => window.history.back()}
+    />
   );
 
   /** 底部导航条目（M13 移动外壳）：待办中心（角标 = 多应用待办汇总，与侧栏同口径）+ 菜单模型拍平 */
