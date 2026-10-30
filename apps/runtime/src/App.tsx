@@ -395,7 +395,7 @@ function LoginView({
         </Typography.Title>
         <Typography.Paragraph
           type="secondary"
-          style={{ fontSize: 13, marginBottom: 20 }}
+          style={{ fontSize: 14, marginBottom: 20 }}
         >
           {appName
             ? `登录${appName}的员工系统（管理员账号在初始化向导中设置）`
@@ -693,38 +693,63 @@ function SsoCallbackPage({ params }: { params: Record<string, string> }) {
   );
 }
 
-/** 会员中心页组外框（简洁内置页，呈现治理不在本期范围） */
+/**
+ * 会员中心外壳（D5 C 档）：内嵌 c-end 令牌 Provider（圆角 10、字号 16、
+ * 边框 #e6e8ec、底色 #f7f8fa），与员工壳 B 档根令牌隔离；按钮不加字距
+ * 显式声明（防嵌套 Provider 回落默认）。外壳 1080 居中、内边距 28/20；
+ * narrow 为表单页（登录／注册／授权确认／退出提示）居中窄卡 520，
+ * 我的授权用整幅 1080 列表。
+ */
 function CenterFrame({
   subtitle,
   children,
+  narrow,
 }: {
   subtitle: string;
   children: ReactNode;
+  narrow?: boolean;
 }) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#f7f8fa",
-        padding: 16,
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        token: {
+          ...themeTokenOf(null, "c-end"),
+          colorBgLayout: runtimeTokens.colorBgLayout,
+          colorBgContainer: "#ffffff",
+        },
       }}
+      button={{ autoInsertSpace: false }}
     >
-      <Card style={{ width: 400, maxWidth: "100%" }}>
-        <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
-          会员中心
-        </Typography.Title>
-        <Typography.Paragraph
-          type="secondary"
-          style={{ fontSize: 13, marginBottom: 16 }}
-        >
-          {subtitle}
-        </Typography.Paragraph>
-        {children}
-      </Card>
-    </div>
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#f7f8fa",
+          padding: "28px 20px",
+        }}
+      >
+        <div style={{ maxWidth: 1080, margin: "0 auto" }}>
+          <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
+            会员中心
+          </Typography.Title>
+          <Typography.Paragraph
+            type="secondary"
+            style={{ fontSize: 14, marginBottom: 16 }}
+          >
+            {subtitle}
+          </Typography.Paragraph>
+          <Card
+            style={
+              narrow
+                ? { width: 520, maxWidth: "100%", margin: "0 auto" }
+                : { width: "100%" }
+            }
+          >
+            {children}
+          </Card>
+        </div>
+      </div>
+    </ConfigProvider>
   );
 }
 
@@ -814,7 +839,7 @@ function CenterLoginPage({
 
   if (!appId) {
     return (
-      <CenterFrame subtitle="统一会员账号登录">
+      <CenterFrame subtitle="统一会员账号登录" narrow>
         <Alert
           type="info"
           message="请从要访问的应用进入登录"
@@ -869,7 +894,7 @@ function CenterLoginPage({
   };
 
   return (
-    <CenterFrame subtitle="登录一次，通行已接入的全部应用">
+    <CenterFrame subtitle="登录一次，通行已接入的全部应用" narrow>
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 16 }} />
       )}
@@ -899,7 +924,7 @@ function CenterLoginPage({
         </Button>
       </Form>
       <div style={{ marginTop: 12, textAlign: "center" }}>
-        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 14 }}>
           还没有账号？
         </Typography.Text>
         <Button
@@ -942,7 +967,7 @@ function CenterRegisterPage({
 
   if (!appId) {
     return (
-      <CenterFrame subtitle="注册会员账号">
+      <CenterFrame subtitle="注册会员账号" narrow>
         <Alert
           type="info"
           message="请从要访问的应用进入注册"
@@ -1048,7 +1073,7 @@ function CenterRegisterPage({
   };
 
   return (
-    <CenterFrame subtitle="注册后即可通行已接入的全部应用">
+    <CenterFrame subtitle="注册后即可通行已接入的全部应用" narrow>
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 16 }} />
       )}
@@ -1098,7 +1123,7 @@ function CenterRegisterPage({
         </Button>
       </Form>
       <div style={{ marginTop: 12, textAlign: "center" }}>
-        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 14 }}>
           已有账号？
         </Typography.Text>
         <Button
@@ -1215,7 +1240,7 @@ function CenterAuthorizePage({
 
   if (phase === "checking") {
     return (
-      <CenterFrame subtitle="正在确认授权…">
+      <CenterFrame subtitle="正在确认授权…" narrow>
         <div style={{ textAlign: "center", padding: "16px 0" }}>
           <Spin tip="正在确认授权…" />
         </div>
@@ -1224,13 +1249,13 @@ function CenterAuthorizePage({
   }
   if (phase === "error") {
     return (
-      <CenterFrame subtitle="授权未完成">
+      <CenterFrame subtitle="授权未完成" narrow>
         <Alert type="error" message={error ?? "授权失败，请重试"} />
       </CenterFrame>
     );
   }
   return (
-    <CenterFrame subtitle="应用授权确认">
+    <CenterFrame subtitle="应用授权确认" narrow>
       {error && (
         <Alert type="error" message={error} style={{ marginBottom: 16 }} />
       )}
@@ -1238,19 +1263,41 @@ function CenterAuthorizePage({
         应用「<Typography.Text strong>{appName}</Typography.Text>
         」请求使用你的会员账号登录。授权后，该应用将获得你的基本身份信息：
       </Typography.Paragraph>
-      <Descriptions column={1} size="small" bordered style={{ marginBottom: 16 }}>
-        <Descriptions.Item label="共享信息">
-          昵称、账号标识、头像（如有）
-        </Descriptions.Item>
-        <Descriptions.Item label="当前账号">
-          {session?.member.displayName || session?.member.identifier || "—"}
-          {session?.member.displayName && (
-            <Typography.Text type="secondary">
-              {`（${session.member.identifier}）`}
-            </Typography.Text>
-          )}
-        </Descriptions.Item>
-      </Descriptions>
+      <div
+        style={{
+          border: "1px solid #e6e8ec",
+          borderRadius: 10,
+          padding: "12px 16px",
+          marginBottom: 16,
+        }}
+      >
+        <div style={{ display: "flex", gap: 12, padding: "4px 0" }}>
+          <Typography.Text type="secondary" style={{ flexShrink: 0 }}>
+            共享信息
+          </Typography.Text>
+          <Typography.Text>昵称、账号标识、头像（如有）</Typography.Text>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            padding: "4px 0",
+            borderTop: "1px solid #e6e8ec",
+          }}
+        >
+          <Typography.Text type="secondary" style={{ flexShrink: 0 }}>
+            当前账号
+          </Typography.Text>
+          <Typography.Text>
+            {session?.member.displayName || session?.member.identifier || "—"}
+            {session?.member.displayName && (
+              <Typography.Text type="secondary">
+                {`（${session.member.identifier}）`}
+              </Typography.Text>
+            )}
+          </Typography.Text>
+        </div>
+      </div>
       <Space direction="vertical" style={{ width: "100%" }} size={8}>
         <Button type="primary" block loading={busy} onClick={() => void confirm()}>
           授权并继续
@@ -1261,7 +1308,7 @@ function CenterAuthorizePage({
       </Space>
       <Typography.Paragraph
         type="secondary"
-        style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
+        style={{ fontSize: 14, marginTop: 12, marginBottom: 0 }}
       >
         授权后再次访问该应用将不再询问；可在会员中心「我的授权」中随时撤销。
       </Typography.Paragraph>
@@ -1314,13 +1361,13 @@ function CenterLogoutPage({ redirectUri }: { redirectUri: string }) {
   }, []);
   if (!done) {
     return (
-      <CenterFrame subtitle="退出登录">
+      <CenterFrame subtitle="退出登录" narrow>
         <Typography.Paragraph>正在退出…</Typography.Paragraph>
       </CenterFrame>
     );
   }
   return (
-    <CenterFrame subtitle="退出登录">
+    <CenterFrame subtitle="退出登录" narrow>
       <Alert
         type="success"
         message="已退出会员中心"
@@ -1435,7 +1482,7 @@ function CenterConsentsPage() {
         <Typography.Text>
           {session.member.displayName || session.member.identifier}
           {session.member.displayName && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 14 }}>
               {`（${session.member.identifier}）`}
             </Typography.Text>
           )}
@@ -1468,7 +1515,7 @@ function CenterConsentsPage() {
                 <div>
                   <Typography.Text strong>{it.appName}</Typography.Text>
                   <br />
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 14 }}>
                     授权于 {fmtTime(it.grantedAt)}
                   </Typography.Text>
                 </div>
@@ -1487,7 +1534,7 @@ function CenterConsentsPage() {
       )}
       <Typography.Paragraph
         type="secondary"
-        style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
+        style={{ fontSize: 14, marginTop: 12, marginBottom: 0 }}
       >
         撤销后，该应用下次登录将重新请求授权；已登录的会话按其有效期自然过期。
       </Typography.Paragraph>
@@ -3371,7 +3418,7 @@ function PublicShell({
   if (isSiteShell(cfg)) {
     const brand = brandTextOf(cfg, primary.name);
     return (
-      <ConfigProvider locale={zhCN} theme={{ token }}>
+      <ConfigProvider locale={zhCN} theme={{ token }} button={{ autoInsertSpace: false }}>
         <Layout style={{ minHeight: "100vh", background: "#fff" }}>
           <SiteHeader
             brand={brand}
@@ -3410,7 +3457,7 @@ function PublicShell({
      站点型公开面不套用底部导航（上方 site 分支仅调整窄屏内边距） */
   if (device === "mobile") {
     return (
-      <ConfigProvider locale={zhCN} theme={{ token }}>
+      <ConfigProvider locale={zhCN} theme={{ token }} button={{ autoInsertSpace: false }}>
         <MobileShell
           title={primary.name}
           entries={flattenMenuEntries(menu.items)}
@@ -3428,7 +3475,7 @@ function PublicShell({
   }
 
   return (
-    <ConfigProvider locale={zhCN} theme={{ token }}>
+    <ConfigProvider locale={zhCN} theme={{ token }} button={{ autoInsertSpace: false }}>
       <Layout style={{ minHeight: "100vh" }}>
         <Layout.Header
           style={{
