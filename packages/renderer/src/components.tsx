@@ -1296,7 +1296,14 @@ export function EntityForm({ node }: NodeProps) {
   const canCreate = !ctx.access || (accessActions?.includes("create") ?? false);
   const canUpdate = !ctx.access || (accessActions?.includes("update") ?? false);
   const canDelete = !ctx.access || (accessActions?.includes("delete") ?? false);
-  const children = entity ? childEntities(ctx.dataSchema, entity.key) : [];
+  // 表单节点可选 hideChildren：该表单不内嵌维护任何子实体明细（如论坛发表主题页
+  // 不应出现“添加回复”——发主题与回帖是两条分开的流程，主题未创建时更无回复可言）。
+  // 缺省关闭（保持主子表事务式保存）；置 true 时子表加载、保存、回填与渲染一并跳过。
+  const hideChildren =
+    (node.props as Record<string, unknown> | undefined)?.hideChildren ===
+    true;
+  const children =
+    !hideChildren && entity ? childEntities(ctx.dataSchema, entity.key) : [];
   /* 移动端单列呈现（M13）：仅 mobile 且呈现解析为 single 时启用；桌面解析恒为 standard、走原路径 */
   const singleMode =
     ctx.device === "mobile" &&
