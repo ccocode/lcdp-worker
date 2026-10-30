@@ -392,6 +392,25 @@ const PASSED_STATUS = new Set([
   "checked",
 ]);
 
+/**
+ * 新会话问候语（2026-10-31 用户定）：只在无任何消息的空态显示、不落库，
+ * 用户一说话自然消失；时间取打开时的用户本地时间三段，身份随上下文
+ * （平台助手 / 运营助手），能力行只列该上下文能办的事。应用上下文不带
+ * 应用名——ChatPane 只收到 appId、没有应用名，身份以运营助手画像为准。
+ */
+function greetingFor(appId: string | null): string {
+  const hour = new Date().getHours();
+  const hello =
+    hour >= 6 && hour < 12
+      ? "早上好"
+      : hour >= 12 && hour < 18
+        ? "下午好"
+        : "晚上好";
+  return appId
+    ? `${hello}，我是运营助手，可以帮你查本应用的数据、办流程、做主题。`
+    : `${hello}，我是平台助手，可以帮你管理应用、查看全平台用量，也可以办理各应用的事项。`;
+}
+
 export default function ChatPane({
   appId,
   fresh,
@@ -962,11 +981,7 @@ export default function ChatPane({
       >
         {messages.length === 0 && !sending ? (
           <Empty
-            description={
-              appId
-                ? "查本应用的数据、办业务都可以问我"
-                : "平台级事项可以问我"
-            }
+            description={greetingFor(appId)}
             style={{ marginTop: 48 }}
           />
         ) : (

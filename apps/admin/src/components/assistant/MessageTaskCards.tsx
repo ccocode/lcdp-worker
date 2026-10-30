@@ -374,14 +374,22 @@ export function PlanMessageCard({
               ? "red"
               : runStatus === "paused"
                 ? "orange"
-                : undefined
+                : runStatus === "awaiting_preview"
+                  ? "blue"
+                  : runStatus === "awaiting_bind"
+                    ? "purple"
+                    : undefined
           }
         >
           {runStatus === "failed"
             ? "已失败"
             : runStatus === "paused"
               ? "已暂停"
-              : (TASK_STATUS_LABELS[task.status] ?? task.status)}
+              : runStatus === "awaiting_preview"
+                ? "等你验收预览"
+                : runStatus === "awaiting_bind"
+                  ? "等你确认绑定"
+                  : (TASK_STATUS_LABELS[task.status] ?? task.status)}
         </Tag>
       }
       style={{
