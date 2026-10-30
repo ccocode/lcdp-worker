@@ -34,10 +34,10 @@ import {
  * 第 74 步 B′ 领域货架改版）：呈现主语 = 本应用的主题——可选集 = 本应用
  * 私有 + 本应用所属领域的货架主题（平台管理员供货、同领域应用自动
  * 可见；自定义/空白领域应用无货架），列表就是该对象的集合形态属性。
- * 列表按桌面 / 移动两组呈现，每组置顶显示当前激活（双槽指针、每组唯一），
+ * 列表按桌面 / 移动两组呈现（表头即槽位名，双槽指针、每组唯一），
  * 「设为当前」把某主题写进本应用对应槽的指针（theme_slots，values
  * 按槽独立），经 PUT /admin/apps/:id/site 落盘即时生效；绑定状态与操作
- * 直接放在卡片上（槽位头的当前激活标记、行内的激活中标记与设为当前按钮），
+ * 直接放在行内（行内的激活中标记与操作按钮），
  * 页面底部不再设当前绑定区。写权口径：绑定权归本应用运营方与平台管理员，主题须
  * 本应用私有或本领域货架（服务端供给执法，admin 同口径）。
  * 上传口径（10-27 定）：上传主题不设归属，归属只由当前应用上下文决定，
@@ -545,24 +545,24 @@ export default function AppThemeSettings({
     }
   }, [binding, slots, appId, load]);
 
-  /** 主题来源标记：克隆 / 本应用私有 / 领域货架 / 已退役内置 / 他应用私有（仅已绑保底呈现） */
+  /** 主题类型标记：内置 / AI / 自定义（领域货架行不打类型标记） */
   const originTag = (t: ThemeItem) => {
-    if (t.kind === "builtin") return <Tag color="purple">系统内置</Tag>;
+    if (t.kind === "builtin") return <Tag color="purple">内置</Tag>;
     if (t.sourceThemeId) {
-      return <Tag color="cyan">克隆</Tag>;
+      return <Tag color="cyan">AI</Tag>;
     }
-    if (t.ownerAppId === appId) return <Tag color="blue">本应用私有</Tag>;
+    if (t.ownerAppId === appId) return <Tag color="blue">自定义</Tag>;
     if (t.scope === "domain") {
       return null;
     }
-    if (t.scope === "builtin") return <Tag>平台内置（存量）</Tag>;
-    return <Tag color="orange">其他应用私有</Tag>;
+    if (t.scope === "builtin") return <Tag>内置</Tag>;
+    return <Tag color="orange">自定义</Tag>;
   };
 
-  /** 分组（桌面/移动）共用的列定义：不设版本列，激活按主题认本组槽 */
+  /** 分组（桌面/移动）共用的列定义：不设版本列，激活按主题认本组槽；表头即槽位名 */
   const themeColumnsFor = (slot: ThemeSlotName): ColumnsType<ThemeItem> => [
     {
-      title: "主题",
+      title: slot === "desktop" ? "桌面端" : "移动端",
       dataIndex: "name",
       render: (_, t) => (
         <Space direction="vertical" size={2}>
@@ -580,7 +580,7 @@ export default function AppThemeSettings({
     },
     {
       title: "操作",
-      width: 170,
+      width: 320,
       render: (_, t) => {
         const slotVersions = t.versions.filter((v) => versionFitsSlot(v, slot));
         const current = latestSlotVersion(t, slot);
@@ -589,10 +589,11 @@ export default function AppThemeSettings({
         if (t.sourceThemeId) {
           const active = isActive(t.id, slot);
           return (
-            <Space direction="vertical" size={2}>
+            <Space size={8} wrap>
               <Button
-                type="primary"
+                type="link"
                 size="small"
+                style={{ padding: 0, height: "auto" }}
                 disabled={readOnly}
                 loading={cloneActing === `bind:${t.id}`}
                 onClick={() => void onCloneBind(t)}
@@ -601,8 +602,10 @@ export default function AppThemeSettings({
               </Button>
               {active && (
                 <Button
+                  type="link"
                   size="small"
                   danger
+                  style={{ padding: 0, height: "auto" }}
                   disabled={readOnly}
                   loading={cloneActing === `unbind:${t.id}`}
                   onClick={() => void onCloneUnbind(t)}
@@ -644,10 +647,11 @@ export default function AppThemeSettings({
         // 内置行不渲染删除入口（内置服务端也禁删，货架属共享供给）。
         const deletable = t.ownerAppId === appId && t.kind !== "builtin";
         return (
-          <Space direction="vertical" size={2}>
+          <Space size={8} wrap>
             <Button
-              type="primary"
+              type="link"
               size="small"
+              style={{ padding: 0, height: "auto" }}
               disabled={readOnly || slotVersions.length === 0}
               onClick={() => openBinding(t, slot)}
             >
@@ -752,7 +756,6 @@ export default function AppThemeSettings({
           />
         ) : (
           THEME_SLOTS.map((slot) => {
-            const ptr = slots[slot];
             // 克隆行刚创建时还没有生效版本，仍须列出（否则绑定/预览无入口）；
             // 槽位归属以克隆目标为准，目标未明时两槽都列出，绑定时服务端定槽。
             const rows = myThemes.filter(
@@ -762,23 +765,6 @@ export default function AppThemeSettings({
             );
             return (
               <div key={slot} style={{ marginTop: slot === "mobile" ? 24 : 0 }}>
-                <Space size={8} style={{ marginBottom: 8 }}>
-                  <Typography.Text strong>
-                    {slot === "desktop" ? "桌面端" : "移动端"}
-                  </Typography.Text>
-                  {ptr ? (
-                    <Tag color="processing">
-                      当前激活：{showNameById(ptr.id)}
-                    </Tag>
-                  ) : (
-                    <Tag>未绑定</Tag>
-                  )}
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {slot === "desktop"
-                      ? "桌面设备访问本应用时呈现"
-                      : "移动设备 / 壳内访问时呈现，未绑定时回退桌面端"}
-                  </Typography.Text>
-                </Space>
                 {rows.length === 0 ? (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -800,7 +786,7 @@ export default function AppThemeSettings({
         )}
       </Card>
 
-      {/* 10-27 口径：页面底部不再设当前绑定区，绑定状态与操作直接放在上方卡片（槽位头与行内）上。 */}
+      {/* 10-27 口径：页面底部不再设当前绑定区，绑定状态与操作直接放在行内（行内激活中标记与操作按钮）上；槽位名由表头承载。 */}
 
       <Modal
         title={binding ? `设为当前主题 · ${showName(binding.theme)}` : "设为当前主题"}
