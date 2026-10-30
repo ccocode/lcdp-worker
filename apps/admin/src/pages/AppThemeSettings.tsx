@@ -765,21 +765,18 @@ export default function AppThemeSettings({
             );
             return (
               <div key={slot} style={{ marginTop: slot === "mobile" ? 24 : 0 }}>
-                {rows.length === 0 ? (
-                  <Empty
-                    image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={`暂无${slot === "desktop" ? "桌面" : "移动"}端主题`}
-                  />
-                ) : (
-                  <Table
-                    rowKey="id"
-                    size="small"
-                    loading={loading}
-                    columns={themeColumnsFor(slot)}
-                    dataSource={rows}
-                    pagination={false}
-                  />
-                )}
+                {/* 空槽亦渲染空表（表头可见），空态文案走 locale emptyText。 */}
+                <Table
+                  rowKey="id"
+                  size="small"
+                  loading={loading}
+                  columns={themeColumnsFor(slot)}
+                  dataSource={rows}
+                  pagination={false}
+                  locale={{
+                    emptyText: `暂无${slot === "desktop" ? "桌面" : "移动"}端主题`,
+                  }}
+                />
               </div>
             );
           })
