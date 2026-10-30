@@ -199,10 +199,12 @@ export default function AssistantModal({
 
   // 操作按钮放标题栏右上角（用户修订：不独占一行高度）。
   // 关闭 X 的几何（antd 5.29 实测 token：高 56、按钮 32、距右缘
-  // 12px，即占右缘 12–44px）；标题右留白 96px 后按钮组距右缘
-  // 120px（96＋内容横向内边距 24），与 X 之间留 76px 间隙。
-  // 旧 56px 留白实测不够：2026-10-31 用户截图显示 X 压住最小化
-  // 按钮右部，故加大到 96px。
+  // 12px；内容横向内边距 24px，故 X 左缘在内容右缘内 20px 处）。
+  // 2026-10-31 实测教训：标题 div 的 paddingRight（56→96）根本
+  // 没推动按钮组——96 下按钮右缘仍贴内容右缘，与 X 重叠 20px
+  //（最小化 1252–1276、X 1256–1288）；故 clearance 不放标题
+  // 留白，改放按钮组自身的 marginRight: 40，间隙恒为 20px，
+  // 与盒模型无关。标题 paddingRight 归零，避免无效外溢条。
   const titleNode = (
     <div
       onMouseDown={onTitleMouseDown}
@@ -212,7 +214,7 @@ export default function AssistantModal({
         gap: 8,
         width: "100%",
         cursor: "grab",
-        paddingRight: 96,
+        paddingRight: 0,
       }}
     >
       <span
@@ -231,7 +233,7 @@ export default function AssistantModal({
       )}
       <span style={{ flex: 1 }} />
       <span
-        style={{ display: "flex", gap: 8, flexShrink: 0 }}
+        style={{ display: "flex", gap: 8, flexShrink: 0, marginRight: 40 }}
         // 按钮组内的按下不触发标题拖拽
         onMouseDown={(e) => e.stopPropagation()}
       >
