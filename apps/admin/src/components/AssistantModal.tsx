@@ -198,9 +198,11 @@ export default function AssistantModal({
   }
 
   // 操作按钮放标题栏右上角（用户修订：不独占一行高度）。
-  // 关闭 X 的几何：宽 32px、距右缘约 12px，即占右缘 12–44px；
-  // 标题内边距 24px，故按钮组右留 56px（距弹窗右缘 80px），
-  // 与 X 之间留 36px 间隙，不再重叠。
+  // 关闭 X 的几何（antd 5.29 实测 token：高 56、按钮 32、距右缘
+  // 12px，即占右缘 12–44px）；标题右留白 96px 后按钮组距右缘
+  // 120px（96＋内容横向内边距 24），与 X 之间留 76px 间隙。
+  // 旧 56px 留白实测不够：2026-10-31 用户截图显示 X 压住最小化
+  // 按钮右部，故加大到 96px。
   const titleNode = (
     <div
       onMouseDown={onTitleMouseDown}
@@ -210,7 +212,7 @@ export default function AssistantModal({
         gap: 8,
         width: "100%",
         cursor: "grab",
-        paddingRight: 56,
+        paddingRight: 96,
       }}
     >
       <span
