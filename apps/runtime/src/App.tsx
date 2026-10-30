@@ -408,7 +408,7 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
 
 /**
  * 未登录门面：先匿名解析当前入口的公开面——有公开页则渲染公开外壳，
- * 无公开页（或用户点「登录」、或预览深链）时显示登录页；公开面查询失败也回落登录页。
+ * 无公开页（或员工路由 /app/、或预览深链）时显示登录页；公开面查询失败也回落登录页。
  */
 function AnonGate({
   route,
@@ -421,7 +421,6 @@ function AnonGate({
 }) {
   const [pub, setPub] = useState<PublicSiteResult | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -482,7 +481,6 @@ function AnonGate({
   if (
     primary &&
     primary.pages.length > 0 &&
-    !showLogin &&
     !route.path.startsWith("/app/")
   ) {
     // 路径作用域（默认域名 /<应用段>）：外壳内路径剥前缀、链接生成再拼回
@@ -496,7 +494,6 @@ function AnonGate({
           inPath={stripSitePrefix(route.path, basePrefix)}
           params={route.params}
           device={device}
-          onLogin={() => setShowLogin(true)}
           memberSso={pub?.memberSso ?? null}
           basePrefix={basePrefix}
         />
@@ -2929,7 +2926,7 @@ function SandboxPayPage({
 }
 
 /**
- * 公开外壳（匿名访客）：顶栏应用名 + 登录按钮；菜单走与登录外壳同一套页面 menu 装配；
+ * 公开外壳（匿名访客）：顶栏应用名（无员工入口：员工经登录页地址进员工壳）；菜单走与登录外壳同一套页面 menu 装配；
  * 内容由公开适配器渲染（服务端按公开策略整形数据）、应用主题同样生效。
  * M10：主应用 shell = site 时演进为站点形态（品牌顶栏 + 横排栏目导航 + 搜索 + 页脚、无侧栏）；
  * 非 site 的公开页（如采购公开目录）保持原顶栏 + 侧栏形态不变。
@@ -2939,7 +2936,6 @@ function PublicShell({
   inPath,
   params,
   device,
-  onLogin,
   memberSso,
   basePrefix = "",
 }: {
@@ -2947,7 +2943,6 @@ function PublicShell({
   inPath: string;
   params: Record<string, string>;
   device: Device;
-  onLogin: () => void;
   /** 会员 SSO 开关（/public/site 下发）：enabled 时会员登录入口改走会员中心授权流 */
   memberSso?: MemberSsoInfo | null;
   /** 站点路径前缀（路径作用域时为 /<应用段>，其余为空）：站内链接统一拼回 */
@@ -3326,12 +3321,7 @@ function PublicShell({
           selectedKey={current ? current.route : null}
           onNavigate={goPageGuarded}
           topRight={
-            <Space size={6}>
-              {memberArea(true)}
-              <Button type="primary" size="small" onClick={onLogin}>
-                登录
-              </Button>
-            </Space>
+            <Space size={6}>{memberArea(true)}</Space>
           }
         >
           {pageContent}
@@ -3355,12 +3345,7 @@ function PublicShell({
           }}
         >
           <span style={{ fontWeight: 700, fontSize: 15 }}>{primary.name}</span>
-          <Space size={8}>
-            {memberArea()}
-            <Button type="primary" onClick={onLogin}>
-              登录
-            </Button>
-          </Space>
+          <Space size={8}>{memberArea()}</Space>
         </Layout.Header>
         <Layout>
           <Layout.Sider
