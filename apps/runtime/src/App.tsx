@@ -3798,6 +3798,7 @@ function themeTokenOf(appConfig: {
   colorText?: string;
   colorTextSecondary?: string;
   fontFamily?: string;
+  fontSize?: number;
 } {
   const themeCfg = appConfig?.theme ?? {};
   // 视觉基线默认值（第 49 步立、现由 @lcdp/ui 令牌源统一供值，第 73 步）：
@@ -3814,6 +3815,7 @@ function themeTokenOf(appConfig: {
     colorText?: string;
     colorTextSecondary?: string;
     fontFamily?: string;
+    fontSize?: number;
   } = {
     colorPrimary: runtimeTokens.colorPrimary,
     borderRadius: baseline === "c-end" ? 10 : tokens.borderRadius,
@@ -3821,6 +3823,9 @@ function themeTokenOf(appConfig: {
   };
   if (baseline === "c-end") {
     token.borderRadiusLG = 10;
+    // C 档字号 16（两套布局定案，2026-10-30）：运行壳 C 端页（/post、/reply 等）
+    // 不再吃 antd 默认 14px；B 端基线不传 fontSize，行为不变。
+    token.fontSize = 16;
   }
   if (typeof themeCfg.colorPrimary === "string") {
     token.colorPrimary = themeCfg.colorPrimary;
