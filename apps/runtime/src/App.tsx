@@ -466,6 +466,32 @@ function AnonGate({
     if (n) document.title = n;
   }, [pub]);
 
+  const primary = pub?.primary ?? null;
+
+  // 整页跳转登录（用户 2026-10-30 定：登录交互只取弹窗或整页跳转两种形态，
+  // 原地渲染登录卡两头不靠、废止）：无公开面（或员工预览深链）的匿名入口不再
+  // 原地渲染登录卡，统一跳专用 /login 页；from 只作登录后回跳（登录页内校验），
+  // app 只作登录页应用名展示。跳转本身是 effect，首帧先见下方加载屏。
+  const showPublicShell = !!(
+    primary &&
+    primary.pages.length > 0 &&
+    !route.path.startsWith("/app/")
+  );
+  const loginFrom = `${route.path}${window.location.search}`;
+  const loginUrl =
+    `/login?from=${encodeURIComponent(loginFrom)}` +
+    (primary?.name ? `&app=${encodeURIComponent(primary.name)}` : "");
+  const shouldLoginRedirect =
+    loaded &&
+    site?.mode !== "redirect" &&
+    route.path !== "/sso/callback" &&
+    pub?.entry?.kind !== "member-center" &&
+    route.path !== "/login" &&
+    !showPublicShell;
+  useEffect(() => {
+    if (shouldLoginRedirect) navigateTo(loginUrl);
+  }, [shouldLoginRedirect, loginUrl]);
+
   if (!loaded || site?.mode === "redirect") {
     return (
       <div style={{ padding: 80, textAlign: "center" }}>
@@ -473,7 +499,6 @@ function AnonGate({
       </div>
     );
   }
-  const primary = pub?.primary ?? null;
   /** 匿名面客服咨询窗：逐个装配应用探测 support/config，首个 enabled 挂载（M12） */
   const anonSupport = (
     <SupportAutoMount appIds={(pub?.apps ?? []).map((a) => a.id)} />
@@ -486,6 +511,35 @@ function AnonGate({
   // 中心页组（登录/注册/授权确认/我的授权），不走应用外壳与员工登录页
   if (pub?.entry?.kind === "member-center") {
     return <MemberCenterApp route={route} />;
+  }
+  // 专用员工登录页（整页跳转目标）：from 经校验后作登录后回跳（仅相对路径、
+  // 排除 /login 自身防循环）；app 仅作应用名展示，无 app 参数时路径作用域站点
+  // 回落通用文案（主应用名会误导）、域名绑定站点用解析出的应用名。
+  if (route.path === "/login") {
+    const search = new URLSearchParams(window.location.search);
+    const rawFrom = search.get("from");
+    const backTo =
+      rawFrom &&
+      rawFrom.startsWith("/") &&
+      !rawFrom.startsWith("//") &&
+      !rawFrom.startsWith("/login")
+        ? rawFrom
+        : "/";
+    const appParam = search.get("app");
+    const appName =
+      appParam ?? (site?.via === "path" ? undefined : primary?.name) ?? undefined;
+    return (
+      <>
+        <LoginView
+          onLoggedIn={(u) => {
+            onLoggedIn(u);
+            navigateTo(backTo);
+          }}
+          appName={appName}
+        />
+        {anonSupport}
+      </>
+    );
   }
   if (
     primary &&
@@ -505,17 +559,16 @@ function AnonGate({
           device={device}
           memberSso={pub?.memberSso ?? null}
           basePrefix={basePrefix}
-          onLoggedIn={onLoggedIn}
         />
         {anonSupport}
       </>
     );
   }
+  // 跳转 pending 帧：effect 在首帧后执行跳转，此处只呈加载屏，不再原地渲染登录卡。
   return (
-    <>
-      <LoginView onLoggedIn={onLoggedIn} appName={primary?.name} />
-      {anonSupport}
-    </>
+    <div style={{ padding: 80, textAlign: "center" }}>
+      <Spin size="large" tip="正在前往登录页…" />
+    </div>
   );
 }
 
@@ -2948,7 +3001,6 @@ function PublicShell({
   device,
   memberSso,
   basePrefix = "",
-  onLoggedIn,
 }: {
   primary: NonNullable<PublicSiteResult["primary"]>;
   inPath: string;
@@ -2958,8 +3010,6 @@ function PublicShell({
   memberSso?: MemberSsoInfo | null;
   /** 站点路径前缀（路径作用域时为 /<应用段>，其余为空）：站内链接统一拼回 */
   basePrefix?: string;
-  /** 员工登录回调（B2 员工闸）：公开面无此路由时呈员工登录页，登录后由上层切员工壳 */
-  onLoggedIn: (user: UserInfo) => void;
 }) {
   const goPage = useCallback(
     (to: string) => {
@@ -3128,6 +3178,18 @@ function PublicShell({
   const current = resolveCurrentPage(primary.pages, menu, inPath);
   const token = themeTokenOf(primary.appConfig, "c-end");
 
+  // B2 员工闸（整页跳转形态）：公开面无此路由时跳专用 /login 页（from 回跳＋
+  // app 展示）；收银台内置路由除外。跳转在 effect 里执行，首帧先见下方加载屏。
+  const gateLoginUrl =
+    !current && inPath !== "/pay/sandbox"
+      ? `/login?from=${encodeURIComponent(
+          `${basePrefix}${inPath}${window.location.search}`,
+        )}&app=${encodeURIComponent(primary.name)}`
+      : null;
+  useEffect(() => {
+    if (gateLoginUrl) navigateTo(gateLoginUrl);
+  }, [gateLoginUrl]);
+
   // 呈现门控与公开策略对齐：可读实体只读、公开表单实体可新建，避免露出无权入口（服务端仍强制）
   const access = useMemo(() => {
     const entities: Record<string, EntityAccess> = {};
@@ -3157,8 +3219,8 @@ function PublicShell({
     return entities;
   }, [primary, memberPolicy]);
 
-  // B2 员工闸：公开面无此路由时（员工路由或误输地址）不再呈 404 掩盖未登录，
-  // 直接呈员工登录页；登录后上层保留当前路径切员工壳，未知路由届时由员工壳 404。
+  // B2 员工闸（整页跳转形态）：公开面无此路由时（员工路由或误输地址）不再呈 404
+  // 掩盖未登录，也不再原地嵌登录卡；跳转由上方 effect 执行，此处只呈加载屏。
   const publicContent = current ? (
     <SchemaRenderer
       page={current}
@@ -3170,7 +3232,9 @@ function PublicShell({
       theme={primary.appConfig?.theme}
     />
   ) : (
-    <LoginView onLoggedIn={onLoggedIn} appName={primary.name} />
+    <div style={{ padding: 80, textAlign: "center" }}>
+      <Spin size="large" tip="正在前往登录页…" />
+    </div>
   );
 
   /** 当前页是否会员页：会员页登录后以会员适配器渲染，未登录呈占位引导（不跳员工登录页） */
