@@ -290,7 +290,7 @@ export default function App() {
   const previewInPath = match?.[2] ?? "/";
 
   return (
-    <ConfigProvider locale={zhCN} theme={runtimeTheme}>
+    <ConfigProvider locale={zhCN} theme={runtimeTheme} button={{ autoInsertSpace: false }}>
       {/* 站点主题兜底（第 93 步线 B2）：边缘注入的 :root 变量 --lcdp-background /
           --lcdp-text 在此落到 SPA 根——非 antd 区域（加载屏、空白态）也垫站点
           底色与文字色、不跳色。无注入时回退值与现行为等效（透明=不涂、
@@ -338,7 +338,14 @@ export default function App() {
   );
 }
 
-function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
+function LoginView({
+  onLoggedIn,
+  appName,
+}: {
+  onLoggedIn: (user: UserInfo) => void;
+  /** 当前应用名（B6 登录页应用身份）：有则副文案带应用名，无则回落通用文案 */
+  appName?: string | null;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -373,7 +380,9 @@ function LoginView({ onLoggedIn }: { onLoggedIn: (user: UserInfo) => void }) {
           type="secondary"
           style={{ fontSize: 13, marginBottom: 20 }}
         >
-          登录后直达本入口的应用系统（管理员账号在初始化向导中设置）
+          {appName
+            ? `登录${appName}的员工系统（管理员账号在初始化向导中设置）`
+            : "登录后直达本入口的应用系统（管理员账号在初始化向导中设置）"}
         </Typography.Paragraph>
         {error && (
           <Alert type="error" message={error} style={{ marginBottom: 16 }} />
@@ -496,6 +505,7 @@ function AnonGate({
           device={device}
           memberSso={pub?.memberSso ?? null}
           basePrefix={basePrefix}
+          onLoggedIn={onLoggedIn}
         />
         {anonSupport}
       </>
@@ -503,7 +513,7 @@ function AnonGate({
   }
   return (
     <>
-      <LoginView onLoggedIn={onLoggedIn} />
+      <LoginView onLoggedIn={onLoggedIn} appName={primary?.name} />
       {anonSupport}
     </>
   );
@@ -2938,6 +2948,7 @@ function PublicShell({
   device,
   memberSso,
   basePrefix = "",
+  onLoggedIn,
 }: {
   primary: NonNullable<PublicSiteResult["primary"]>;
   inPath: string;
@@ -2947,6 +2958,8 @@ function PublicShell({
   memberSso?: MemberSsoInfo | null;
   /** 站点路径前缀（路径作用域时为 /<应用段>，其余为空）：站内链接统一拼回 */
   basePrefix?: string;
+  /** 员工登录回调（B2 员工闸）：公开面无此路由时呈员工登录页，登录后由上层切员工壳 */
+  onLoggedIn: (user: UserInfo) => void;
 }) {
   const goPage = useCallback(
     (to: string) => {
@@ -3144,6 +3157,8 @@ function PublicShell({
     return entities;
   }, [primary, memberPolicy]);
 
+  // B2 员工闸：公开面无此路由时（员工路由或误输地址）不再呈 404 掩盖未登录，
+  // 直接呈员工登录页；登录后上层保留当前路径切员工壳，未知路由届时由员工壳 404。
   const publicContent = current ? (
     <SchemaRenderer
       page={current}
@@ -3155,11 +3170,7 @@ function PublicShell({
       theme={primary.appConfig?.theme}
     />
   ) : (
-    <ErrorStatePage
-      variant="404"
-      onHome={() => goPage("/")}
-      onBack={() => window.history.back()}
-    />
+    <LoginView onLoggedIn={onLoggedIn} appName={primary.name} />
   );
 
   /** 当前页是否会员页：会员页登录后以会员适配器渲染，未登录呈占位引导（不跳员工登录页） */
