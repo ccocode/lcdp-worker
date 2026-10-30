@@ -279,6 +279,23 @@ export default function App() {
   const [user, setUser] = useState<UserInfo | null>(() => getStoredUser());
   const device = useDevice();
 
+  // 已登录态进 /login 不再落入员工壳 404：按 from 校验后回跳（无合法 from 回首页）。
+  // 覆盖登录回跳被旧解析弹回、书签与后退等一切已登录态停在 /login 的情形。
+  useEffect(() => {
+    if (user && route.path === "/login") {
+      const search = new URLSearchParams(window.location.search);
+      const rawFrom = search.get("from");
+      const backTo =
+        rawFrom &&
+        rawFrom.startsWith("/") &&
+        !rawFrom.startsWith("//") &&
+        !rawFrom.startsWith("/login")
+          ? rawFrom
+          : "/";
+      navigateTo(backTo);
+    }
+  }, [user, route.path]);
+
   const logout = () => {
     storeSession(null, null);
     setUser(null);
@@ -533,7 +550,11 @@ function AnonGate({
         <LoginView
           onLoggedIn={(u) => {
             onLoggedIn(u);
-            navigateTo(backTo);
+            // 登录回跳必须整页跳转：页内 pushState 会在用户状态与站点解析
+            // 刷新的时间差里撞上旧解析结果（公开壳闸以旧应用判未知页、
+            // 弹回 /login），整页重载后会话与站点都重新解析，不存在该时间差。
+            // api.login 已先把会话写进 localStorage，重载后直接恢复登录态。
+            window.location.assign(backTo);
           }}
           appName={appName}
         />
