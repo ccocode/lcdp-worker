@@ -1,27 +1,23 @@
 /**
  * 任务详情体（工作台右栏与任务记录页抽屉共用）：
  * 只展示本实体自己的数据，不跨实体取数——统一壳 = 标题 +
- * 种类标 + 状态标 + 目标；正文按种类分体：计划是步骤清单 +
- * 已定决定 + 下一步，主题是主题 id@版本行 + 步骤清单 + 产物。
- * 派发记录不在此汇总（只从消息内的派发卡进入子代理详情）。
- * D6 首批：有 run 的任务另取本任务 run 详情（节点、待决、
- * 通知、主产物版本、终审门信号），仍是单实体取数；无 run 或
- * 取数失败时该区不出现，旧形态不变。
- * D6 第二批：运行区加产物版本浏览（按文件分组、版本倒序、
- * 点版看正文）与报告流程（执行时间线 + 终审历史），仍只读。
+ * 种类标 + 状态标 + 目标；任务头下面是步骤清单（✓ + 文字，
+ * 当前步骤默认展开显示执行动作、已完成默认收起、全部完成
+ * 末尾显示执行完成；中间不显示时间）。
+ * 预览卡与绑定审批卡不在此显示，只在对话框里（对话框是
+ * 唯一操作面）；详情里只留暂停 / 终审未达标的状态行（对
+ * 话框里没有继续运行 / 重试失败节点入口）。
  * 底部操作由调用方以 footer 注入（工作台：继续，仅进行中；
  * 任务记录页：去助手查看）。待决事项的处理入口由调用方以
  * onHandlePending 注入（工作台：切到本任务会话；任务记录页：
  * 去助手查看）；不传则只展示待决、不给入口。
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, message, Modal, Spin, Tag, Typography } from "antd";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Button, message, Spin, Tag, Typography } from "antd";
 import {
   api,
   type AdminAssistantTask,
-  type AdminTaskRunArtifactContent,
   type AdminTaskRunDetail,
-  type AdminTaskRunPending,
 } from "../../api";
 import { fmtTime } from "../../helpers";
 
@@ -52,13 +48,6 @@ const CHECK_PASSED = new Set([
 ]);
 const CHECK_FAILED = new Set(["failed", "error", "fail"]);
 const CHECK_SKIPPED = new Set(["skipped", "skip"]);
-
-function checkTag(status: string) {
-  if (CHECK_PASSED.has(status)) return <Tag color="green">已过</Tag>;
-  if (CHECK_FAILED.has(status)) return <Tag color="red">未过</Tag>;
-  if (CHECK_SKIPPED.has(status)) return <Tag>跳过</Tag>;
-  return <Tag color="orange">待办</Tag>;
-}
 
 /** 清单“已过”条数（与详情同一口径，跳过不算过） */
 export function countPassed(task: AdminAssistantTask): number {
@@ -105,77 +94,6 @@ export const RECOVERY_ACTION_LABELS: Record<string, string> = {
   "retry-nodes": "重试失败节点",
 };
 
-function nodeStatusTag(status: string) {
-  if (status === "completed") return <Tag color="green">已完成</Tag>;
-  if (status === "failed") return <Tag color="red">已失败</Tag>;
-  if (status === "skipped" || status === "cancelled") return <Tag>跳过</Tag>;
-  if (status === "active" || status === "running")
-    return <Tag color="processing">进行中</Tag>;
-  return <Tag color="orange">待开始</Tag>;
-}
-
-/** 防御式呈现：有什么显示什么，形状不合不造；skip 键不展开 */
-function renderLoose(value: unknown, skip: Set<string>): string[] {
-  if (value === null || value === undefined) return [];
-  if (typeof value === "string") return value ? [value] : [];
-  if (typeof value === "number" || typeof value === "boolean") {
-    return [String(value)];
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap((v) => renderLoose(v, skip));
-  }
-  if (typeof value === "object") {
-    const rows: string[] = [];
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (skip.has(k)) continue;
-      if (
-        typeof v === "string" ||
-        typeof v === "number" ||
-        typeof v === "boolean"
-      ) {
-        rows.push(`${k}：${String(v)}`);
-      }
-    }
-    return rows;
-  }
-  return [];
-}
-
-/**
- * 主题预览 payload 防御式读取：服务端把 preview-card.json 内容
- * 放在待决项的 preview 字段里；顶层同名字段作回落。缺失时
- * 返回空，界面以通用文案呈现、不现编主题名与应用名。
- */
-function readThemePreview(p: AdminTaskRunPending): {
-  themeName: string | null;
-  styleSummary: string | null;
-  pages: string[];
-  changes: string[];
-  previewUrl: string | null;
-  previewExpiresAt: string | null;
-  previewError: string | null;
-} {
-  const inner = p.preview ?? null;
-  const text = (v: unknown): string | null =>
-    typeof v === "string" && v.length > 0 ? v : null;
-  const list = (v: unknown): string[] =>
-    Array.isArray(v)
-      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
-      : [];
-  const pages = list(inner?.pages);
-  const changes = list(inner?.changes);
-  return {
-    themeName: text(inner?.themeName) ?? text(p.themeName),
-    styleSummary: text(inner?.styleSummary) ?? text(p.styleSummary),
-    pages: pages.length > 0 ? pages : list(p.pages),
-    changes: changes.length > 0 ? changes : list(p.changes),
-    previewUrl: text(inner?.previewUrl) ?? text(p.previewUrl),
-    previewExpiresAt:
-      text(inner?.previewExpiresAt) ?? text(p.previewExpiresAt),
-    previewError: text(inner?.previewError) ?? text(p.previewError),
-  };
-}
-
 export default function TaskDetail({
   task,
   footer,
@@ -193,24 +111,6 @@ export default function TaskDetail({
   const [runLoading, setRunLoading] = useState(false);
   const [runTick, setRunTick] = useState(0);
   const [acting, setActing] = useState<string | null>(null);
-  const [artifactView, setArtifactView] =
-    useState<AdminTaskRunArtifactContent | null>(null);
-  const [artifactLoading, setArtifactLoading] = useState(false);
-  const openArtifactVersion = async (artifactId: string, version: number) => {
-    if (!appId || artifactLoading) return;
-    setArtifactLoading(true);
-    try {
-      const res = await api.assistant.app.taskRunArtifact(
-        appId,
-        task.id,
-        artifactId,
-        version,
-      );
-      if (res) setArtifactView(res);
-    } finally {
-      setArtifactLoading(false);
-    }
-  };
   useEffect(() => {
     if (!appId || !task.runId) {
       setRunDetail(null);
@@ -231,8 +131,8 @@ export default function TaskDetail({
     };
   }, [appId, task.id, task.runId, runTick]);
   /**
-   * 详情自动滚到底部（2026-10-29 用户定）：内容变化（节点/产物/
-   * 终审/终态重拉、切任务）后，把最近的可滚动祖先（工作台右栏
+   * 详情自动滚到底部（2026-10-29 用户定）：内容变化（清单 /
+   * 执行动作 / 终态重拉、切任务）后，把最近的可滚动祖先（工作台右栏
    * 或任务记录页抽屉体）滚到底部，最新内容始终可见。
    */
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -254,7 +154,7 @@ export default function TaskDetail({
   }, [runDetail, task.id]);
   /**
    * 详情实时刷新（2026-10-29 用户定）：详情开着时订阅同一条
-   * run SSE，流里有动静（节点/产物/终审/终态）就重拉一次详情，
+   * run SSE，流里有动静（执行动作 / 终态）就重拉一次详情，
    * 不再只靠打开时那一次和详情内操作后那一次。首包 snapshot
    * 跳过（打开时已拉过一次，跳过可省一次重复请求）；服务端
    * 3 秒推一次增量，重拉频率与之同频；终态后服务端收流，
@@ -286,33 +186,17 @@ export default function TaskDetail({
       off();
     };
   }, [appId, task.id, task.runId]);
-  const runAction = async (
-    kind:
-      | "resume"
-      | "retry-nodes"
-      | "preview-accept"
-      | "preview-reject"
-      | "preview-reissue"
-      | "bind-approve"
-      | "bind-reject",
-  ) => {
+  /**
+   * 详情内仅留的处置动作（暂停行的继续运行 / 重试失败节点）：
+   * 预览与绑定只在对话框里点，详情里不给入口。
+   */
+  const runAction = async (kind: "resume" | "retry-nodes") => {
     if (!appId || acting) return;
     setActing(kind);
     try {
       if (kind === "resume") await api.assistant.app.resumeRun(appId, task.id);
-      else if (kind === "retry-nodes")
-        await api.assistant.app.retryRunNodes(appId, task.id);
-      else if (kind === "preview-accept")
-        await api.assistant.app.acceptPreview(appId, task.id);
-      else if (kind === "preview-reject")
-        await api.assistant.app.rejectPreview(appId, task.id);
-      else if (kind === "preview-reissue")
-        await api.assistant.app.reissuePreview(appId, task.id);
-      else if (kind === "bind-approve")
-        await api.assistant.app.approveBind(appId, task.id);
-      else await api.assistant.app.rejectBind(appId, task.id);
-      // 成功后重拉 run 详情：验收通过可能翻到绑定确认或已完成，
-      // 拒绝则仍停在原等待状态，界面随重拉结果刷新。
+      else await api.assistant.app.retryRunNodes(appId, task.id);
+      // 成功后重拉 run 详情，界面随重拉结果刷新。
       setRunTick((t) => t + 1);
     } catch {
       message.error("操作失败，请稍后重试");
@@ -320,34 +204,137 @@ export default function TaskDetail({
       setActing(null);
     }
   };
-  const artifactGroups: Array<{
-    artifactId: string;
-    versions: NonNullable<AdminTaskRunDetail["artifacts"]>;
-  }> = [];
-  if (runDetail) {
-    const byId = new Map<string, AdminTaskRunDetail["artifacts"]>();
-    for (const a of runDetail.artifacts ?? []) {
-      const list = byId.get(a.artifactId) ?? [];
-      list.push(a);
-      byId.set(a.artifactId, list);
-    }
-    for (const [artifactId, list] of byId) {
-      artifactGroups.push({
-        artifactId,
-        versions: [...list].sort((x, y) => y.version - x.version),
-      });
-    }
-  }
   const arts = task.artifacts as Record<string, unknown> | null | undefined;
   const themeLine =
     task.kind === "theme_build" && typeof arts?.themeId === "string"
       ? `主题：${arts.themeId}${typeof arts.version === "string" ? `@${arts.version}` : ""}`
       : null;
-  const artifactRows = renderLoose(
-    task.artifacts,
-    new Set(["delegations", "themeId", "version"]),
+
+  /** 步骤清单（任务头下面的唯一正文）：✓ + 文字，中间不显示时间。 */
+  type StepState = "passed" | "failed" | "skipped" | "pending";
+  const stepState = (status: string): StepState =>
+    CHECK_PASSED.has(status)
+      ? "passed"
+      : CHECK_FAILED.has(status)
+        ? "failed"
+        : CHECK_SKIPPED.has(status)
+          ? "skipped"
+          : "pending";
+  const checklist = task.checklist ?? [];
+  const runStatus = runDetail?.run?.runStatus ?? null;
+  const isRunning =
+    task.status === "active" &&
+    runStatus !== "failed" &&
+    runStatus !== "paused" &&
+    runStatus !== "completed" &&
+    runStatus !== "cancelled";
+  const failedStepIndex = checklist.findIndex(
+    (it) => stepState(it.status) === "failed",
   );
-  const decisionRows = renderLoose(task.decisions, new Set());
+  const currentStepIndex = isRunning
+    ? checklist.findIndex((it) => stepState(it.status) === "pending")
+    : -1;
+  // 默认展开：失败步骤优先（看错误），否则当前执行步骤；手动
+  // 展开收起优先于默认，轮询重拉不打掉手动选择；切任务清零。
+  const defaultExpandedIndex =
+    failedStepIndex >= 0 ? failedStepIndex : currentStepIndex;
+  const [expandedOverride, setExpandedOverride] = useState<
+    Record<number, boolean>
+  >({});
+  useEffect(() => {
+    setExpandedOverride({});
+  }, [task.id]);
+  const isStepExpanded = (i: number) =>
+    expandedOverride[i] ?? (i === defaultExpandedIndex);
+  const toggleStep = (i: number) =>
+    setExpandedOverride((prev) => ({ ...prev, [i]: !isStepExpanded(i) }));
+
+  /** 执行动作（当前步骤展开区）：在跑的节点 + 最新报告流程，均去时间。 */
+  const runningNodes = (runDetail?.nodes ?? []).filter(
+    (n) => n.status === "active" || n.status === "running",
+  );
+  const failedNodes = (runDetail?.nodes ?? []).filter(
+    (n) => n.status === "failed",
+  );
+  const latestTimeline = (runDetail?.timeline ?? []).slice(-5);
+  const latestFailedVerdict = (runDetail?.verdicts ?? []).find(
+    (v) => v.verdict === "fail",
+  );
+  /** 某行是否可展开：当前步骤、失败步骤（有错误可看）、已完成
+   *  步骤（有证据可看）才给展开；其余只显示标题。 */
+  const stepExpandable = (i: number): boolean => {
+    const st = stepState(checklist[i].status);
+    if (i === currentStepIndex) return true;
+    if (st === "failed")
+      return (
+        failedNodes.length > 0 ||
+        (latestFailedVerdict?.acceptanceGaps.length ?? 0) > 0
+      );
+    if (st === "passed")
+      return (
+        typeof checklist[i].evidence === "string" &&
+        checklist[i].evidence.length > 0
+      );
+    return false;
+  };
+  /** 全部完成行：任务已关闭，或清单全过且 run 已完成；终审结论并入。 */
+  const taskDone = task.status === "done" || task.status === "closed";
+  const showDoneRow =
+    taskDone ||
+    (checklist.length > 0 &&
+      checklist.every((it) => stepState(it.status) === "passed") &&
+      runStatus === "completed");
+  const doneVerdictText =
+    runDetail?.latestVerdict === "pass"
+      ? "（终审已通过）"
+      : runDetail?.latestVerdict === "fail"
+        ? "（终审未通过）"
+        : "";
+  /** 预览卡与绑定卡不在此显示；只留暂停 / 终审未达标行。 */
+  const otherPendings = (runDetail?.pendingItems ?? []).filter(
+    (p) => p.type !== "theme-preview" && p.type !== "theme-bind",
+  );
+
+  /** 步骤图标：✓ / ✗ / – / 转圈 / 空圈（纯样式，不引新依赖）。 */
+  const stepIcon = (st: StepState, isCurrent: boolean) => {
+    const circle: CSSProperties = {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: 16,
+      height: 16,
+      borderRadius: "50%",
+      border: "1px solid",
+      fontSize: 10,
+      flexShrink: 0,
+    };
+    if (isCurrent) return <Spin size="small" />;
+    if (st === "passed")
+      return (
+        <span
+          style={{ ...circle, borderColor: "#52c41a", color: "#52c41a" }}
+        >
+          ✓
+        </span>
+      );
+    if (st === "failed")
+      return (
+        <span
+          style={{ ...circle, borderColor: "#ff4d4f", color: "#ff4d4f" }}
+        >
+          ✗
+        </span>
+      );
+    if (st === "skipped")
+      return (
+        <span
+          style={{ ...circle, borderColor: "#d9d9d9", color: "#8c8c8c" }}
+        >
+          –
+        </span>
+      );
+    return <span style={{ ...circle, borderColor: "#d9d9d9" }} />;
+  };
   return (
     <div
       ref={rootRef}
@@ -378,638 +365,290 @@ export default function TaskDetail({
       {themeLine && (
         <Typography.Text style={{ fontSize: 12 }}>{themeLine}</Typography.Text>
       )}
-      {(task.checklist ?? []).length > 0 && (
-        <div>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            步骤
-          </Typography.Text>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              marginTop: 4,
-            }}
-          >
-            {task.checklist.map((it, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 12,
-                }}
-              >
-                {checkTag(it.status)}
-                <span style={{ flex: 1, minWidth: 0 }}>{it.label}</span>
-                {it.evidence && /^https?:\/\//.test(it.evidence) && (
-                  <a
-                    href={it.evidence}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ fontSize: 12 }}
+      {checklist.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            marginTop: 4,
+          }}
+        >
+          {checklist.map((it, i) => {
+            const st = stepState(it.status);
+            const isCurrent = i === currentStepIndex;
+            const expanded = isStepExpanded(i);
+            const expandable = stepExpandable(i);
+            const evidenceUrl =
+              typeof it.evidence === "string" &&
+              /^https?:\/\//.test(it.evidence)
+                ? it.evidence
+                : null;
+            return (
+              <div key={i} style={{ fontSize: 12 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    cursor: expandable ? "pointer" : undefined,
+                  }}
+                  onClick={expandable ? () => toggleStep(i) : undefined}
+                >
+                  {stepIcon(st, isCurrent)}
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      textDecoration:
+                        st === "skipped" ? "line-through" : undefined,
+                      color: st === "failed" ? "#ff4d4f" : undefined,
+                    }}
                   >
-                    证据
-                  </a>
+                    {it.label}
+                  </span>
+                  {expandable && (
+                    <Typography.Text
+                      type="secondary"
+                      style={{ fontSize: 12, flexShrink: 0 }}
+                    >
+                      {expanded ? "收起" : "展开"}
+                    </Typography.Text>
+                  )}
+                </div>
+                {expanded && isCurrent && (
+                  <div
+                    style={{
+                      marginLeft: 22,
+                      marginTop: 4,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {runningNodes.map((n) => (
+                      <div key={n.nodeId}>
+                        <div>
+                          {n.nodeId}（尝试 {n.attempts} 次）
+                        </div>
+                        {n.error && (
+                          <Typography.Text
+                            type="danger"
+                            style={{
+                              fontSize: 12,
+                              display: "block",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {n.error}
+                          </Typography.Text>
+                        )}
+                        {n.outputArtifacts.length > 0 && (
+                          <Typography.Text
+                            type="secondary"
+                            style={{
+                              fontSize: 12,
+                              display: "block",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            产物：{n.outputArtifacts.join("、")}
+                          </Typography.Text>
+                        )}
+                      </div>
+                    ))}
+                    {latestTimeline.map((e, j) => (
+                      <div key={j} style={{ wordBreak: "break-word" }}>
+                        {e.summary}
+                      </div>
+                    ))}
+                    {runningNodes.length === 0 &&
+                      latestTimeline.length === 0 && (
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12 }}
+                        >
+                          正在执行…
+                        </Typography.Text>
+                      )}
+                  </div>
+                )}
+                {expanded && !isCurrent && st === "failed" && (
+                  <div
+                    style={{
+                      marginLeft: 22,
+                      marginTop: 4,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {failedNodes.map((n) => (
+                      <div key={n.nodeId}>
+                        <div>{n.nodeId}</div>
+                        {n.error && (
+                          <Typography.Text
+                            type="danger"
+                            style={{
+                              fontSize: 12,
+                              display: "block",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {n.error}
+                          </Typography.Text>
+                        )}
+                      </div>
+                    ))}
+                    {(latestFailedVerdict?.acceptanceGaps.length ?? 0) >
+                      0 && (
+                      <Typography.Text
+                        type="secondary"
+                        style={{
+                          fontSize: 12,
+                          display: "block",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        缺口：
+                        {latestFailedVerdict?.acceptanceGaps.join("；")}
+                      </Typography.Text>
+                    )}
+                  </div>
+                )}
+                {expanded && !isCurrent && st === "passed" && it.evidence && (
+                  <div style={{ marginLeft: 22, marginTop: 4 }}>
+                    {evidenceUrl ? (
+                      <a
+                        href={evidenceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontSize: 12 }}
+                      >
+                        证据
+                      </a>
+                    ) : (
+                      <Typography.Text
+                        type="secondary"
+                        style={{
+                          fontSize: 12,
+                          display: "block",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {typeof it.evidence === "string" ? it.evidence : ""}
+                      </Typography.Text>
+                    )}
+                  </div>
                 )}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {artifactRows.length > 0 && (
-        <div>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            产物
-          </Typography.Text>
-          {artifactRows.map((row, i) => (
+            );
+          })}
+          {showDoneRow && (
             <div
-              key={i}
-              style={{ fontSize: 12, wordBreak: "break-word" }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+              }}
             >
-              {row}
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 16,
+                  height: 16,
+                  borderRadius: "50%",
+                  border: "1px solid #52c41a",
+                  color: "#52c41a",
+                  fontSize: 10,
+                  flexShrink: 0,
+                }}
+              >
+                ✓
+              </span>
+              <span>执行完成{doneVerdictText}</span>
             </div>
-          ))}
+          )}
         </div>
       )}
-      {decisionRows.length > 0 && (
-        <div>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            已定决定
-          </Typography.Text>
-          {decisionRows.map((row, i) => (
-            <div
-              key={i}
-              style={{ fontSize: 12, wordBreak: "break-word" }}
-            >
-              {row}
-            </div>
-          ))}
-        </div>
-      )}
-      {task.nextStep && (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          下一步：{task.nextStep}
-        </Typography.Text>
-      )}
+
       {runLoading && (
         <div style={{ padding: "8px 0" }}>
           <Spin size="small" />
         </div>
       )}
-      {runDetail && runDetail.run && (
-        <div>
+      {otherPendings.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            marginTop: 8,
+          }}
+        >
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            运行
+            待决事项
           </Typography.Text>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              marginTop: 4,
-              fontSize: 12,
-            }}
-          >
-            <Tag style={{ marginInlineEnd: 0 }}>
-              {RUN_STATUS_LABELS[runDetail.run.runStatus ?? ""] ??
-                runDetail.run.runStatus ??
-                "—"}
-            </Tag>
-            {runDetail.latestVerdict === "pass" ? (
-              <Tag color="green" style={{ marginInlineEnd: 0 }}>
-                终审已通过
-              </Tag>
-            ) : runDetail.latestVerdict === "fail" ? (
-              <Tag color="red" style={{ marginInlineEnd: 0 }}>
-                终审未通过
-              </Tag>
-            ) : (
-              <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-                待终审
-              </Tag>
-            )}
-            {runDetail.primaryArtifact && (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                主产物：{runDetail.primaryArtifact.path}（第{" "}
-                {runDetail.primaryArtifact.version} 版）
-              </Typography.Text>
-            )}
-          </div>
-          {artifactGroups.length > 0 && (
+          {otherPendings.map((p, i) => (
             <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 8,
-              }}
+              key={i}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
             >
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                产物版本
-              </Typography.Text>
-              {artifactGroups.map((g) => (
-                <div key={g.artifactId} style={{ fontSize: 12 }}>
-                  <div style={{ wordBreak: "break-word" }}>{g.artifactId}</div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                      marginTop: 2,
-                    }}
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
+                {p.type === "pause"
+                  ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
+                  : "终审未达标"}
+                {p.type === "pause" &&
+                  p.recoveryActions.length > 0 &&
+                  `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
+                {p.type === "critic" &&
+                  p.gaps.length > 0 &&
+                  `：${p.gaps.join("；")}`}
+              </span>
+              {p.type === "pause" &&
+                runDetail?.run?.runStatus === "paused" && (
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, height: "auto", fontSize: 12 }}
+                    loading={acting === "resume"}
+                    disabled={acting !== null}
+                    onClick={() => void runAction("resume")}
                   >
-                    {g.versions.map((v) => (
-                      <Button
-                        key={v.version}
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, height: "auto", fontSize: 12 }}
-                        loading={artifactLoading}
-                        onClick={() =>
-                          void openArtifactVersion(g.artifactId, v.version)
-                        }
-                      >
-                        第 {v.version} 版{v.isPrimary ? "（主）" : ""}
-                        {v.bytes != null ? ` · ${v.bytes} 字节` : ""}
-                        {v.createdAt ? ` · ${fmtTime(v.createdAt)}` : ""}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {runDetail.nodes.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 8,
-              }}
-            >
-              {runDetail.nodes.map((n) => (
-                <div key={n.nodeId} style={{ fontSize: 12 }}>
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                    继续运行
+                  </Button>
+                )}
+              {p.type === "pause" &&
+                runDetail?.run?.runStatus === "paused" &&
+                p.recoveryActions.includes("retry-nodes") && (
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, height: "auto", fontSize: 12 }}
+                    loading={acting === "retry-nodes"}
+                    disabled={acting !== null}
+                    onClick={() => void runAction("retry-nodes")}
                   >
-                    {nodeStatusTag(n.status)}
-                    <span style={{ flex: 1, minWidth: 0 }}>{n.nodeId}</span>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      尝试 {n.attempts} 次
-                    </Typography.Text>
-                  </div>
-                  {n.error && (
-                    <Typography.Text
-                      type="danger"
-                      style={{
-                        fontSize: 12,
-                        display: "block",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {n.error}
-                    </Typography.Text>
-                  )}
-                  {n.outputArtifacts.length > 0 && (
-                    <Typography.Text
-                      type="secondary"
-                      style={{
-                        fontSize: 12,
-                        display: "block",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      产物：{n.outputArtifacts.join("、")}
-                    </Typography.Text>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {(runDetail.timeline ?? []).length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 8,
-              }}
-            >
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                报告流程
-              </Typography.Text>
-              {(runDetail.timeline ?? []).map((e, i) => (
-                <div
-                  key={i}
-                  style={{ display: "flex", gap: 6, fontSize: 12 }}
+                    重试失败节点
+                  </Button>
+                )}
+              {onHandlePending && (
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, height: "auto", fontSize: 12 }}
+                  onClick={onHandlePending}
                 >
-                  {e.createdAt && (
-                    <Typography.Text
-                      type="secondary"
-                      style={{ fontSize: 12, flexShrink: 0 }}
-                    >
-                      {fmtTime(e.createdAt)}
-                    </Typography.Text>
-                  )}
-                  <span
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {e.summary}
-                  </span>
-                </div>
-              ))}
+                  去处理
+                </Button>
+              )}
             </div>
-          )}
-          {(runDetail.verdicts ?? []).length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 8,
-              }}
-            >
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                终审历史
-              </Typography.Text>
-              {(runDetail.verdicts ?? []).map((v) => (
-                <div key={v.round} style={{ fontSize: 12 }}>
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 6 }}
-                  >
-                    <Tag style={{ marginInlineEnd: 0 }}>
-                      第 {v.round} 轮
-                    </Tag>
-                    {v.verdict === "pass" ? (
-                      <Tag color="green" style={{ marginInlineEnd: 0 }}>
-                        通过
-                      </Tag>
-                    ) : v.verdict === "fail" ? (
-                      <Tag color="red" style={{ marginInlineEnd: 0 }}>
-                        未通过
-                      </Tag>
-                    ) : (
-                      <Tag style={{ marginInlineEnd: 0 }}>未知</Tag>
-                    )}
-                    {v.createdAt && (
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        {fmtTime(v.createdAt)}
-                      </Typography.Text>
-                    )}
-                  </div>
-                  {v.reasoning && (
-                    <div style={{ wordBreak: "break-word", marginTop: 2 }}>
-                      {v.reasoning}
-                    </div>
-                  )}
-                  {v.acceptanceGaps.length > 0 && (
-                    <Typography.Text
-                      type="secondary"
-                      style={{
-                        fontSize: 12,
-                        display: "block",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      缺口：{v.acceptanceGaps.join("；")}
-                    </Typography.Text>
-                  )}
-                  {v.reopenProposals.length > 0 && (
-                    <Typography.Text
-                      type="secondary"
-                      style={{
-                        fontSize: 12,
-                        display: "block",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      重开：
-                      {v.reopenProposals
-                        .map((p) => `${p.nodeId}（${p.reason}）`)
-                        .join("、")}
-                    </Typography.Text>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {runDetail.pendingItems.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 8,
-              }}
-            >
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                待决事项
-              </Typography.Text>
-              {runDetail.pendingItems.map((p, i) => {
-                if (p.type === "theme-preview") {
-                  const preview = readThemePreview(p);
-                  return (
-                    <div
-                      key={i}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        fontSize: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-                          等你验收预览
-                        </Tag>
-                        <span
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            fontWeight: 600,
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          {preview.themeName ?? "新主题"}
-                        </span>
-                      </div>
-                      {preview.styleSummary && (
-                        <div style={{ wordBreak: "break-word" }}>
-                          {preview.styleSummary}
-                        </div>
-                      )}
-                      {preview.pages.length > 0 && (
-                        <div style={{ wordBreak: "break-word" }}>
-                          覆盖页面：{preview.pages.join("、")}
-                        </div>
-                      )}
-                      {preview.changes.length > 0 && (
-                        <div>
-                          <div>主要变化：</div>
-                          {preview.changes.map((c, j) => (
-                            <div
-                              key={j}
-                              style={{ wordBreak: "break-word" }}
-                            >
-                              · {c}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <Typography.Text
-                        type="secondary"
-                        style={{ fontSize: 12 }}
-                      >
-                        暂不验收时，草稿会保留在原处。
-                      </Typography.Text>
-                      {preview.previewUrl ? (
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                          }}
-                        >
-                          <Button
-                            type="primary"
-                            size="small"
-                            href={preview.previewUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            disabled={acting !== null}
-                          >
-                            打开预览
-                          </Button>
-                          <Typography.Text
-                            type="secondary"
-                            style={{ fontSize: 12 }}
-                          >
-                            预览与线上绑定隔离，不影响线上呈现
-                          </Typography.Text>
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                          }}
-                        >
-                          <Typography.Text
-                            type="warning"
-                            style={{ fontSize: 12 }}
-                          >
-                            预览地址暂不可用
-                            {preview.previewError
-                              ? `：${preview.previewError}`
-                              : ""}
-                            ，请重新签发后再预览验收。
-                          </Typography.Text>
-                          <Button
-                            size="small"
-                            loading={acting === "preview-reissue"}
-                            disabled={acting !== null}
-                            onClick={() => void runAction("preview-reissue")}
-                          >
-                            重新签发预览
-                          </Button>
-                        </div>
-                      )}
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <Button
-                          type="primary"
-                          size="small"
-                          loading={acting === "preview-accept"}
-                          disabled={acting !== null}
-                          onClick={() => void runAction("preview-accept")}
-                        >
-                          确认验收
-                        </Button>
-                        <Button
-                          size="small"
-                          loading={acting === "preview-reject"}
-                          disabled={acting !== null}
-                          onClick={() => void runAction("preview-reject")}
-                        >
-                          暂不验收
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                }
-                if (p.type === "theme-bind") {
-                  const themeName =
-                    readThemePreview(p).themeName ?? "新主题";
-                  return (
-                    <div
-                      key={i}
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        fontSize: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-                          等你确认绑定
-                        </Tag>
-                        <span
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            fontWeight: 600,
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          将绑定的主题：{themeName}
-                        </span>
-                      </div>
-                      <div>目标：电脑版</div>
-                      <div style={{ wordBreak: "break-word" }}>
-                        确认后将换上该主题并重新生成页面。
-                      </div>
-                      <Typography.Text
-                        type="secondary"
-                        style={{ fontSize: 12 }}
-                      >
-                        如果不绑定，草稿会保留在原处，任务仍开着。
-                      </Typography.Text>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <Button
-                          type="primary"
-                          size="small"
-                          loading={acting === "bind-approve"}
-                          disabled={acting !== null}
-                          onClick={() => void runAction("bind-approve")}
-                        >
-                          确认绑定
-                        </Button>
-                        <Button
-                          size="small"
-                          loading={acting === "bind-reject"}
-                          disabled={acting !== null}
-                          onClick={() => void runAction("bind-reject")}
-                        >
-                          不绑定
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                }
-                return (
-                  <div
-                    key={i}
-                    style={{ display: "flex", alignItems: "center", gap: 6 }}
-                  >
-                    <span style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
-                      {p.type === "pause"
-                        ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
-                        : "终审未达标"}
-                      {p.type === "pause" &&
-                        p.recoveryActions.length > 0 &&
-                        `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
-                      {p.type === "critic" &&
-                        p.gaps.length > 0 &&
-                        `：${p.gaps.join("；")}`}
-                    </span>
-                    {p.type === "pause" &&
-                      runDetail?.run?.runStatus === "paused" && (
-                        <Button
-                          type="link"
-                          size="small"
-                          style={{ padding: 0, height: "auto", fontSize: 12 }}
-                          loading={acting === "resume"}
-                          disabled={acting !== null}
-                          onClick={() => void runAction("resume")}
-                        >
-                          继续运行
-                        </Button>
-                      )}
-                    {p.type === "pause" &&
-                      runDetail?.run?.runStatus === "paused" &&
-                      p.recoveryActions.includes("retry-nodes") && (
-                        <Button
-                          type="link"
-                          size="small"
-                          style={{ padding: 0, height: "auto", fontSize: 12 }}
-                          loading={acting === "retry-nodes"}
-                          disabled={acting !== null}
-                          onClick={() => void runAction("retry-nodes")}
-                        >
-                          重试失败节点
-                        </Button>
-                      )}
-                    {onHandlePending && (
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, height: "auto", fontSize: 12 }}
-                        onClick={onHandlePending}
-                      >
-                        去处理
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {runDetail.notifications.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 8,
-              }}
-            >
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                通知
-              </Typography.Text>
-              {runDetail.notifications.map((n, i) => (
-                <div key={i} style={{ fontSize: 12 }}>
-                  <div>{n.title}</div>
-                  {n.body && (
-                    <Typography.Text
-                      type="secondary"
-                      style={{
-                        fontSize: 12,
-                        display: "block",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {n.body}
-                    </Typography.Text>
-                  )}
-                  {n.createdAt && (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {fmtTime(n.createdAt)}
-                    </Typography.Text>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          ))}
         </div>
       )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -1018,40 +657,7 @@ export default function TaskDetail({
       {footer && (
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>{footer}</div>
       )}
-      <Modal
-        open={artifactView !== null}
-        title={
-          artifactView
-            ? `${artifactView.path}（第 ${artifactView.version} 版）`
-            : ""
-        }
-        footer={null}
-        onCancel={() => setArtifactView(null)}
-        width={720}
-      >
-        {artifactView && (
-          <div>
-            {artifactView.truncated && (
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: 12, display: "block", marginBottom: 8 }}
-              >
-                仅显示前 12000 字，全文共 {artifactView.totalChars} 字。
-              </Typography.Text>
-            )}
-            <pre
-              style={{
-                fontSize: 12,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                margin: 0,
-              }}
-            >
-              {artifactView.preview}
-            </pre>
-          </div>
-        )}
-      </Modal>
+
     </div>
   );
 }

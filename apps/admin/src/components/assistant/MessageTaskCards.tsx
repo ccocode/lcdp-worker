@@ -16,6 +16,7 @@ import {
   type AdminTaskRunDetail,
   type AdminTaskRunPending,
 } from "../../api";
+import { PAUSE_REASON_LABELS } from "./TaskDetail";
 
 /** 任务状态中文（与工作台左栏/详情同一张表） */
 const TASK_STATUS_LABELS: Record<string, string> = {
@@ -124,9 +125,8 @@ function useTaskCard(appId: string, taskId: string, refreshKey = 0) {
 }
 
 /**
- * 主题预览 payload 防御式读取（与详情的 readThemePreview 同口径：
- * 待决项 preview 字段优先、顶层同名字段回落；缺失时返回空，
- * 界面以通用文案呈现、不现编主题名）。
+ * 主题预览 payload 防御式读取（待决项 preview 字段优先、顶层
+ * 同名字段回落；缺失时返回空，界面以通用文案呈现、不现编主题名）。
  */
 function readDialogPreview(p: AdminTaskRunPending): {
   themeName: string | null;
@@ -275,13 +275,35 @@ export function PlanMessageCard({
   const runDetail = useTaskRunDetail(
     appId,
     taskId,
-    awaitingPreview || awaitingBind,
+    awaitingPreview ||
+      awaitingBind ||
+      runStatus === "failed" ||
+      runStatus === "paused",
     refreshKey,
   );
   const previewPending =
     runDetail?.pendingItems.find((p) => p.type === "theme-preview") ?? null;
   const bindPending =
     runDetail?.pendingItems.find((p) => p.type === "theme-bind") ?? null;
+  // 异常在对话框可见（2026-10-31 用户定）：run 失败 / 暂停时，
+  // 计划卡头改读 runStatus、卡上加一行原因，不开详情也能看到
+  // 为什么停；详情栏关掉也不影响。
+  const failedNode = runDetail?.nodes.find((n) => n.status === "failed");
+  const failedVerdict = runDetail?.verdicts.find((v) => v.verdict === "fail");
+  const pausePending =
+    runDetail?.pendingItems.find((p) => p.type === "pause") ?? null;
+  const criticPending =
+    runDetail?.pendingItems.find((p) => p.type === "critic") ?? null;
+  const exceptionReason =
+    runStatus === "failed"
+      ? failedNode?.error
+        ? `失败原因：${failedNode.error.slice(0, 120)}`
+        : failedVerdict && failedVerdict.acceptanceGaps.length > 0
+          ? `终审未通过：${failedVerdict.acceptanceGaps.join("；")}`
+          : null
+      : runStatus === "paused"
+        ? `暂停原因：${PAUSE_REASON_LABELS[pausePending?.reason ?? ""] ?? "等你处理"}${criticPending && criticPending.gaps.length > 0 ? `：${criticPending.gaps.join("；")}` : ""}`
+        : null;
   const [acting, setActing] = useState<string | null>(null);
   const [actError, setActError] = useState<string | null>(null);
   const act = async (
@@ -345,8 +367,21 @@ export function PlanMessageCard({
       size="small"
       title="计划"
       extra={
-        <Tag style={{ margin: 0 }}>
-          {TASK_STATUS_LABELS[task.status] ?? task.status}
+        <Tag
+          style={{ margin: 0 }}
+          color={
+            runStatus === "failed"
+              ? "red"
+              : runStatus === "paused"
+                ? "orange"
+                : undefined
+          }
+        >
+          {runStatus === "failed"
+            ? "已失败"
+            : runStatus === "paused"
+              ? "已暂停"
+              : (TASK_STATUS_LABELS[task.status] ?? task.status)}
         </Tag>
       }
       style={{
@@ -358,6 +393,14 @@ export function PlanMessageCard({
         {task.goal && (
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
             目标：{task.goal}
+          </Typography.Text>
+        )}
+        {exceptionReason && (
+          <Typography.Text
+            type={runStatus === "failed" ? "danger" : "warning"}
+            style={{ fontSize: 13, wordBreak: "break-word" }}
+          >
+            {exceptionReason}
           </Typography.Text>
         )}
         {expanded && <ChecklistRows task={task} />}
