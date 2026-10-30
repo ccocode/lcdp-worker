@@ -836,7 +836,7 @@ export default function ChatPane({
             !!msg.payload.title) && (
             <PayloadCard payload={msg.payload} onClose={onClose} />
           )}
-        {!isUser && appId && msg.payload?.planCard && (
+        {!isUser && msg.payload?.planCard && (
           <PlanMessageCard
             appId={appId}
             taskId={msg.payload.planCard.taskId}
@@ -849,7 +849,7 @@ export default function ChatPane({
             ) === index}
           />
         )}
-        {!isUser && appId && msg.payload?.delegationCard && (
+        {!isUser && msg.payload?.delegationCard && (
           <DelegationMessageCard
             appId={appId}
             taskId={msg.payload.delegationCard.taskId}

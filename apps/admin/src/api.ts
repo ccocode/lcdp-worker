@@ -1956,6 +1956,163 @@ export const api = {
         body: JSON.stringify({}),
       });
     },
+    /**
+     * 平台任务卡列表（壳统一：平台弹窗与应用弹窗同一套三栏壳，
+     * 平台任务即 app_id 为空串的计划卡；口径同应用组 tasks）。
+     */
+    async tasks(
+      opts?: { status?: string },
+    ): Promise<AdminAssistantTask[]> {
+      const status = opts?.status;
+      const qs =
+        status === undefined || status === "active"
+          ? "?status=active"
+          : status === "all" || status === ""
+            ? ""
+            : `?status=${encodeURIComponent(status)}`;
+      const res = await apiFetch<{ tasks: AdminAssistantTask[] }>(
+        `/admin/assistant/tasks${qs}`,
+      );
+      return Array.isArray(res.tasks) ? res.tasks : [];
+    },
+    /**
+     * 平台任务 run 详情（口径同应用组 taskRun）。
+     */
+    async taskRun(
+      taskId: string,
+    ): Promise<AdminTaskRunDetail | null> {
+      try {
+        const res = await apiFetch<AdminTaskRunDetail>(
+          `/admin/assistant/tasks/${encodeURIComponent(taskId)}/run`,
+        );
+        return res && typeof res === "object" ? res : null;
+      } catch {
+        return null;
+      }
+    },
+    /**
+     * 平台任务 run 产物正文（口径同应用组 taskRunArtifact）。
+     */
+    async taskRunArtifact(
+      taskId: string,
+      artifactId: string,
+      version?: number,
+    ): Promise<AdminTaskRunArtifactContent | null> {
+      try {
+        const qs =
+          `?artifactId=${encodeURIComponent(artifactId)}` +
+          (version != null ? `&version=${version}` : "");
+        const res = await apiFetch<AdminTaskRunArtifactContent>(
+          `/admin/assistant/tasks/${encodeURIComponent(taskId)}/run/artifacts${qs}`,
+        );
+        return res && typeof res === "object" ? res : null;
+      } catch {
+        return null;
+      }
+    },
+    /**
+     * 平台任务 run 继续（口径同应用组 resumeRun）。
+     */
+    async resumeRun(taskId: string): Promise<void> {
+      await apiFetch(
+        `/admin/assistant/tasks/${encodeURIComponent(taskId)}/run/resume`,
+        { method: "POST" },
+      );
+    },
+    /**
+     * 平台任务 run 重试失败节点（口径同应用组 retryRunNodes）。
+     */
+    async retryRunNodes(taskId: string): Promise<string[]> {
+      const res = await apiFetch<{ retriedNodes?: string[] }>(
+        `/admin/assistant/tasks/${encodeURIComponent(taskId)}/run/retry-nodes`,
+        { method: "POST" },
+      );
+      return Array.isArray(res?.retriedNodes) ? res.retriedNodes : [];
+    },
+    /**
+     * 平台任务 run 执行记录流（口径同应用组 streamTaskRun，路径走平台侧）。
+     */
+    streamTaskRun(
+      taskId: string,
+      onEvent: (ev: { type: string; data: unknown }) => void,
+    ): () => void {
+      let stopped = false;
+      let terminalSeen = false;
+      let ctrl: AbortController | null = null;
+      const sleep = (ms: number) =>
+        new Promise((resolve) => setTimeout(resolve, ms));
+      const pump = async () => {
+        let delay = 1000;
+        while (!stopped && !terminalSeen) {
+          ctrl = new AbortController();
+          try {
+            const token = getToken();
+            const res = await fetch(
+              `${API_BASE}/admin/assistant/tasks/${encodeURIComponent(taskId)}/run/stream`,
+              {
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                  Accept: "text/event-stream",
+                },
+                signal: ctrl.signal,
+              },
+            );
+            if (res.status === 404 || res.status === 401) return;
+            if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
+            delay = 1000;
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+            const handleRaw = (raw: string) => {
+              let name = "message";
+              let payload = "";
+              for (const line of raw.split("\n")) {
+                if (line.startsWith("event:")) name = line.slice(6).trim();
+                else if (line.startsWith("data:"))
+                  payload += line.slice(5).trim();
+                // id: 行与冒号注释行（心跳）直接忽略：重连首包
+                // 即全量 snapshot，不靠 Last-Event-ID 续播。
+              }
+              if (!payload) return;
+              try {
+                const data = JSON.parse(payload) as unknown;
+                if (name === "terminal") terminalSeen = true;
+                onEvent({ type: name, data });
+              } catch {
+                // 坏帧跳过，不断流
+              }
+            };
+            for (;;) {
+              if (stopped) break;
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              let idx = buf.indexOf("\n\n");
+              while (idx >= 0) {
+                handleRaw(buf.slice(0, idx));
+                buf = buf.slice(idx + 2);
+                idx = buf.indexOf("\n\n");
+              }
+            }
+          } catch {
+            if (stopped || ctrl?.signal.aborted) break;
+            // 瞬时失败退避重连；terminal 已见时不再重连。
+          }
+          if (stopped || terminalSeen) break;
+          await sleep(delay);
+          delay = Math.min(delay * 2, 10000);
+        }
+      };
+      void pump();
+      return () => {
+        stopped = true;
+        try {
+          ctrl?.abort();
+        } catch {
+          // 忽略
+        }
+      };
+    },
     /** 应用组：同一组四件，路径挂在当前应用下（运营助手） */
     app: {
       async chat(

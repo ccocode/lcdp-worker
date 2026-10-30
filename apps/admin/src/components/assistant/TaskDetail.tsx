@@ -102,8 +102,8 @@ export default function TaskDetail({
 }: {
   task: AdminAssistantTask;
   footer?: ReactNode;
-  /** 传了且任务有 runId 时才取 run 详情（不传则不取数） */
-  appId?: string;
+  /** 传了且任务有 runId 时才取 run 详情（不传则不取数；传 null 走平台侧） */
+  appId?: string | null;
   /** 待决事项的处理入口（不传则只展示） */
   onHandlePending?: () => void;
 }) {
@@ -112,14 +112,17 @@ export default function TaskDetail({
   const [runTick, setRunTick] = useState(0);
   const [acting, setActing] = useState<string | null>(null);
   useEffect(() => {
-    if (!appId || !task.runId) {
+    if (appId === undefined || !task.runId) {
       setRunDetail(null);
       return;
     }
     let alive = true;
     setRunLoading(true);
-    void api.assistant.app
-      .taskRun(appId, task.id)
+    const runPromise =
+      appId === null
+        ? api.assistant.taskRun(task.id)
+        : api.assistant.app.taskRun(appId, task.id);
+    void runPromise
       .then((res) => {
         if (alive) setRunDetail(res);
       })
@@ -161,26 +164,26 @@ export default function TaskDetail({
    * 客户端不再重连。订阅失败静默降级为打开时那一次。
    */
   useEffect(() => {
-    if (!appId || !task.runId) return;
+    if (appId === undefined || !task.runId) return;
     let first = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const off = api.assistant.app.streamTaskRun(
-      appId,
-      task.id,
-      (ev) => {
-        if (first) {
-          first = false;
-          return;
-        }
-        if (ev.type === "snapshot") return;
-        // 同一轮多个事件只合成为一次重拉（500ms 节流）。
-        if (timer) return;
-        timer = setTimeout(() => {
-          timer = null;
-          setRunTick((t) => t + 1);
-        }, 500);
-      },
-    );
+    const onEvent = (ev: { type: string; data: unknown }) => {
+      if (first) {
+        first = false;
+        return;
+      }
+      if (ev.type === "snapshot") return;
+      // 同一轮多个事件只合成为一次重拉（500ms 节流）。
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        setRunTick((t) => t + 1);
+      }, 500);
+    };
+    const off =
+      appId === null
+        ? api.assistant.streamTaskRun(task.id, onEvent)
+        : api.assistant.app.streamTaskRun(appId, task.id, onEvent);
     return () => {
       if (timer) clearTimeout(timer);
       off();
@@ -191,11 +194,16 @@ export default function TaskDetail({
    * 预览与绑定只在对话框里点，详情里不给入口。
    */
   const runAction = async (kind: "resume" | "retry-nodes") => {
-    if (!appId || acting) return;
+    if (appId === undefined || acting) return;
     setActing(kind);
     try {
-      if (kind === "resume") await api.assistant.app.resumeRun(appId, task.id);
-      else await api.assistant.app.retryRunNodes(appId, task.id);
+      if (kind === "resume") {
+        if (appId === null) await api.assistant.resumeRun(task.id);
+        else await api.assistant.app.resumeRun(appId, task.id);
+      } else {
+        if (appId === null) await api.assistant.retryRunNodes(task.id);
+        else await api.assistant.app.retryRunNodes(appId, task.id);
+      }
       // 成功后重拉 run 详情，界面随重拉结果刷新。
       setRunTick((t) => t + 1);
     } catch {

@@ -6,9 +6,7 @@ import {
   MinusOutlined,
   RobotOutlined,
 } from "@ant-design/icons";
-import ChatPane, {
-  type AssistantPageContext,
-} from "./assistant/ChatPane";
+import type { AssistantPageContext } from "./assistant/ChatPane";
 import AssistantWorkbench from "./assistant/AssistantWorkbench";
 import { hasRunningAssistantTask } from "./assistant/assistantRunning";
 import { api } from "../api";
@@ -19,9 +17,10 @@ export type { AssistantPageContext };
  * 管理台助手弹窗（第 103 步步骤 6）：外壳层唯一助手入口的壳，挂在
  * AppShell 内、路由视图之外——页内跳转不卸载、不重置；弹窗状态只
  * 属于外壳，不属于任何一页。内容复用既有组件，不重写对话核：
- * 应用上下文 = 助手工作台三栏（左会话 + 任务 / 中对话 / 右任务详情
- * + 记忆速览）；平台上下文 = 对话面（抽屉口径，平台侧无任务列表
- * 接口，运行中提示只覆盖应用侧）。
+ * 两边同一套壳：助手工作台三栏（左会话 / 中对话 / 右任务详情
+ * + 记忆速览），上下文不同只换数据面（平台侧走平台任务接口，
+ * 应用侧走应用任务接口），壳本身不分两种形态；能力差异只按
+ * 角色（平台角色大于应用角色，应用的管理大于应用的运营）。
  * 形态（设计稿 §4.5）：可最小化（缩成右下角小条，任务在跑时显
  * 进行中状态）；左、右两侧均可收起、只留对话，右侧默认收起，左
  * 侧默认展开；收起与最小化只记本会话（刷新即回默认，不持久化）；
@@ -48,7 +47,7 @@ export default function AssistantModal({
   /** 页内入口带来的任务定位信号（透传工作台选中对应任务卡） */
   focusTask?: { taskId: string; nonce: number } | null;
 }) {
-  /** 新对话代次（仅平台对话面用；应用侧工作台自带新对话控制） */
+  /** 新对话代次（标题栏“新对话”按钮用，两边同壳后透传工作台 freshNonce） */
   const [seed, setSeed] = useState(0);
   const [minimized, setMinimized] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -106,11 +105,12 @@ export default function AssistantModal({
   }, []);
 
   const refreshRunning = useCallback(async () => {
-    if (!appId) return false;
     try {
-      const list = await api.assistant.app.tasks(appId, {
-        status: "active",
-      });
+      const list = appId
+        ? await api.assistant.app.tasks(appId, {
+            status: "active",
+          })
+        : await api.assistant.tasks({ status: "active" });
       const v = hasRunningAssistantTask(list);
       setRunningBoth(v);
       return v;
@@ -121,7 +121,7 @@ export default function AssistantModal({
 
   // 轮询任务在跑状态（供刷新提示用；关闭与切换另取实时值）
   useEffect(() => {
-    if (!open || !appId) {
+    if (!open) {
       setRunningBoth(false);
       return;
     }
@@ -157,13 +157,9 @@ export default function AssistantModal({
     onClose();
   }, [onClose]);
 
-  // 受 guard 的关闭：X / 遮罩 / Esc / 对话面关闭均走这里；应用侧
-  // 任务在跑时先弹确认，确认后才关；平台侧无任务面，直接关。
+  // 受 guard 的关闭：X / 遮罩 / Esc / 对话面关闭均走这里；任务在
+  // 跑时先弹确认，确认后才关（两边同壳后平台侧也有任务面）。
   const requestClose = useCallback(async () => {
-    if (!appId) {
-      doClose();
-      return;
-    }
     const isRunning = await refreshRunning();
     if (!isRunning) {
       doClose();
@@ -176,7 +172,7 @@ export default function AssistantModal({
       cancelText: "取消",
       onOk: () => doClose(),
     });
-  }, [appId, doClose, refreshRunning]);
+  }, [doClose, refreshRunning]);
 
   /** 标题统一为平台助手（用户 2026-10-31 定）：上下文改由问候语区分，
    * 标题不再随上下文变；应用内仍是同一壳里的应用运营上下文。 */
@@ -237,7 +233,7 @@ export default function AssistantModal({
         // 按钮组内的按下不触发标题拖拽
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {appId && !narrow && (
+        {!narrow && (
           <>
             <Button
               size="small"
@@ -259,12 +255,10 @@ export default function AssistantModal({
             >
               详情
             </Button>
+            <Button size="small" onClick={() => setSeed((s) => s + 1)}>
+              新对话
+            </Button>
           </>
-        )}
-        {!appId && (
-          <Button size="small" onClick={() => setSeed((s) => s + 1)}>
-            新对话
-          </Button>
         )}
         <Button
           size="small"
@@ -279,7 +273,7 @@ export default function AssistantModal({
   /**
    * 对话内容宽度固定（用户修订）：弹窗宽度跟随可见面板变化——
    * 对话固定 720px，左栏 264px、右栏 300px，收起即减去对应宽度；
-   * 窄屏时宽度跟随当前面板；平台面无面板即 720px。
+   * 窄屏时宽度跟随当前面板（两边同壳，平台面亦然）。
    * 另加 antd Modal 内容横向内边距 48px（左右各 24）：不加时
    * 工作台实际可用宽少 48，中栏只剩 672，注释的 720 不成立
    * （2026-10-29 宽度复现定案）。
@@ -289,17 +283,15 @@ export default function AssistantModal({
   const RIGHT_WIDTH = 300;
   const MODAL_CONTENT_PADDING_X = 48;
   const modalWidth =
-    (!appId
-      ? CHAT_WIDTH
-      : narrow
-        ? narrowTab === "chat"
-          ? CHAT_WIDTH
-          : narrowTab === "left"
-            ? LEFT_WIDTH
-            : RIGHT_WIDTH
-        : CHAT_WIDTH +
-          (leftCollapsed ? 0 : LEFT_WIDTH) +
-          (rightCollapsed ? 0 : RIGHT_WIDTH)) + MODAL_CONTENT_PADDING_X;
+    (narrow
+      ? narrowTab === "chat"
+        ? CHAT_WIDTH
+        : narrowTab === "left"
+          ? LEFT_WIDTH
+          : RIGHT_WIDTH
+      : CHAT_WIDTH +
+        (leftCollapsed ? 0 : LEFT_WIDTH) +
+        (rightCollapsed ? 0 : RIGHT_WIDTH)) + MODAL_CONTENT_PADDING_X;
 
   return (
     <Modal
@@ -341,7 +333,7 @@ export default function AssistantModal({
       }}
     >
       {/* 窄屏时标题栏不放按钮，面板切换仍用体内这一行 */}
-      {appId && narrow && (
+      {narrow && (
         <div
           style={{
             padding: "8px 12px",
@@ -362,39 +354,22 @@ export default function AssistantModal({
         </div>
       )}
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        {appId ? (
-          <AssistantWorkbench
-            key={appId}
-            appId={appId}
-            appName={appName}
-            focusTask={focusTask}
-            leftCollapsed={leftCollapsed}
-            rightCollapsed={rightCollapsed}
-            activePane={narrow ? narrowTab : null}
-            onExpandRight={() => {
-              setRightCollapsed(false);
-              setNarrowTab("right");
-            }}
-            style={{ height: "100%", border: "none", borderRadius: 0 }}
-          />
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <ChatPane
-              key={`platform:${seed}`}
-              appId={null}
-              fresh={seed > 0}
-              pageContext={context}
-              onClose={doClose}
-            />
-          </div>
-        )}
+        <AssistantWorkbench
+          key={appId ?? "platform"}
+          appId={appId}
+          appName={appName}
+          focusTask={focusTask}
+          leftCollapsed={leftCollapsed}
+          rightCollapsed={rightCollapsed}
+          activePane={narrow ? narrowTab : null}
+          freshNonce={seed}
+          pageContext={appId ? undefined : context}
+          onExpandRight={() => {
+            setRightCollapsed(false);
+            setNarrowTab("right");
+          }}
+          style={{ height: "100%", border: "none", borderRadius: 0 }}
+        />
       </div>
     </Modal>
   );

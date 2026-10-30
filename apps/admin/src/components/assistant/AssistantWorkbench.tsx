@@ -14,7 +14,7 @@ import {
   type AdminAssistantTask,
 } from "../../api";
 import { fmtTime } from "../../helpers";
-import ChatPane from "./ChatPane";
+import ChatPane, { type AssistantPageContext } from "./ChatPane";
 import TaskDetail from "./TaskDetail";
 import type { DelegationViewTarget } from "./MessageTaskCards";
 import { MEMORY_CATEGORY_LABELS } from "./AssistantMemoryPanel";
@@ -50,7 +50,7 @@ function DelegationDetail({
   appId,
   target,
 }: {
-  appId: string;
+  appId: string | null;
   target: DelegationViewTarget;
 }) {
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
@@ -59,10 +59,12 @@ function DelegationDetail({
     let alive = true;
     (async () => {
       try {
-        const detail = await api.assistant.app.conversation(
-          appId,
-          target.childConversationId,
-        );
+        const detail = appId
+          ? await api.assistant.app.conversation(
+              appId,
+              target.childConversationId,
+            )
+          : await api.assistant.conversation(target.childConversationId);
         if (alive) setMessages(detail.messages);
       } catch {
         if (alive) setFailed(true);
@@ -128,9 +130,15 @@ export default function AssistantWorkbench({
   rightCollapsed,
   activePane,
   style,
+  freshNonce,
+  pageContext,
 }: {
-  appId: string;
+  appId: string | null;
   appName?: string | null;
+  /** 弹窗标题栏“新对话”信号：代次变化时开一个全新会话（两边同壳后平台与应用共用此入口） */
+  freshNonce?: number;
+  /** 页内入口带来的页面上下文（弹窗平台侧沿用 AppShell 的当前页上下文；不传则工作台自造） */
+  pageContext?: AssistantPageContext;
   /** 弹窗壳：打开子代理详情时把右侧展开（默认收起时否则点后无可见变化） */
   onExpandRight?: () => void;
   /** 第 103 步步骤 6：弹窗壳的收起与窄屏控制（页内工作台不用，默认全展开） */
@@ -177,7 +185,11 @@ export default function AssistantWorkbench({
 
   const loadConversations = useCallback(async () => {
     try {
-      setConversations(await api.assistant.app.conversations(appId));
+      setConversations(
+        appId
+          ? await api.assistant.app.conversations(appId)
+          : await api.assistant.conversations(),
+      );
     } catch {
       // 静默：左栏保持空
     }
@@ -190,7 +202,9 @@ export default function AssistantWorkbench({
    */
   const loadAllTasks = useCallback(async (): Promise<AdminAssistantTask[]> => {
     try {
-      const list = await api.assistant.app.tasks(appId, { status: "all" });
+      const list = appId
+        ? await api.assistant.app.tasks(appId, { status: "all" })
+        : await api.assistant.tasks({ status: "all" });
       setTasks(list);
       const ids = new Set<string>();
       for (const t of list) {
@@ -320,6 +334,20 @@ export default function AssistantWorkbench({
     setSelectedTaskId(null);
   };
 
+  // 弹窗标题栏“新对话”：代次变化即开全新会话；首挂载跳过（上下文
+  // 切换重挂载时只显最新会话，不因沿用代次误开新会话）
+  const freshNonceFirst = useRef(true);
+  useEffect(() => {
+    if (freshNonceFirst.current) {
+      freshNonceFirst.current = false;
+      return;
+    }
+    if (!freshNonce) return;
+    startNew();
+    // 仅以 freshNonce 为触发信号
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freshNonce]);
+
   /** 任务卡「继续」：选中该卡 + 把续办草稿灌进对话面输入框 */
   const continueTask = (task: AdminAssistantTask) => {
     setSelectedTaskId(task.id);
@@ -437,12 +465,14 @@ export default function AssistantWorkbench({
           appId={appId}
           fresh={session.fresh}
           initialConversationId={session.cid}
-          pageContext={{
-            path: window.location.pathname + window.location.search,
-            pageName: "智能服务 · 助手工作台",
-            appId,
-            segment: "app",
-          }}
+          pageContext={
+            pageContext ?? {
+              path: window.location.pathname + window.location.search,
+              pageName: "智能服务 · 助手工作台",
+              appId,
+              segment: appId ? "app" : "platform",
+            }
+          }
           hideTaskBar
           draftSignal={draftSignal}
           onOpenDelegation={openDelegation}

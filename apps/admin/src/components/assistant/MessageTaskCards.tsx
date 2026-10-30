@@ -89,7 +89,7 @@ function readDelegations(task: AdminAssistantTask): DelegationRecord[] {
 }
 
 /** 读一张任务卡（全部状态里找；找不到即已不在列表中） */
-function useTaskCard(appId: string, taskId: string, refreshKey = 0) {
+function useTaskCard(appId: string | null, taskId: string, refreshKey = 0) {
   const [task, setTask] = useState<AdminAssistantTask | null>(null);
   const [missing, setMissing] = useState(false);
   useEffect(() => {
@@ -97,9 +97,11 @@ function useTaskCard(appId: string, taskId: string, refreshKey = 0) {
     let timer: ReturnType<typeof setInterval> | undefined;
     const load = async () => {
       try {
-        const tasks = await api.assistant.app.tasks(appId, {
-          status: "all",
-        });
+        const tasks = appId
+          ? await api.assistant.app.tasks(appId, {
+              status: "all",
+            })
+          : await api.assistant.tasks({ status: "all" });
         if (!alive) return;
         const found = tasks.find((t) => t.id === taskId) ?? null;
         setTask(found);
@@ -164,7 +166,7 @@ function readDialogPreview(p: AdminTaskRunPending): {
  * 取不到时返回 null，卡片以通用文案 + 按钮回落，不阻塞验收。
  */
 function useTaskRunDetail(
-  appId: string,
+  appId: string | null,
   taskId: string,
   enabled: boolean,
   refreshKey = 0,
@@ -179,7 +181,9 @@ function useTaskRunDetail(
     let timer: ReturnType<typeof setInterval> | undefined;
     const load = async () => {
       try {
-        const res = await api.assistant.app.taskRun(appId, taskId);
+        const res = appId
+          ? await api.assistant.app.taskRun(appId, taskId)
+          : await api.assistant.taskRun(taskId);
         if (alive) setDetail(res);
       } catch {
         // 静默：卡片回落为通用文案，详情里仍可看完整待决
@@ -239,7 +243,7 @@ export function PlanMessageCard({
   onOpenTask,
   autoOpen,
 }: {
-  appId: string;
+  appId: string | null;
   taskId: string;
   /** 工作台：卡片“查看详情”（右侧打开该任务详情）；不传则不渲染 */
   onOpenTask?: (taskId: string) => void;
@@ -314,7 +318,7 @@ export function PlanMessageCard({
       | "bind-approve"
       | "bind-reject",
   ) => {
-    if (acting) return;
+    if (acting || appId === null) return; // 主题审批只走应用侧，平台任务不会有此类待决项
     setActing(kind);
     setActError(null);
     try {
@@ -648,7 +652,7 @@ export function DelegationMessageCard({
   index,
   onOpenDelegation,
 }: {
-  appId: string;
+  appId: string | null;
   taskId: string;
   index: number;
   onOpenDelegation?: (target: DelegationViewTarget) => void;
