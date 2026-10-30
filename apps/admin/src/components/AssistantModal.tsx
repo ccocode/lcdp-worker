@@ -178,8 +178,9 @@ export default function AssistantModal({
     });
   }, [appId, doClose, refreshRunning]);
 
-  /** 标题不带应用名（用户修订）：只留助手身份 */
-  const title = appId ? "运营助手" : "平台助手";
+  /** 标题统一为平台助手（用户 2026-10-31 定）：上下文改由问候语区分，
+   * 标题不再随上下文变；应用内仍是同一壳里的应用运营上下文。 */
+  const title = "平台助手";
 
   if (!open) return null;
 
