@@ -311,7 +311,7 @@ export function PlanMessageCard({
           ? `终审未通过：${failedVerdict.acceptanceGaps.join("；")}`
           : null
       : runStatus === "paused"
-        ? `暂停原因：${PAUSE_REASON_LABELS[pausePending?.reason ?? ""] ?? "等你处理"}${criticPending && criticPending.gaps.length > 0 ? `：${criticPending.gaps.join("；")}` : ""}`
+        ? `暂停原因：${PAUSE_REASON_LABELS[pausePending?.reason ?? ""] ?? "等你处理"}${pausePending?.detail ? `（${pausePending.detail}）` : ""}${criticPending && criticPending.gaps.length > 0 ? `：${criticPending.gaps.join("；")}` : ""}`
         : null;
   const [acting, setActing] = useState<string | null>(null);
   const [actError, setActError] = useState<string | null>(null);

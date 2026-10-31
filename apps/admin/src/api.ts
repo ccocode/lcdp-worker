@@ -575,6 +575,8 @@ export interface AdminTaskRunPending {
   recoveryActions: string[];
   gaps: string[];
   createdAt: string | null;
+  /** 暂停子检查详情（预览门暂停时为就绪门子检查原文） */
+  detail?: string | null;
   themeName?: string | null;
   styleSummary?: string | null;
   pages?: string[] | null;

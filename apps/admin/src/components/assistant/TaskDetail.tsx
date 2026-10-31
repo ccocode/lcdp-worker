@@ -611,6 +611,7 @@ export default function TaskDetail({
                 {p.type === "pause"
                   ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
                   : "终审未达标"}
+                {p.type === "pause" && p.detail ? `（${p.detail}）` : ""}
                 {p.type === "pause" &&
                   p.recoveryActions.length > 0 &&
                   `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
