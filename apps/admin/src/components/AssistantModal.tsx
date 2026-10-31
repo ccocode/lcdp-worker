@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Button, Modal, Segmented } from "antd";
+import { Badge, Button, Modal, Segmented, Select } from "antd";
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -38,6 +38,10 @@ export default function AssistantModal({
   appName,
   context,
   focusTask,
+  isAdmin,
+  operableApps,
+  forcedAppId,
+  onForcedAppIdChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -46,6 +50,11 @@ export default function AssistantModal({
   context?: AssistantPageContext;
   /** 页内入口带来的任务定位信号（透传工作台选中对应任务卡） */
   focusTask?: { taskId: string; nonce: number } | null;
+  /** 平台管理员才有：对话框内显式切换的上下文开关 */
+  isAdmin: boolean;
+  operableApps: { id: string; name: string }[];
+  forcedAppId: string | null;
+  onForcedAppIdChange: (id: string | null) => void;
 }) {
   /** 新对话代次（标题栏“新对话”按钮用，两边同壳后透传工作台 freshNonce） */
   const [seed, setSeed] = useState(0);
@@ -173,6 +182,29 @@ export default function AssistantModal({
       onOk: () => doClose(),
     });
   }, [doClose, refreshRunning]);
+
+  // 对话框内显式切换上下文（2026-10-31 角色锚定，平台管理员专用）：
+  // 任务在跑时先确认（任务留在旧上下文任务卡、切回可续跑），与顶栏
+  // 切应用的确认口径一致；切换后工作台按 appId 重挂载、换新会话面。
+  // 点菜单与拨顶栏选择器都不动这里。
+  const switchContext = useCallback(
+    async (id: string | null) => {
+      const isRunning = await refreshRunning();
+      if (!isRunning) {
+        onForcedAppIdChange(id);
+        return;
+      }
+      Modal.confirm({
+        title: "助手正在执行任务",
+        content:
+          "切换上下文后任务留在旧上下文任务卡、切回可续跑，是否切换？",
+        okText: "切换",
+        cancelText: "取消",
+        onOk: () => onForcedAppIdChange(id),
+      });
+    },
+    [onForcedAppIdChange, refreshRunning],
+  );
 
   /** 标题统一为平台助手（用户 2026-10-31 定）：上下文改由问候语区分，
    * 标题不再随上下文变；应用内仍是同一壳里的应用运营上下文。 */
@@ -357,6 +389,43 @@ export default function AssistantModal({
           />
         </div>
       )}
+      {/* 对话框内显式切换上下文（平台管理员专用）：点菜单与拨顶栏
+          选择器都不动这里；主题生成与绑定需在应用运营上下文办理。 */}
+      {isAdmin && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderBottom: "1px solid #f0f0f0",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span style={{ color: "#666", whiteSpace: "nowrap" }}>
+            {forcedAppId
+              ? `上下文：${appName ?? "该应用"}运营`
+              : "上下文：平台（超集）"}
+          </span>
+          {forcedAppId ? (
+            <Button size="small" onClick={() => void switchContext(null)}>
+              回平台上下文
+            </Button>
+          ) : (
+            <Select<string>
+              size="small"
+              placeholder="切换到应用运营上下文（主题生成与绑定需在此办理）"
+              style={{ flex: 1, minWidth: 200 }}
+              value={undefined}
+              disabled={operableApps.length === 0}
+              onChange={(v) => void switchContext(v)}
+              options={operableApps.map((a) => ({
+                value: a.id,
+                label: a.name,
+              }))}
+            />
+          )}
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <AssistantWorkbench
           key={appId ?? "platform"}
@@ -367,7 +436,7 @@ export default function AssistantModal({
           rightCollapsed={rightCollapsed}
           activePane={narrow ? narrowTab : null}
           freshNonce={seed}
-          pageContext={appId ? undefined : context}
+          pageContext={context}
           onExpandRight={() => {
             setRightCollapsed(false);
             setNarrowTab("right");

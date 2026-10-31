@@ -177,8 +177,12 @@ export default function AppShell() {
     return resolvePath();
   });
   const [page, setPage] = useState<PageKey>(route0.page);
-  /** 管理台助手抽屉开合（第 83 步片四）：上下文跟随当前应用 */
+  /** 管理台助手弹窗开合 */
   const [assistantOpen, setAssistantOpen] = useState(false);
+  /** 平台管理员在对话框内显式切的应用运营上下文（2026-10-31
+   * 角色锚定）：只由对话框内的明确动作设定/清除，点菜单与拨选
+   * 择器都不动它；非 admin 不用（对话框恒为选择器当前应用）。 */
+  const [forcedAppId, setForcedAppId] = useState<string | null>(null);
   /** 页内入口带来的任务定位信号（开弹窗时透传工作台，关弹窗即清） */
   const [modalFocusTask, setModalFocusTask] = useState<{
     taskId: string;
@@ -630,6 +634,23 @@ export default function AppShell() {
   };
   const pageNode = effectiveDef.render(ctx);
 
+  // 对话框有效上下文（2026-10-31 角色锚定，取代按页分区）：
+  // 能力按角色——平台管理员默认平台超集（forcedAppId 为空时），
+  // 运营者恒为选择器当前应用；点菜单不改变上下文与提示。
+  // 默认目标应用取顶栏选择器的当前应用（见下方 context.appId），
+  // 不取当前页。forcedAppId 不在可运营集内时回落平台，不阻塞。
+  const effectiveForcedAppId =
+    isAdmin && forcedAppId && operableApps.some((a) => a.id === forcedAppId)
+      ? forcedAppId
+      : null;
+  const dialogAppId = isAdmin ? effectiveForcedAppId : appId;
+  const dialogAppName = dialogAppId
+    ? (operableApps.find((a) => a.id === dialogAppId)?.name ??
+      (currentApp && typeof currentApp.name === "string"
+        ? currentApp.name
+        : null))
+    : null;
+
   return (
     <Layout style={{ minHeight: "100vh" }}>
       <Sider
@@ -723,9 +744,11 @@ export default function AppShell() {
                 // 第 103 步步骤 6：弹窗打开且旧应用有任务在跑时，切应用
                 // 前先提示（确认后切上下文、任务留在旧应用任务卡；取消
                 // 则不切换，Select 受控值保持旧应用）。查不到任务状态
-                // 时不拦切换。
+                // 时不拦切换。2026-10-31 角色锚定：平台管理员拨选择器
+                // 不动对话框上下文（平台超集或已显式切的应用上下文），
+                // 故不提示；运营者切选择器即切对话框上下文，仍提示。
                 void (async () => {
-                  if (assistantOpen && appId) {
+                  if (assistantOpen && appId && !isAdmin) {
                     try {
                       const list = await api.assistant.app.tasks(appId, {
                         status: "active",
@@ -780,10 +803,13 @@ export default function AppShell() {
           </AssistantShellContext.Provider>
         </Content>
       </Layout>
-      {/* 助手上下文按当前页所在区划分（第 83 步片四）：平台区页
-          （segment=platform，如工作台/智能服务）传 null → 平台助手；
-          应用内页传当前应用 → 运营助手。上下文切换时 AssistantModal
-          内部按 appId 重挂载内容，换上下文即换新会话面。
+      {/* 助手上下文按角色锚定（2026-10-31，取代第 83 步片四的按页
+          分区）：平台管理员默认平台超集、运营者恒为选择器当前应用；
+          平台管理员在对话框内显式切应用运营上下文（forcedAppId）后
+          才走应用上下文，切换只由对话框内动作触发。上下文切换时
+          AssistantModal 内部按 appId 重挂载内容，换上下文即换新会话面。
+          页面上下文的 appId 恒为顶栏选择器当前应用（默认目标），不
+          再随页面所在区归空。
           第 103 步步骤 6：顶栏按钮改开弹窗壳，抽屉组件保留在仓内
           作回退（不再挂载）。 */}
       <AssistantModal
@@ -793,20 +819,18 @@ export default function AppShell() {
           setModalFocusTask(null);
         }}
         focusTask={modalFocusTask}
-        appId={effectiveDef.segment === "platform" ? null : appId}
-        appName={
-          effectiveDef.segment !== "platform" &&
-          currentApp &&
-          typeof currentApp.name === "string"
-            ? currentApp.name
-            : null
-        }
+        appId={dialogAppId}
+        appName={dialogAppName}
+        isAdmin={isAdmin}
+        operableApps={operableApps}
+        forcedAppId={effectiveForcedAppId}
+        onForcedAppIdChange={setForcedAppId}
         context={{
-          // 第 90 步线 A4：页面上下文带入——与上方 appId 同口径
-          // （平台段归平台），实体只在数据页且已定位时带、不硬造
+          // 第 90 步线 A4：页面上下文带入——appId 恒为顶栏选择器
+          // 当前应用（默认目标），实体只在数据页且已定位时带、不硬造
           path: window.location.pathname + window.location.search,
           pageName: effectiveDef.label,
-          appId: effectiveDef.segment === "platform" ? null : appId,
+          appId,
           segment: effectiveDef.segment,
           ...(effectivePage === "data" && dataEntity
             ? { entityKey: dataEntity }
