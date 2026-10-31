@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Button, Modal, Segmented, Select } from "antd";
+import { Badge, Button, Modal, Segmented } from "antd";
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -329,6 +329,11 @@ export default function AssistantModal({
         (leftCollapsed ? 0 : LEFT_WIDTH) +
         (rightCollapsed ? 0 : RIGHT_WIDTH)) + MODAL_CONTENT_PADDING_X;
 
+  // 切换条进入目标：顶栏当前应用（context.appId 在可运营集内时才有）
+  const selectorApp = context?.appId
+    ? operableApps.find((a) => a.id === context.appId)
+    : undefined;
+
   return (
     <Modal
       title={titleNode}
@@ -389,43 +394,45 @@ export default function AssistantModal({
           />
         </div>
       )}
-      {/* 对话框内显式切换上下文（平台管理员专用）：点菜单与拨顶栏
-          选择器都不动这里；主题生成与绑定需在应用运营上下文办理。 */}
-      {isAdmin && (
-        <div
-          style={{
-            padding: "8px 12px",
-            borderBottom: "1px solid #f0f0f0",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <span style={{ color: "#666", whiteSpace: "nowrap" }}>
-            {forcedAppId
-              ? `上下文：${appName ?? "该应用"}运营`
-              : "上下文：平台（超集）"}
-          </span>
-          {forcedAppId ? (
-            <Button size="small" onClick={() => void switchContext(null)}>
-              回平台上下文
-            </Button>
-          ) : (
-            <Select<string>
-              size="small"
-              placeholder="切换到应用运营上下文（主题生成与绑定需在此办理）"
-              style={{ flex: 1, minWidth: 200 }}
-              value={undefined}
-              disabled={operableApps.length === 0}
-              onChange={(v) => void switchContext(v)}
-              options={operableApps.map((a) => ({
-                value: a.id,
-                label: a.name,
-              }))}
-            />
-          )}
-        </div>
-      )}
+      {/* 对话框内显式切换上下文（平台管理员专用）：选应用的地方只
+          有顶栏一处，切换条只是进出开关——进入的目标恒为顶栏当前
+          应用（context.appId），不另设选择器。已切时恒显（回平台）；
+          未切时仅顶栏有当前应用时出现进入按钮；零应用或清空选择
+          器时不出现进入项。主题生成与绑定需在应用运营上下文办理。 */}
+      {isAdmin && (forcedAppId || selectorApp) && (
+          <div
+            style={{
+              padding: "8px 12px",
+              borderBottom: "1px solid #f0f0f0",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <span style={{ color: "#666", whiteSpace: "nowrap" }}>
+              {forcedAppId
+                ? `上下文：${appName ?? "该应用"}运营`
+                : "上下文：平台（超集）"}
+            </span>
+            {forcedAppId ? (
+              <Button size="small" onClick={() => void switchContext(null)}>
+                回平台上下文
+              </Button>
+            ) : (
+              <>
+                <Button
+                  size="small"
+                  onClick={() => void switchContext(selectorApp!.id)}
+                >
+                  进入「{selectorApp!.name}」运营上下文
+                </Button>
+                <span style={{ color: "#999" }}>
+                  主题生成与绑定需在此办理
+                </span>
+              </>
+            )}
+          </div>
+        )}
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <AssistantWorkbench
           key={appId ?? "platform"}
