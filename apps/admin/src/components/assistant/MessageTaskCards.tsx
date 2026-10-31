@@ -318,19 +318,34 @@ export function PlanMessageCard({
       | "bind-approve"
       | "bind-reject",
   ) => {
-    if (acting || appId === null) return; // 主题审批只走应用侧，平台任务不会有此类待决项
+    if (acting) return;
     setActing(kind);
     setActError(null);
     try {
-      if (kind === "preview-accept")
-        await api.assistant.app.acceptPreview(appId, taskId);
-      else if (kind === "preview-reject")
-        await api.assistant.app.rejectPreview(appId, taskId);
-      else if (kind === "preview-reissue")
-        await api.assistant.app.reissuePreview(appId, taskId);
-      else if (kind === "bind-approve")
-        await api.assistant.app.approveBind(appId, taskId);
-      else await api.assistant.app.rejectBind(appId, taskId);
+      // 主题超集：平台上下文（appId 为 null）的主题任务行挂目标
+      // 应用，审批走平台侧五方法（服务端按会话归属认平台域）；
+      // 应用上下文沿用应用组五方法。
+      if (appId === null) {
+        if (kind === "preview-accept")
+          await api.assistant.acceptPreview(taskId);
+        else if (kind === "preview-reject")
+          await api.assistant.rejectPreview(taskId);
+        else if (kind === "preview-reissue")
+          await api.assistant.reissuePreview(taskId);
+        else if (kind === "bind-approve")
+          await api.assistant.approveBind(taskId);
+        else await api.assistant.rejectBind(taskId);
+      } else {
+        if (kind === "preview-accept")
+          await api.assistant.app.acceptPreview(appId, taskId);
+        else if (kind === "preview-reject")
+          await api.assistant.app.rejectPreview(appId, taskId);
+        else if (kind === "preview-reissue")
+          await api.assistant.app.reissuePreview(appId, taskId);
+        else if (kind === "bind-approve")
+          await api.assistant.app.approveBind(appId, taskId);
+        else await api.assistant.app.rejectBind(appId, taskId);
+      }
       // 服务端状态已变：重拉任务行与 run 详情，卡片随之翻态
       // （验收通过 → 绑定审批卡或已完成；暂不验收 → 仍停在
       // 预览卡，等用户在输入框发整改需求再循环）。

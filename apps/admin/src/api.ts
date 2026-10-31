@@ -2113,6 +2113,90 @@ export const api = {
         }
       };
     },
+    /**
+     * 平台主题分段审批（主题超集）：路径走平台侧（无 appId 段），
+     * 服务端按任务所属会话归属认平台域、按任务行 app_id 定目标
+     * 应用；返回形同应用组五方法。
+     */
+    async acceptPreview(taskId: string): Promise<{
+      ok?: boolean;
+      runStatus?: string | null;
+      taskStatus?: string | null;
+    }> {
+      const res = await apiFetch<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }>(
+        `/admin/assistant/tasks/${encodeURIComponent(taskId)}/preview/accept`,
+        { method: "POST" },
+      );
+      return res && typeof res === "object" ? res : {};
+    },
+    async rejectPreview(taskId: string): Promise<{
+      ok?: boolean;
+      runStatus?: string | null;
+      taskStatus?: string | null;
+    }> {
+      const res = await apiFetch<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }>(
+        `/admin/assistant/tasks/${encodeURIComponent(taskId)}/preview/reject`,
+        { method: "POST" },
+      );
+      return res && typeof res === "object" ? res : {};
+    },
+    async reissuePreview(taskId: string): Promise<{
+      ok?: boolean;
+      previewUrl?: string | null;
+      previewExpiresAt?: string | null;
+      themeId?: string | null;
+      version?: string | null;
+    }> {
+      const res = await apiFetch<{
+        ok?: boolean;
+        previewUrl?: string | null;
+        previewExpiresAt?: string | null;
+        themeId?: string | null;
+        version?: string | null;
+      }>(
+        `/admin/assistant/tasks/${encodeURIComponent(taskId)}/preview/reissue`,
+        { method: "POST" },
+      );
+      return res && typeof res === "object" ? res : {};
+    },
+    async approveBind(taskId: string): Promise<{
+      ok?: boolean;
+      runStatus?: string | null;
+      taskStatus?: string | null;
+    }> {
+      const res = await apiFetch<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }>(
+        `/admin/assistant/tasks/${encodeURIComponent(taskId)}/bind/approve`,
+        { method: "POST" },
+      );
+      return res && typeof res === "object" ? res : {};
+    },
+    async rejectBind(taskId: string): Promise<{
+      ok?: boolean;
+      runStatus?: string | null;
+      taskStatus?: string | null;
+    }> {
+      const res = await apiFetch<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }>(
+        `/admin/assistant/tasks/${encodeURIComponent(taskId)}/bind/reject`,
+        { method: "POST" },
+      );
+      return res && typeof res === "object" ? res : {};
+    },
     /** 应用组：同一组四件，路径挂在当前应用下（运营助手） */
     app: {
       async chat(
