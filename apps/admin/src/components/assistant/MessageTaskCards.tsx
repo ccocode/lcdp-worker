@@ -293,7 +293,12 @@ export function PlanMessageCard({
   // 计划卡头改读 runStatus、卡上加一行原因，不开详情也能看到
   // 为什么停；详情栏关掉也不影响。
   const failedNode = runDetail?.nodes.find((n) => n.status === "failed");
-  const failedVerdict = runDetail?.verdicts.find((v) => v.verdict === "fail");
+  // 失败原因取最新一轮终审：verdicts 为正序，末项即最新轮；
+  // 2026-10-31 标杆实证：取首轮会把第 1 轮缺口当成最终死因。
+  const failedVerdicts = (runDetail?.verdicts ?? []).filter(
+    (v) => v.verdict === "fail",
+  );
+  const failedVerdict = failedVerdicts[failedVerdicts.length - 1] ?? null;
   const pausePending =
     runDetail?.pendingItems.find((p) => p.type === "pause") ?? null;
   const criticPending =
