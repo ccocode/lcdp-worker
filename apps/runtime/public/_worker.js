@@ -904,6 +904,33 @@ async function dispatch(request, env, ctx) {
   try {
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
+    // 第三步 L1/H1 共享运行时脚本（版本化）：与任何主题版本无关的平台脚本，
+    // 旧主题不引用故不受影响；新主题经 index.html 里的加载器引用。
+    // 路径作用域应用需剥首段（与 themeAppPath 同口径的单段剥离）；
+    // 本分支不依赖 R2 与站点配置，预览与正常分发共用。
+    // __lcdp__ 前缀为平台保留路径，主题文件不得占用该段。
+    const SHELL_PATH = "/__lcdp__/shell/v1/lcdp-patterns.js";
+    let shellPath = url.pathname;
+    if (shellPath !== SHELL_PATH) {
+      const shellIdx = shellPath.indexOf(SHELL_PATH);
+      if (shellIdx > 0) shellPath = shellPath.slice(shellIdx);
+    }
+    if (shellPath === SHELL_PATH && (method === "GET" || method === "HEAD")) {
+      const shellHeaders = new Headers();
+      shellHeaders.set("content-type", "text/javascript; charset=utf-8");
+      shellHeaders.set("cache-control", "public, max-age=31536000, immutable");
+      shellHeaders.set("x-lcdp-shell", "v1");
+      if (method === "HEAD" || !env.ASSETS) {
+        return new Response(null, { headers: shellHeaders });
+      }
+      const shellAsset = await env.ASSETS.fetch(
+        new Request(new URL(SHELL_PATH, url.origin), { method: "GET" }),
+      );
+      if (!shellAsset.ok) {
+        return new Response(null, { status: 404, headers: shellHeaders });
+      }
+      return new Response(shellAsset.body, { headers: shellHeaders });
+    }
     const special =
       url.pathname === "/sitemap.xml" || url.pathname === "/robots.txt";
     // 功能页主题化（第 93 步线 A2）：回落 SPA 段注入用的已解析槽主题，
