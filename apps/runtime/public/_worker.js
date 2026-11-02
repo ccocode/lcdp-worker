@@ -805,9 +805,46 @@ async function previewSpaShell(request, env, method, url, theme) {
   return out === res ? null : out;
 }
 
+/** 属性值转义（预览不可用页 href 用，不引入外部依赖） */
+function escapeAttr(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * 预览不可用提示页（收尾修复）：请求显式带 lcdp_preview 参数打开、
+ * 但校验端点不认可令牌（无效或已过期）时返回本页，不再静默落回
+ * 线上站——否则打开者会把线上站误认作预览效果。仅参数触发的 GET
+ * 才走本页：HEAD、Cookie 续用、校验端点不可达、应用不一致、主题
+ * 未声明主题化等情形仍维持 fail-open（调用方落回正常分发）。
+ * 本页同时清除固化的预览 Cookie，点回线上站即为正常分发。
+ */
+function previewUnavailablePage(url) {
+  const clean = new URL(url);
+  clean.searchParams.delete("lcdp_preview");
+  const liveHref = escapeAttr(clean.pathname + clean.search + clean.hash);
+  const off = new URL(url);
+  off.searchParams.set("lcdp_preview", "off");
+  const offHref = escapeAttr(off.pathname + off.search + off.hash);
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>预览链接已不可用</title></head><body style="margin:0;font:15px/1.7 -apple-system,'Segoe UI',sans-serif;color:#1f2937;background:#f7f8fa"><main style="max-width:640px;margin:12vh auto;padding:0 20px"><h1 style="font-size:22px;margin:0 0 12px">预览链接已不可用</h1><p style="margin:0 0 8px">这条主题预览链接的令牌无效或已过期（预览有效期 30 分钟），因此无法显示预览效果。</p><p style="margin:0 0 24px">请在助手对话框中重新打开预览，或直接访问线上站。</p><p style="margin:0"><a href="${liveHref}" style="color:#1d4ed8">回到线上站</a><span style="margin:0 10px;color:#9ca3af">|</span><a href="${offHref}" style="color:#1d4ed8">退出预览</a></p></main></body></html>`;
+  const res = new Response(html, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+  return withClearedPreviewCookie(res);
+}
+
 /**
  * 预览分发：命中返回 Response，未命中/不适用返回 null（调用方落回
  * 正常分发）。仅 GET/HEAD 且 R2 绑定存在时尝试，与主题层同条件。
+ * 例外：参数触发的 GET 且校验端点不认可令牌时返回不可用提示页，
+ * 不落回正常分发（见 previewUnavailablePage）。
  */
 async function tryThemePreview(request, env, ctx, url) {
   const method = request.method.toUpperCase();
@@ -817,14 +854,24 @@ async function tryThemePreview(request, env, ctx, url) {
   if (!found || !found.token || found.token === "off") return null;
   // 校验：向 api 换取作用域（响应 no-store，不缓存校验结果）
   let valid = null;
+  let validateOk = false;
   try {
     const res = await fetch(
       `${API_BASE}/public/theme-preview/validate?token=${encodeURIComponent(found.token)}`,
       { headers: { accept: "application/json" } },
     );
+    validateOk = res.ok;
     if (res.ok) valid = await res.json().catch(() => null);
   } catch {
     return null;
+  }
+  // 校验端点不认可令牌（无效或已过期）：参数触发的 GET 明示不可用，
+  // 不再静默落回线上站；其余情形（HEAD、Cookie 续用）维持 fail-open。
+  // 校验端点不可达（上文 catch）与形状异常（下文）仍落回正常分发。
+  if (!validateOk) {
+    return found.fromParam && method === "GET"
+      ? previewUnavailablePage(url)
+      : null;
   }
   if (
     !valid ||
@@ -1073,8 +1120,9 @@ export default {
     }
     const param = url ? viewParamOf(url) : null;
     // 主题预览（第 83 步片五）：off = 退出预览——正常分发并清除
-    // 固化 cookie；带令牌时先试预览分发，不适用/异常一律落回
-    // 正常分发。无预览参数时流程与原先逐字一致。
+    // 固化 cookie；带令牌时先试预览分发，参数触发的 GET 且令牌
+    // 无效/过期时明示不可用，其余不适用/异常一律落回正常分发。
+    // 无预览参数时流程与原先逐字一致。
     if (url && url.searchParams.get("lcdp_preview") === "off") {
       const res = await dispatch(request, env, ctx);
       const withView = param ? withViewCookie(res, param) : res;

@@ -202,7 +202,8 @@ const call = (url) => worker.fetch(new Request(url), env, ctx);
 }
 
 // 4) 预览主题在桥接路径：带注入 + no-store + 预览头 + 角标 + 令牌固化；
-//    预览主题未声明主题化时落回正常分发、逐字不变
+//    仅声明 routes 的主题同样出脚本（壳据 routes 改走整页跳，避免主题
+//    路径被客户端路由绕过），故 baretoken 也注入、只无 functional.css
 {
   const res = await call("https://preview.test/cart?lcdp_preview=goodtoken");
   assert.equal(res.status, 200);
@@ -219,8 +220,34 @@ const call = (url) => worker.fetch(new Request(url), env, ctx);
 
   const res2 = await call("https://preview.test/cart?lcdp_preview=baretoken");
   assert.equal(res2.status, 200);
+  assert.equal(res2.headers.get("cache-control"), "no-store");
+  assert.equal(res2.headers.get("x-lcdp-theme-preview"), "bare@2.0.0");
+  const body2 = await res2.text();
+  assert.ok(body2.includes('"themeId":"bare"'));
+  assert.ok(body2.includes('"routes":["/"]'));
+  assert.ok(body2.includes("预览效果")); // 预览角标
+  assert.ok(!body2.includes("functional.css"));
+}
+
+// 4b) 预览令牌无效/过期：参数触发的 GET 明示不可用（不静默落回
+//     线上站），并清除固化 Cookie；Cookie 续用时仍 fail-open
+{
+  const res = await call("https://preview.test/cart?lcdp_preview=badtoken");
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  const body = await res.text();
+  assert.ok(body.includes("预览链接已不可用"));
+  assert.ok(!body.includes("window.__LCDP_THEME__="));
+  const cookies = res.headers.getSetCookie
+    ? res.headers.getSetCookie()
+    : [res.headers.get("set-cookie")];
+  assert.ok(cookies.some((c) => c && c.includes("lcdp-preview=;")));
+  // Cookie 续用：仍落回正常分发（壳逐字不变）
+  const req = new Request("https://preview.test/cart", {
+    headers: { cookie: "lcdp-preview=badtoken" },
+  });
+  const res2 = await worker.fetch(req, env, ctx);
   assert.equal(await res2.text(), SHELL);
-  assert.equal(res2.headers.get("x-lcdp-theme-preview"), null);
 }
 
 // 5) 资源（非页面）路径不注入：逐字透传
