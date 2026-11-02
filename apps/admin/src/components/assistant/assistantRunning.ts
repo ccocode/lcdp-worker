@@ -2,18 +2,16 @@ import type { AdminAssistantTask } from "../../api";
 
 /**
  * 第 103 步步骤 6：任务在跑判定（弹窗关闭 / 刷新 / 切应用三处提示共用）。
- * 口径与设计稿 §4.5 一致：active 任务卡且有进行中步骤（pending /
- * active 清单项）或有未回的子代理（running 派发）即算在跑；artifacts
- * 形状防御式读取（服务端 artifacts 为 jsonb，客户端类型为 unknown）。
+ * 第一批（计划一致性）修正：徽标读 runStatus，不读清单——清单待办
+ * 不等于执行中（暂停任务 status 仍 active、清单仍 pending，旧口径会
+ * 把暂停误标为“进行中”）。runStatus 为空（从未建 run）时不算在跑；
+ * 未回的子代理仍算在跑（回合级信号，与 runStatus 互补）。
  */
 export function hasRunningAssistantTask(
   tasks: AdminAssistantTask[],
 ): boolean {
   return (tasks ?? []).some((t) => {
     if (t.status !== "active") return false;
-    const stepRunning = (t.checklist ?? []).some(
-      (s) => s.status === "pending" || s.status === "active",
-    );
     const artifacts = t.artifacts as
       | { delegations?: { status?: string }[] }
       | null
@@ -21,6 +19,7 @@ export function hasRunningAssistantTask(
     const delegationRunning = Array.isArray(artifacts?.delegations)
       ? artifacts.delegations.some((d) => d?.status === "running")
       : false;
-    return stepRunning || delegationRunning;
+    const runRunning = t.runStatus === "pending" || t.runStatus === "running";
+    return runRunning || delegationRunning;
   });
 }
