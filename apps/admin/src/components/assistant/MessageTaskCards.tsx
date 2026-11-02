@@ -88,6 +88,24 @@ function readDelegations(task: AdminAssistantTask): DelegationRecord[] {
   ) as DelegationRecord[];
 }
 
+/**
+ * 第二批（确认门）：计划卡是否已审批。服务端 decisions 里有
+ * “计划审批／批准执行”条目即已审批；旧字符串条目、其他问法均不算。
+ * 未审批且尚未建 run 的计划卡在对话框里渲染为审批卡（列步骤＋确认按钮），
+ * 而不是计划卡；审批后同一任务行翻为计划卡，步骤逐项一致（同源）。
+ */
+function isPlanApproved(task: AdminAssistantTask): boolean {
+  const list = task.decisions;
+  if (!Array.isArray(list)) return false;
+  return list.some(
+    (d) =>
+      !!d &&
+      typeof d === "object" &&
+      (d as { question?: unknown }).question === "计划审批" &&
+      (d as { choice?: unknown }).choice === "批准执行",
+  );
+}
+
 /** 读一张任务卡（全部状态里找；找不到即已不在列表中） */
 function useTaskCard(appId: string | null, taskId: string, refreshKey = 0) {
   const [task, setTask] = useState<AdminAssistantTask | null>(null);
@@ -256,11 +274,19 @@ export function PlanMessageCard({
 }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const { task, missing } = useTaskCard(appId, taskId, refreshKey);
+  // 第二批（确认门）：未审批且尚未建 run 的计划卡 = 审批卡；已建 run
+  // 的存量卡（批前已在跑）不受此限，仍按计划卡渲染。
+  const needsApproval =
+    !!task &&
+    task.kind === "plan" &&
+    task.status === "active" &&
+    !task.runId &&
+    !isPlanApproved(task);
   const [expanded, setExpanded] = useState(false);
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (!autoOpen || autoOpenedRef.current || !onOpenTask) return;
-    if (!task || task.status !== "active") return;
+    if (!task || task.status !== "active" || needsApproval) return;
     autoOpenedRef.current = true;
     onOpenTask(taskId);
   }, [autoOpen, task, taskId, onOpenTask]);
@@ -321,7 +347,8 @@ export function PlanMessageCard({
       | "preview-reject"
       | "preview-reissue"
       | "bind-approve"
-      | "bind-reject",
+      | "bind-reject"
+      | "plan-approve",
   ) => {
     if (acting) return;
     setActing(kind);
@@ -331,7 +358,9 @@ export function PlanMessageCard({
       // 应用，审批走平台侧五方法（服务端按会话归属认平台域）；
       // 应用上下文沿用应用组五方法。
       if (appId === null) {
-        if (kind === "preview-accept")
+        if (kind === "plan-approve")
+          await api.assistant.approvePlan(taskId);
+        else if (kind === "preview-accept")
           await api.assistant.acceptPreview(taskId);
         else if (kind === "preview-reject")
           await api.assistant.rejectPreview(taskId);
@@ -341,7 +370,9 @@ export function PlanMessageCard({
           await api.assistant.approveBind(taskId);
         else await api.assistant.rejectBind(taskId);
       } else {
-        if (kind === "preview-accept")
+        if (kind === "plan-approve")
+          await api.assistant.app.approvePlan(appId, taskId);
+        else if (kind === "preview-accept")
           await api.assistant.app.acceptPreview(appId, taskId);
         else if (kind === "preview-reject")
           await api.assistant.app.rejectPreview(appId, taskId);
@@ -389,31 +420,35 @@ export function PlanMessageCard({
     <>
     <Card
       size="small"
-      title="计划"
+      title={needsApproval ? "计划审批" : "计划"}
       extra={
         <Tag
           style={{ margin: 0 }}
           color={
-            runStatus === "failed"
-              ? "red"
-              : runStatus === "paused"
-                ? "orange"
-                : runStatus === "awaiting_preview"
-                  ? "blue"
-                  : runStatus === "awaiting_bind"
-                    ? "purple"
-                    : undefined
+            needsApproval
+              ? "orange"
+              : runStatus === "failed"
+                ? "red"
+                : runStatus === "paused"
+                  ? "orange"
+                  : runStatus === "awaiting_preview"
+                    ? "blue"
+                    : runStatus === "awaiting_bind"
+                      ? "purple"
+                      : undefined
           }
         >
-          {runStatus === "failed"
-            ? "已失败"
-            : runStatus === "paused"
-              ? "已暂停"
-              : runStatus === "awaiting_preview"
-                ? "等你验收预览"
-                : runStatus === "awaiting_bind"
-                  ? "等你确认绑定"
-                  : (TASK_STATUS_LABELS[task.status] ?? task.status)}
+          {needsApproval
+            ? "待审批"
+            : runStatus === "failed"
+              ? "已失败"
+              : runStatus === "paused"
+                ? "已暂停"
+                : runStatus === "awaiting_preview"
+                  ? "等你验收预览"
+                  : runStatus === "awaiting_bind"
+                    ? "等你确认绑定"
+                    : (TASK_STATUS_LABELS[task.status] ?? task.status)}
         </Tag>
       }
       style={{
@@ -435,9 +470,9 @@ export function PlanMessageCard({
             {exceptionReason}
           </Typography.Text>
         )}
-        {expanded && <ChecklistRows task={task} />}
+        {(expanded || needsApproval) && <ChecklistRows task={task} />}
         <div style={{ display: "flex", gap: 8 }}>
-          {list.length > 0 && (
+          {list.length > 0 && !needsApproval && (
             <Button
               type="link"
               size="small"
@@ -457,7 +492,23 @@ export function PlanMessageCard({
               查看详情
             </Button>
           )}
+          {needsApproval && (
+            <Button
+              type="primary"
+              size="small"
+              loading={acting === "plan-approve"}
+              disabled={acting !== null}
+              onClick={() => void act("plan-approve")}
+            >
+              按计划开始
+            </Button>
+          )}
         </div>
+        {actError && (
+          <Typography.Text type="danger" style={{ fontSize: 12 }}>
+            {actError}
+          </Typography.Text>
+        )}
       </div>
     </Card>
     {/*
@@ -465,7 +516,8 @@ export function PlanMessageCard({
       动画在计划卡外面、下方，只表示对话没有停止；任务进行中
       才转，等验收 / 终态即停。执行记录与细节只在右侧详情里。
     */}
-    {task.status === "active" &&
+    {!needsApproval &&
+      task.status === "active" &&
       runStatus !== "awaiting_preview" &&
       runStatus !== "awaiting_bind" &&
       runStatus !== "completed" &&

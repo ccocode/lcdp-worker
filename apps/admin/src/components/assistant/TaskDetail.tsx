@@ -268,9 +268,21 @@ export default function TaskDetail({
   const latestFailedVerdict = (runDetail?.verdicts ?? []).find(
     (v) => v.verdict === "fail",
   );
+  /**
+   * 第二批（确认门）：某步骤对应的执行节点（按 nodeKind 匹配）。
+   * 步骤展开区优先显示本步骤的节点动作（状态／尝试／错误／产物），
+   * 而不是只在当前步骤下堆全部在跑节点；无 nodeKind 的旧步骤回落
+   * 原口径（当前步骤看在跑节点＋时间线）。
+   */
+  const stepNodes = (i: number) => {
+    const nk = checklist[i]?.nodeKind;
+    if (!nk) return [];
+    return (runDetail?.nodes ?? []).filter((n) => n.kind === nk);
+  };
   /** 某行是否可展开：当前步骤、失败步骤（有错误可看）、已完成
    *  步骤（有证据可看）才给展开；其余只显示标题。 */
   const stepExpandable = (i: number): boolean => {
+    if (stepNodes(i).length > 0) return true;
     const st = stepState(checklist[i].status);
     if (i === currentStepIndex) return true;
     if (st === "failed")
@@ -387,6 +399,14 @@ export default function TaskDetail({
             const isCurrent = i === currentStepIndex;
             const expanded = isStepExpanded(i);
             const expandable = stepExpandable(i);
+            // 第二批：本步骤的节点动作（有 nodeKind 匹配时优先），
+            // 无匹配时当前步骤回落全部在跑节点，其他步骤无动作。
+            const nodesForStep =
+              stepNodes(i).length > 0
+                ? stepNodes(i)
+                : isCurrent
+                  ? runningNodes
+                  : [];
             const evidenceUrl =
               typeof it.evidence === "string" &&
               /^https?:\/\//.test(it.evidence)
@@ -424,7 +444,7 @@ export default function TaskDetail({
                     </Typography.Text>
                   )}
                 </div>
-                {expanded && isCurrent && (
+                {expanded && (isCurrent || nodesForStep.length > 0) && (
                   <div
                     style={{
                       marginLeft: 22,
@@ -435,10 +455,12 @@ export default function TaskDetail({
                       wordBreak: "break-word",
                     }}
                   >
-                    {runningNodes.map((n) => (
+                    {nodesForStep.map((n) => (
                       <div key={n.nodeId}>
                         <div>
-                          {n.nodeId}（尝试 {n.attempts} 次）
+                          {n.nodeId}（
+                          {NODE_STATUS_LABELS[n.status] ?? n.status}，尝试{" "}
+                          {n.attempts} 次）
                         </div>
                         {n.error && (
                           <Typography.Text
@@ -466,12 +488,14 @@ export default function TaskDetail({
                         )}
                       </div>
                     ))}
-                    {latestTimeline.map((e, j) => (
-                      <div key={j} style={{ wordBreak: "break-word" }}>
-                        {e.summary}
-                      </div>
-                    ))}
-                    {runningNodes.length === 0 &&
+                    {isCurrent &&
+                      latestTimeline.map((e, j) => (
+                        <div key={j} style={{ wordBreak: "break-word" }}>
+                          {e.summary}
+                        </div>
+                      ))}
+                    {isCurrent &&
+                      nodesForStep.length === 0 &&
                       latestTimeline.length === 0 && (
                         <Typography.Text
                           type="secondary"

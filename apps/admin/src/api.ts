@@ -477,7 +477,7 @@ export interface AdminAssistantTask {
   status: string;
   /** 任务种类（服务端 taskView 本就回，前端此前漏声明）：plan 计划、theme_build 主题 */
   kind?: string;
-  checklist: { label: string; status: string; evidence?: string }[];
+  checklist: { label: string; status: string; evidence?: string; nodeKind?: string }[];
   updatedAt: string | null;
   /** 目标一句话（设计 6.3 状态卡字段，二期详情透出） */
   goal?: string | null;
@@ -2184,6 +2184,25 @@ export const api = {
       );
       return res && typeof res === "object" ? res : {};
     },
+    /**
+     * 第二批（确认门）：审批卡确认。服务端记审批 decisions 并建 run；
+     * 返回最新任务行（卡片随之由审批卡翻为计划卡）。
+     */
+    async approvePlan(taskId: string): Promise<{
+      task: AdminAssistantTask | null;
+      approved: boolean;
+    }> {
+      const res = await apiFetch<{
+        task?: AdminAssistantTask;
+        approved?: boolean;
+      }>(`/admin/assistant/tasks/${encodeURIComponent(taskId)}/approve`, {
+        method: "POST",
+      });
+      return {
+        task: res?.task ?? null,
+        approved: res?.approved ?? false,
+      };
+    },
     async rejectBind(taskId: string): Promise<{
       ok?: boolean;
       runStatus?: string | null;
@@ -2523,6 +2542,28 @@ export const api = {
           { method: "POST" },
         );
         return res && typeof res === "object" ? res : {};
+      },
+      /**
+       * 第二批（确认门）：审批卡确认（应用上下文）。语义同平台侧。
+       */
+      async approvePlan(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        task: AdminAssistantTask | null;
+        approved: boolean;
+      }> {
+        const res = await apiFetch<{
+          task?: AdminAssistantTask;
+          approved?: boolean;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/approve`,
+          { method: "POST" },
+        );
+        return {
+          task: res?.task ?? null,
+          approved: res?.approved ?? false,
+        };
       },
       async rejectBind(
         appId: string,
