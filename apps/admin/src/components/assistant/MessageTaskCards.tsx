@@ -26,6 +26,7 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   closed: "已收尾",
   awaiting_preview: "等你验收预览",
   awaiting_bind: "等你确认绑定",
+  awaiting_home: "等你确认首页",
 };
 
 /** 清单“已过”口径（与工作台左栏 CHECK_PASSED 一致，跳过不算过） */
@@ -302,11 +303,13 @@ export function PlanMessageCard({
   const runStatus = task?.runStatus ?? null;
   const awaitingPreview = runStatus === "awaiting_preview";
   const awaitingBind = runStatus === "awaiting_bind";
+  const awaitingHome = runStatus === "awaiting_home";
   const runDetail = useTaskRunDetail(
     appId,
     taskId,
     awaitingPreview ||
       awaitingBind ||
+      awaitingHome ||
       runStatus === "failed" ||
       runStatus === "paused",
     refreshKey,
@@ -315,6 +318,8 @@ export function PlanMessageCard({
     runDetail?.pendingItems.find((p) => p.type === "theme-preview") ?? null;
   const bindPending =
     runDetail?.pendingItems.find((p) => p.type === "theme-bind") ?? null;
+  const homePending =
+    runDetail?.pendingItems.find((p) => p.type === "theme-home") ?? null;
   // 异常在对话框可见（2026-10-31 用户定）：run 失败 / 暂停时，
   // 计划卡头改读 runStatus、卡上加一行原因，不开详情也能看到
   // 为什么停；详情栏关掉也不影响。
@@ -348,7 +353,9 @@ export function PlanMessageCard({
       | "preview-reissue"
       | "bind-approve"
       | "bind-reject"
-      | "plan-approve",
+      | "plan-approve"
+      | "home-accept"
+      | "home-reject",
   ) => {
     if (acting) return;
     setActing(kind);
@@ -368,6 +375,10 @@ export function PlanMessageCard({
           await api.assistant.reissuePreview(taskId);
         else if (kind === "bind-approve")
           await api.assistant.approveBind(taskId);
+        else if (kind === "home-accept")
+          await api.assistant.acceptHome(taskId);
+        else if (kind === "home-reject")
+          await api.assistant.rejectHome(taskId);
         else await api.assistant.rejectBind(taskId);
       } else {
         if (kind === "plan-approve")
@@ -380,6 +391,10 @@ export function PlanMessageCard({
           await api.assistant.app.reissuePreview(appId, taskId);
         else if (kind === "bind-approve")
           await api.assistant.app.approveBind(appId, taskId);
+        else if (kind === "home-accept")
+          await api.assistant.app.acceptHome(appId, taskId);
+        else if (kind === "home-reject")
+          await api.assistant.app.rejectHome(appId, taskId);
         else await api.assistant.app.rejectBind(appId, taskId);
       }
       // 服务端状态已变：重拉任务行与 run 详情，卡片随之翻态
@@ -413,6 +428,7 @@ export function PlanMessageCard({
   const list = task.checklist ?? [];
   const passed = list.filter((it) => CHECK_PASSED_CARD.has(it.status)).length;
   const preview = previewPending ? readDialogPreview(previewPending) : null;
+  const home = homePending ? readDialogPreview(homePending) : null;
   const bindThemeName = bindPending
     ? readDialogPreview(bindPending).themeName
     : null;
@@ -435,7 +451,9 @@ export function PlanMessageCard({
                     ? "blue"
                     : runStatus === "awaiting_bind"
                       ? "purple"
-                      : undefined
+                      : runStatus === "awaiting_home"
+                        ? "cyan"
+                        : undefined
           }
         >
           {needsApproval
@@ -448,7 +466,9 @@ export function PlanMessageCard({
                   ? "等你验收预览"
                   : runStatus === "awaiting_bind"
                     ? "等你确认绑定"
-                    : (TASK_STATUS_LABELS[task.status] ?? task.status)}
+                    : runStatus === "awaiting_home"
+                      ? "等你确认首页"
+                      : (TASK_STATUS_LABELS[task.status] ?? task.status)}
         </Tag>
       }
       style={{
@@ -520,6 +540,7 @@ export function PlanMessageCard({
       task.status === "active" &&
       runStatus !== "awaiting_preview" &&
       runStatus !== "awaiting_bind" &&
+      runStatus !== "awaiting_home" &&
       runStatus !== "completed" &&
       runStatus !== "failed" &&
       runStatus !== "cancelled" &&
@@ -538,6 +559,99 @@ export function PlanMessageCard({
           </Typography.Text>
         </div>
       )}
+    {awaitingHome && (
+      <Card
+        size="small"
+        title="首页预览"
+        extra={
+          <Tag color="orange" style={{ margin: 0 }}>
+            等你确认首页
+          </Tag>
+        }
+        style={{
+          borderColor: tokens.colorBorder,
+          background: tokens.colorBgContainer,
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            {home?.themeName ?? "新主题"}
+          </Typography.Text>
+          {home?.styleSummary && (
+            <Typography.Text style={{ fontSize: 13 }}>
+              {home.styleSummary}
+            </Typography.Text>
+          )}
+          {home && home.pages.length > 0 && (
+            <Typography.Text style={{ fontSize: 13 }}>
+              覆盖页面：{home.pages.join("、")}
+            </Typography.Text>
+          )}
+          {home && home.changes.length > 0 && (
+            <div>
+              <Typography.Text style={{ fontSize: 13 }}>
+                主要变化：
+              </Typography.Text>
+              {home.changes.map((c, j) => (
+                <div key={j} style={{ fontSize: 13 }}>
+                  · {c}
+                </div>
+              ))}
+            </div>
+          )}
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            确认后才会生成其余页面；暂不确认时只重做首页段，其余页面不动。
+          </Typography.Text>
+          {home?.previewUrl ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Button
+                type="primary"
+                size="small"
+                href={home.previewUrl}
+                target="_blank"
+                rel="noreferrer"
+                disabled={acting !== null}
+              >
+                打开首页预览
+              </Button>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                预览与线上绑定隔离，不影响线上呈现
+              </Typography.Text>
+            </div>
+          ) : (
+            <Typography.Text type="warning" style={{ fontSize: 12 }}>
+              预览地址暂不可用
+              {home?.previewError ? `：${home.previewError}` : ""}
+              ，仍可按卡片内容确认或驳回。
+            </Typography.Text>
+          )}
+          {actError && (
+            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+              {actError}
+            </Typography.Text>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button
+              type="primary"
+              size="small"
+              loading={acting === "home-accept"}
+              disabled={acting !== null}
+              onClick={() => void act("home-accept")}
+            >
+              确认风格
+            </Button>
+            <Button
+              size="small"
+              loading={acting === "home-reject"}
+              disabled={acting !== null}
+              onClick={() => void act("home-reject")}
+            >
+              暂不确认
+            </Button>
+          </div>
+        </div>
+      </Card>
+    )}
     {awaitingPreview && (
       <Card
         size="small"

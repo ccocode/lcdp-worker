@@ -28,6 +28,7 @@ export const TASK_STATUS_LABELS: Record<string, string> = {
   closed: "已收尾",
   awaiting_preview: "等你验收预览",
   awaiting_bind: "等你确认绑定",
+  awaiting_home: "等你确认首页",
 };
 
 /** 任务种类中文：计划与主题任务同属一张表、只是种类不同 */
@@ -65,6 +66,7 @@ export const RUN_STATUS_LABELS: Record<string, string> = {
   cancelled: "已取消",
   awaiting_preview: "等你验收预览",
   awaiting_bind: "等你确认绑定",
+  awaiting_home: "等你确认首页",
 };
 
 /** 节点状态中文（D6 首批） */
@@ -235,7 +237,10 @@ export default function TaskDetail({
     runStatus !== "failed" &&
     runStatus !== "paused" &&
     runStatus !== "completed" &&
-    runStatus !== "cancelled";
+    runStatus !== "cancelled" &&
+    runStatus !== "awaiting_preview" &&
+    runStatus !== "awaiting_bind" &&
+    runStatus !== "awaiting_home";
   const failedStepIndex = checklist.findIndex(
     (it) => stepState(it.status) === "failed",
   );
@@ -310,9 +315,9 @@ export default function TaskDetail({
       : runDetail?.latestVerdict === "fail"
         ? "（终审未通过）"
         : "";
-  /** 预览卡与绑定卡不在此显示；只留暂停 / 终审未达标行。 */
+  /** 预览卡与绑定卡不在此显示；只留暂停 / 终审未达标行。第三批：首页卡同理只在对话框。 */
   const otherPendings = (runDetail?.pendingItems ?? []).filter(
-    (p) => p.type !== "theme-preview" && p.type !== "theme-bind",
+    (p) => p.type !== "theme-preview" && p.type !== "theme-bind" && p.type !== "theme-home",
   );
 
   /** 步骤图标：✓ / ✗ / – / 转圈 / 空圈（纯样式，不引新依赖）。 */

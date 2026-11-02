@@ -570,7 +570,7 @@ export interface AdminTaskRunNotification {
  * 为可选字段，缺失时界面以通用文案回落、不造数据。
  */
 export interface AdminTaskRunPending {
-  type: "pause" | "critic" | "theme-preview" | "theme-bind";
+  type: "pause" | "critic" | "theme-preview" | "theme-bind" | "theme-home";
   reason: string | null;
   recoveryActions: string[];
   gaps: string[];
@@ -2203,6 +2203,38 @@ export const api = {
         approved: res?.approved ?? false,
       };
     },
+    /**
+     * 第三批（首页先行）：首页预览确认／驳回。确认后 run 回 running
+     * 继续生成其余页面；驳回只重做首页段。
+     */
+    async acceptHome(taskId: string): Promise<{
+      ok?: boolean;
+      runStatus?: string | null;
+      taskStatus?: string | null;
+    }> {
+      const res = await apiFetch<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }>(`/admin/assistant/tasks/${encodeURIComponent(taskId)}/home/accept`, {
+        method: "POST",
+      });
+      return res && typeof res === "object" ? res : {};
+    },
+    async rejectHome(taskId: string): Promise<{
+      ok?: boolean;
+      runStatus?: string | null;
+      taskStatus?: string | null;
+    }> {
+      const res = await apiFetch<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }>(`/admin/assistant/tasks/${encodeURIComponent(taskId)}/home/reject`, {
+        method: "POST",
+      });
+      return res && typeof res === "object" ? res : {};
+    },
     async rejectBind(taskId: string): Promise<{
       ok?: boolean;
       runStatus?: string | null;
@@ -2564,6 +2596,45 @@ export const api = {
           task: res?.task ?? null,
           approved: res?.approved ?? false,
         };
+      },
+      /**
+       * 第三批（首页先行）：首页预览确认／驳回（应用上下文）。语义同平台侧。
+       */
+      async acceptHome(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }> {
+        const res = await apiFetch<{
+          ok?: boolean;
+          runStatus?: string | null;
+          taskStatus?: string | null;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/home/accept`,
+          { method: "POST" },
+        );
+        return res && typeof res === "object" ? res : {};
+      },
+      async rejectHome(
+        appId: string,
+        taskId: string,
+      ): Promise<{
+        ok?: boolean;
+        runStatus?: string | null;
+        taskStatus?: string | null;
+      }> {
+        const res = await apiFetch<{
+          ok?: boolean;
+          runStatus?: string | null;
+          taskStatus?: string | null;
+        }>(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/tasks/${encodeURIComponent(taskId)}/home/reject`,
+          { method: "POST" },
+        );
+        return res && typeof res === "object" ? res : {};
       },
       async rejectBind(
         appId: string,
