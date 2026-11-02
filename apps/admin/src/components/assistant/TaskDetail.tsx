@@ -144,13 +144,16 @@ export default function TaskDetail({
   const [runLoading, setRunLoading] = useState(false);
   const [runTick, setRunTick] = useState(0);
   const [acting, setActing] = useState<string | null>(null);
+  // 收尾修复 7：已加载过的任务 id——周期刷新静默取数，不再闪加载动画。
+  const loadedTaskRef = useRef<string | null>(null);
   useEffect(() => {
     if (appId === undefined || !task.runId) {
       setRunDetail(null);
       return;
     }
     let alive = true;
-    setRunLoading(true);
+    const first = loadedTaskRef.current !== task.id;
+    if (first) setRunLoading(true);
     const runPromise =
       appId === null
         ? api.assistant.taskRun(task.id)
@@ -160,12 +163,30 @@ export default function TaskDetail({
         if (alive) setRunDetail(res);
       })
       .finally(() => {
-        if (alive) setRunLoading(false);
+        if (alive) {
+          setRunLoading(false);
+          loadedTaskRef.current = task.id;
+        }
       });
     return () => {
       alive = false;
     };
   }, [appId, task.id, task.runId, runTick]);
+  /**
+   * 收尾修复 7（2026-11-02 18:41 重测实锤）：详情面板此前只在打开／
+   * 切换时加载，执行中不刷新，与 20 秒轮询的计划卡节奏不一致、
+   * 两边状态乱序。任务仍 active 时以 20 秒节奏静默刷新（与计划卡
+   * 同节奏），刷新走 runTick 复用上条 effect，加载动画只在首载出现。
+   */
+  useEffect(() => {
+    if (task.status !== "active" || appId === undefined || !task.runId) {
+      return;
+    }
+    const id = window.setInterval(() => {
+      setRunTick((t) => t + 1);
+    }, 20_000);
+    return () => window.clearInterval(id);
+  }, [task.status, appId, task.runId]);
   /**
    * 详情自动滚到底部（2026-10-29 用户定）：内容变化（清单 /
    * 执行动作 / 终态重拉、切任务）后，把最近的可滚动祖先（工作台右栏

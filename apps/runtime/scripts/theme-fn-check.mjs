@@ -49,6 +49,22 @@ const BARE_MANIFEST = JSON.stringify({
   config: [],
 });
 
+// 收尾修复 4 用：图跑多文件主题（index + list/detail/about），routes
+// 含桥接路由（/cart、/account），patterns 为路由形键。
+const MULTI_MANIFEST = JSON.stringify({
+  id: "multi",
+  name: "Multi",
+  version: "1.0.0",
+  target: "desktop",
+  routes: ["/", "/products", "/products/detail", "/about", "/cart", "/account"],
+  patterns: {
+    "/products": ["L1"],
+    "/products/detail": ["D1"],
+    "/about": [],
+  },
+  config: [],
+});
+
 // ---------------------------------------------------------------- 桩
 
 function makeR2(entries) {
@@ -73,6 +89,11 @@ const r2 = makeR2({
   "themes/lite/1.0.0/index.html": "<html><head></head><body>lite</body></html>",
   "themes/bare/2.0.0/theme.json": BARE_MANIFEST,
   "themes/bare/2.0.0/index.html": "<html><head></head><body>bare</body></html>",
+  "themes/multi/1.0.0/theme.json": MULTI_MANIFEST,
+  "themes/multi/1.0.0/index.html": "<html><head></head><body>MULTI-HOME</body></html>",
+  "themes/multi/1.0.0/list.html": "<html><head></head><body>MULTI-LIST</body></html>",
+  "themes/multi/1.0.0/detail.html": "<html><head></head><body>MULTI-DETAIL</body></html>",
+  "themes/multi/1.0.0/about.html": "<html><head></head><body>MULTI-ABOUT</body></html>",
 });
 
 function htmlResponse(html) {
@@ -119,6 +140,7 @@ const SITE_BY_HOST = {
 const PREVIEW_BY_TOKEN = {
   goodtoken: { appId: "mall", themeId: "teen", version: "1.0.0", slot: "desktop" },
   baretoken: { appId: "mall", themeId: "bare", version: "2.0.0", slot: "desktop" },
+  multitoken: { appId: "mall", themeId: "multi", version: "1.0.0", slot: "desktop" },
 };
 
 globalThis.fetch = async (url) => {
@@ -248,6 +270,46 @@ const call = (url) => worker.fetch(new Request(url), env, ctx);
   });
   const res2 = await worker.fetch(req, env, ctx);
   assert.equal(await res2.text(), SHELL);
+}
+
+// 4c) 收尾修复 4：预览路由映射——多文件主题按路由出对应文件，
+//     桥接路由落回 SPA 桥接渲染（不再回退首页）；单页主题与正常分发不动
+{
+  const list = await call("https://preview.test/products?lcdp_preview=multitoken");
+  assert.equal(list.status, 200);
+  assert.equal(list.headers.get("cache-control"), "no-store");
+  assert.equal(list.headers.get("x-lcdp-theme-preview"), "multi@1.0.0");
+  const listBody = await list.text();
+  assert.ok(listBody.includes("MULTI-LIST"));
+  assert.ok(listBody.includes("预览效果"));
+
+  const detail = await call("https://preview.test/products/detail?id=1&lcdp_preview=multitoken");
+  assert.equal(detail.status, 200);
+  assert.ok((await detail.text()).includes("MULTI-DETAIL"));
+
+  const about = await call("https://preview.test/about?lcdp_preview=multitoken");
+  assert.equal(about.status, 200);
+  assert.ok((await about.text()).includes("MULTI-ABOUT"));
+
+  const cart = await call("https://preview.test/cart?lcdp_preview=multitoken");
+  assert.equal(cart.status, 200);
+  const cartBody = await cart.text();
+  assert.ok(cartBody.includes("平台功能页")); // SPA 桥接壳，非主题首页
+  assert.ok(!cartBody.includes("MULTI-HOME"));
+  assert.ok(!cartBody.includes("MULTI-LIST"));
+
+  const account = await call("https://preview.test/account?lcdp_preview=multitoken");
+  assert.equal(account.status, 200);
+  const accountBody = await account.text();
+  assert.ok(accountBody.includes("平台功能页")); // 会员中心走桥接，不再呈首页内容
+  assert.ok(!accountBody.includes("MULTI-HOME"));
+
+  // 正常分发逐字不动：绑定主题的 /products 仍回退主题 index
+  const bound = await call("https://themed.test/products");
+  assert.equal(bound.status, 200);
+  const boundBody = await bound.text();
+  assert.ok(boundBody.includes("teen"));
+  assert.ok(!boundBody.includes("平台功能页"));
 }
 
 // 5) 资源（非页面）路径不注入：逐字透传

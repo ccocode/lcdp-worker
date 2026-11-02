@@ -32,6 +32,7 @@ import {
   PlanMessageCard,
   type DelegationViewTarget,
 } from "./MessageTaskCards";
+import { hasRunningAssistantTask } from "./assistantRunning";
 
 /**
  * 管理台助手对话面（第 83 步片四起，第 90 步线 A 升级，第 91 步线 A
@@ -567,9 +568,57 @@ export default function ChatPane({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, sending]);
 
+  /**
+   * 收尾修复 6b（2026-11-02 18:41 重测实锤）：卡片动作恢复执行后
+   * 的消息跟进。审批通过、首页确认等动作不在发送路径上，旧轮询
+   * 早已停，执行消息只能等重开对话框才出现。本 effect 在对话框
+   * 打开且无发送轮询时，以 5 秒节奏查本会话是否仍有在跑任务，
+   * 有则静默拉取对话；滚动 effect 已跟随 messages 变化滚到底。
+   * 代价是对话框打开期间每 5 秒一次小请求，关闭即停。
+   */
+  useEffect(() => {
+    if (!conversationId || sending) return;
+    let alive = true;
+    const id = window.setInterval(async () => {
+      try {
+        const tasks = appId
+          ? await api.assistant.app.tasks(appId, { status: "active" })
+          : await api.assistant.tasks({ status: "active" });
+        const mine = tasks.filter((t) => t.conversationId === conversationId);
+        if (!alive || !hasRunningAssistantTask(mine)) return;
+        const detail = await fetchConversation(conversationId);
+        if (!alive) return;
+        setMessages(detail.messages ?? []);
+        setDetailToolCalls(detail.toolCalls ?? []);
+      } catch {
+        // 静默失败，下个周期重试
+      }
+    }, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [conversationId, sending, appId]);
+
   const pollUntilDone = (cid: string, knownAssistantIds: Set<string>) => {
     const gen = ++pollGenRef.current;
-    const deadline = Date.now() + 180_000;
+    // 收尾修复 6a：停表改按任务运行状态，不再按首条已完成消息与
+    // 180 秒截止——主题一轮约 5 分钟，旧口径会丢后半程消息。
+    // 30 分钟仅作安全上限，正常路径由运行状态停。
+    const deadline = Date.now() + 30 * 60_000;
+    let lastRunCheck = 0;
+    let lastRunning = true;
+    const checkRunning = async (): Promise<boolean> => {
+      try {
+        const tasks = appId
+          ? await api.assistant.app.tasks(appId, { status: "active" })
+          : await api.assistant.tasks({ status: "active" });
+        const mine = tasks.filter((t) => t.conversationId === cid);
+        return hasRunningAssistantTask(mine);
+      } catch {
+        return true;
+      }
+    };
     const tick = async () => {
       if (pollGenRef.current !== gen) return;
       try {
@@ -581,20 +630,33 @@ export default function ChatPane({
         const freshMsgs = msgs.filter(
           (m) => m.role === "assistant" && !knownAssistantIds.has(m.id),
         );
-        const done = freshMsgs.find((m) => m.status !== "generating");
-        if (done) {
-          setSending(false);
-          if (done.status === "failed") {
-            setTurnError(done.text || "助手生成失败，请重试");
+        const turnGenerating = freshMsgs.some(
+          (m) => m.status === "generating",
+        );
+        if (!turnGenerating) {
+          // 回合暂无生成中消息时才查运行状态（5 秒节流），在跑就
+          // 继续拉取——后半程消息（首页已确认、预览已就绪、终包卡）
+          // 靠这条续上；查失败按在跑处理，不误停。
+          if (Date.now() - lastRunCheck > 5000) {
+            lastRunning = await checkRunning();
+            lastRunCheck = Date.now();
+            if (pollGenRef.current !== gen) return;
           }
-          return;
+          if (!lastRunning) {
+            setSending(false);
+            const failed = freshMsgs.find((m) => m.status === "failed");
+            if (failed) {
+              setTurnError(failed.text || "助手生成失败，请重试");
+            }
+            return;
+          }
         }
       } catch {
         // 轮询中的短暂失败不中断，继续到截止时间
       }
       if (Date.now() >= deadline) {
         setSending(false);
-        setTurnError("助手响应超时（180 秒），可稍后重新打开查看结果");
+        setTurnError("助手响应超时（30 分钟），可稍后重新打开查看结果");
         return;
       }
       window.setTimeout(() => void tick(), 1200);

@@ -287,6 +287,7 @@ async function resolveSlotTheme(env, ptr, meta) {
   const config = {};
   let routes = null;
   let tokens = null;
+  let patterns = null;
   // 领域呈现返工·登录门：内置标记（生成端 theme.json builtin: true）。
   // 仅内置主题带此标记；无标记的老主题保持原行为。
   let builtin = false;
@@ -317,6 +318,21 @@ async function resolveSlotTheme(env, ptr, meta) {
       }
       // 功能页主题化（第 93 步线 A1）：tokens 只收形状合法项
       tokens = sanitizeThemeTokens(manifest?.tokens);
+      // 收尾修复 4：预览路由映射用 patterns（仅路由形键，如 /products；
+      // 页键 home/list/detail 不进映射，由回退逻辑承接）。
+      if (
+        manifest?.patterns &&
+        typeof manifest.patterns === "object" &&
+        !Array.isArray(manifest.patterns)
+      ) {
+        const routePatterns = {};
+        for (const [k, v] of Object.entries(manifest.patterns)) {
+          if (typeof k === "string" && k.startsWith("/") && Array.isArray(v)) {
+            routePatterns[k] = v.filter((x) => typeof x === "string");
+          }
+        }
+        if (Object.keys(routePatterns).length > 0) patterns = routePatterns;
+      }
       if (manifest?.builtin === true) builtin = true;
     }
   } catch {
@@ -344,6 +360,7 @@ async function resolveSlotTheme(env, ptr, meta) {
     config,
     ...(routes ? { routes } : {}),
     ...(tokens ? { tokens } : {}),
+    ...(patterns ? { patterns } : {}),
     ...(functionalCss ? { functionalCss: true } : {}),
     ...(builtin ? { builtin: true } : {}),
   };
@@ -588,6 +605,43 @@ function themeAppPath(pathname, siteVia) {
 }
 
 /**
+ * 收尾修复 4（2026-11-02 18:41 重测实锤）：预览路由映射。
+ * 图跑多文件主题（index + list/detail/about）须按路由出对应文件：
+ * patterns 路由键 → 模式编号 → 页面文件（D1 系 → detail.html，
+ * L1 系 → list.html，H1 → index.html）。无映射时返回 null，调用方
+ * 再试路由名回退或正常回退逻辑。仅预览模式使用。
+ */
+function themePreviewPageFile(theme, themePath) {
+  const patterns = theme?.patterns;
+  if (!patterns || typeof patterns !== "object") return null;
+  const list = patterns[normalizeRoutePath(themePath)];
+  if (!Array.isArray(list)) return null;
+  if (list.some((p) => p === "D1" || p === "D1-meta")) return "detail.html";
+  if (list.some((p) => p === "L1" || p === "L1-tail")) return "list.html";
+  if (list.includes("H1")) return "index.html";
+  return null;
+}
+
+/** 预览桥接路由：购物车／结算／订单／会员中心／我的帖子／交接页。 */
+const PREVIEW_BRIDGE_ROUTES = new Set([
+  "/cart",
+  "/checkout",
+  "/shop/order",
+  "/my-orders",
+  "/my-orders/detail",
+  "/account",
+  "/account/memories",
+  "/my-topics",
+  "/my-topics/detail",
+]);
+
+function isPreviewBridgeRoute(themePath) {
+  const p = normalizeRoutePath(themePath);
+  if (PREVIEW_BRIDGE_ROUTES.has(p)) return true;
+  return p.startsWith("/sso/") || p.startsWith("/pay/");
+}
+
+/**
  * 主题分发：命中返回 Response，未命中/不适用返回 null（调用方落回快照/SPA）。
  * - 精确路径命中主题文件 → 直出（index.html 走注入）；
  * - `/` 与无扩展名页面路径未命中 → 回退主题 index.html（注入后应答）；
@@ -598,6 +652,9 @@ function themeAppPath(pathname, siteVia) {
  * routes 归属与正常分发一致（第 90 步修正，原「routes 不限」使桥接
  * 页在预览中被吞）；全部应答改 no-store 并加 x-lcdp-theme-preview
  * 头；index 应答的 __LCDP__ 追加 preview: true 并注入预览角标。
+ * 收尾修复 4（仅预览）：内容路由先按 patterns 映射到 list/detail/
+ * about 文件（多文件主题），桥接路由在多文件主题里不回退 index、
+ * 改落回 SPA 桥接渲染；单页主题（无页面类型文件）维持原回退逻辑。
  * 正常分发不传 preview，行为逐字不变。
  * opts.appPath：调用方算好的应用内路径（路径作用域应用已剥首段），
  * 主题层 R2 查找与 routes 判定一律以此为准；不传则用原始 pathname。
@@ -650,6 +707,39 @@ async function serveTheme(env, theme, url, method, opts = {}) {
       (!Array.isArray(theme.routes) || theme.routes.length === 0)
     ) {
       return null;
+    }
+    // 收尾修复 4（仅预览）：路由→页面类型文件映射。精确文件未命中时，
+    // 内容路由先按 patterns 出 list/detail 文件，路由名与文件同名时
+    // （如 /about → about.html）出同名文件；桥接路由在多文件主题里
+    // 不回退 index（否则会员中心恒呈首页内容），改落回 SPA 桥接渲染。
+    // 单页主题（无页面类型文件）维持原回退逻辑，桥接判断不拦截。
+    if (opts.preview && rel) {
+      if (isPreviewBridgeRoute(themePath)) {
+        const probe = async (f) => {
+          try {
+            if (typeof env.STATIC_R2.head === "function") {
+              return !!(await env.STATIC_R2.head(prefix + f));
+            }
+            return !!(await get(prefix + f));
+          } catch {
+            return false;
+          }
+        };
+        const multi =
+          (await probe("list.html")) ||
+          (await probe("detail.html")) ||
+          (await probe("about.html"));
+        if (multi) return null;
+      } else {
+        const mapped = themePreviewPageFile(theme, themePath);
+        if (mapped) {
+          const mObj = await get(prefix + mapped);
+          if (mObj) return respond(mapped, mObj, true);
+        } else {
+          const named = await get(prefix + rel + ".html");
+          if (named) return respond(rel + ".html", named, true);
+        }
+      }
     }
     // 修法 D：声明了 routes 的主题只接管清单内路径，清单外落回快照/SPA。
     // 预览模式同样适用（第 90 步修正）：预览只覆盖主题指针、路径归属
