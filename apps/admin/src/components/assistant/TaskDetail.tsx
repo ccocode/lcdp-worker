@@ -263,6 +263,32 @@ export default function TaskDetail({
           : "pending";
   const checklist = task.checklist ?? [];
   const runStatus = runDetail?.run?.runStatus ?? null;
+  /** 详情头状态跟 runStatus（收尾1）：等验收/等确认首页等态不再只显示“进行中”，与对话框卡角标同口径；run 详情未到时回落任务行 runStatus。 */
+  const headerRunStatus = runStatus ?? task.runStatus ?? null;
+  const headerStatusLabel =
+    headerRunStatus === "failed"
+      ? "已失败"
+      : headerRunStatus === "paused"
+        ? "已暂停"
+        : headerRunStatus === "awaiting_preview"
+          ? "等你验收预览"
+          : headerRunStatus === "awaiting_bind"
+            ? "等你确认绑定"
+            : headerRunStatus === "awaiting_home"
+              ? "等你确认首页"
+              : (TASK_STATUS_LABELS[task.status] ?? task.status);
+  const headerStatusColor =
+    headerRunStatus === "failed"
+      ? "red"
+      : headerRunStatus === "paused"
+        ? "orange"
+        : headerRunStatus === "awaiting_preview"
+          ? "blue"
+          : headerRunStatus === "awaiting_bind"
+            ? "purple"
+            : headerRunStatus === "awaiting_home"
+              ? "cyan"
+              : undefined;
   const isRunning =
     task.status === "active" &&
     runStatus !== "failed" &&
@@ -383,8 +409,8 @@ export default function TaskDetail({
             {TASK_KIND_LABELS[task.kind] ?? task.kind}
           </Tag>
         )}
-        <Tag style={{ marginInlineEnd: 0 }}>
-          {TASK_STATUS_LABELS[task.status] ?? task.status}
+        <Tag style={{ marginInlineEnd: 0 }} color={headerStatusColor}>
+          {headerStatusLabel}
         </Tag>
       </div>
       {task.goal && (
