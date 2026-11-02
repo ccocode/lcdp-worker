@@ -348,15 +348,6 @@ export default function AssistantWorkbench({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [freshNonce]);
 
-  /** 任务卡「继续」：选中该卡 + 把续办草稿灌进对话面输入框 */
-  const continueTask = (task: AdminAssistantTask) => {
-    setSelectedTaskId(task.id);
-    setDraftSignal({
-      text: `继续任务「${task.title}」`,
-      nonce: Date.now(),
-    });
-  };
-
   const highlightCid = currentCid ?? session.cid;
 
   const leftHidden =
@@ -512,17 +503,6 @@ export default function AssistantWorkbench({
               selectedTask.conversationId
                 ? () => openConversation(selectedTask.conversationId as string)
                 : undefined
-            }
-            footer={
-              selectedTask.status === "active" ? (
-                <Button
-                  size="small"
-                  type="primary"
-                  onClick={() => continueTask(selectedTask)}
-                >
-                  继续
-                </Button>
-              ) : undefined
             }
           />
         ) : (

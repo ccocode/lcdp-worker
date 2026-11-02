@@ -7,19 +7,50 @@
  * 预览卡与绑定审批卡不在此显示，只在对话框里（对话框是
  * 唯一操作面）；详情里只留暂停 / 终审未达标的状态行（对
  * 话框里没有继续运行 / 重试失败节点入口）。
- * 底部操作由调用方以 footer 注入（工作台：继续，仅进行中；
- * 任务记录页：去助手查看）。待决事项的处理入口由调用方以
+ * 底部不放时间与继续入口（详情只展示，操作走对话框）；
+ * 任务记录页仍可由调用方以 footer 注入去助手查看。待决事项的处理入口由调用方以
  * onHandlePending 注入（工作台：切到本任务会话；任务记录页：
  * 去助手查看）；不传则只展示待决、不给入口。
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Button, message, Spin, Tag, Typography } from "antd";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Badge, Button, message, Spin, Tag, Typography } from "antd";
 import {
   api,
   type AdminAssistantTask,
   type AdminTaskRunDetail,
 } from "../../api";
-import { fmtTime } from "../../helpers";
+
+/** 状态圆点：等待灰、执行中蓝闪、完成绿、失败红（Badge 原生圆点，processing 自带闪烁）。 */
+function StatusDot({
+  status,
+}: {
+  status: "waiting" | "running" | "completed" | "failed";
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 16,
+        height: 16,
+        flexShrink: 0,
+      }}
+    >
+      <Badge
+        status={
+          status === "running"
+            ? "processing"
+            : status === "completed"
+              ? "success"
+              : status === "failed"
+                ? "error"
+                : "default"
+        }
+      />
+    </span>
+  );
+}
 
 export const TASK_STATUS_LABELS: Record<string, string> = {
   active: "进行中",
@@ -320,45 +351,19 @@ export default function TaskDetail({
     (p) => p.type !== "theme-preview" && p.type !== "theme-bind" && p.type !== "theme-home",
   );
 
-  /** 步骤图标：✓ / ✗ / – / 转圈 / 空圈（纯样式，不引新依赖）。 */
-  const stepIcon = (st: StepState, isCurrent: boolean) => {
-    const circle: CSSProperties = {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      width: 16,
-      height: 16,
-      borderRadius: "50%",
-      border: "1px solid",
-      fontSize: 10,
-      flexShrink: 0,
-    };
-    if (isCurrent) return <Spin size="small" />;
-    if (st === "passed")
-      return (
-        <span
-          style={{ ...circle, borderColor: "#52c41a", color: "#52c41a" }}
-        >
-          ✓
-        </span>
-      );
-    if (st === "failed")
-      return (
-        <span
-          style={{ ...circle, borderColor: "#ff4d4f", color: "#ff4d4f" }}
-        >
-          ✗
-        </span>
-      );
-    if (st === "skipped")
-      return (
-        <span
-          style={{ ...circle, borderColor: "#d9d9d9", color: "#8c8c8c" }}
-        >
-          –
-        </span>
-      );
-    return <span style={{ ...circle, borderColor: "#d9d9d9" }} />;
+  /** 步骤状态圆点：等待灰、执行中蓝闪、完成绿、失败红；当前步骤不再用转圈动画（对话框外已有执行动画）。 */
+  const stepIcon = (st: StepState, isCurrent: boolean, i: number) => {
+    if (st === "passed") return <StatusDot status="completed" />;
+    if (st === "failed") return <StatusDot status="failed" />;
+    if (isCurrent) {
+      const nodes = stepNodes(i);
+      const running =
+        nodes.length > 0
+          ? nodes.some((n) => n.status === "active" || n.status === "running")
+          : runningNodes.length > 0;
+      return <StatusDot status={running ? "running" : "waiting"} />;
+    }
+    return <StatusDot status="waiting" />;
   };
   return (
     <div
@@ -428,7 +433,7 @@ export default function TaskDetail({
                   }}
                   onClick={expandable ? () => toggleStep(i) : undefined}
                 >
-                  {stepIcon(st, isCurrent)}
+                  {stepIcon(st, isCurrent, i)}
                   <span
                     style={{
                       flex: 1,
@@ -689,9 +694,6 @@ export default function TaskDetail({
           ))}
         </div>
       )}
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        更新于 {fmtTime(task.updatedAt)}
-      </Typography.Text>
       {footer && (
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>{footer}</div>
       )}
