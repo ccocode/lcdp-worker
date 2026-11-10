@@ -1,3 +1,8 @@
+import {
+  humanizeStepLabel,
+  humanizeTechnicalDetail,
+  HUMAN_PAUSE_REASONS,
+} from "./semanticLabels";
 /**
  * 对话记录里的计划 / 派发卡片（第 103 步步骤 6 用户修订）。
  *
@@ -7,7 +12,7 @@
  * 卡片随之翻状态，不往父会话插消息。
  */
 import { useEffect, useRef, useState } from "react";
-import { Button, Card, Spin, Tag, Typography } from "antd";
+import { Button, Card, Progress, Spin, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
   api,
@@ -127,7 +132,7 @@ function useTaskCard(appId: string | null, taskId: string, refreshKey = 0) {
         setMissing(!found);
         // 进行中才继续轮询；终态（已完成/已收尾/已放弃等）即停
         if (found && found.status === "active") {
-          timer ??= setInterval(() => void load(), 20000);
+          timer ??= setInterval(() => void load(), 3000);
         } else if (timer) {
           clearInterval(timer);
           timer = undefined;
@@ -172,7 +177,22 @@ function readDialogPreview(p: AdminTaskRunPending): {
     styleSummary: text(inner?.styleSummary) ?? text(p.styleSummary),
     pages: pages.length > 0 ? pages : list(p.pages),
     changes: changes.length > 0 ? changes : list(p.changes),
-    previewUrl: text(inner?.previewUrl) ?? text(p.previewUrl),
+    previewUrl: (() => {
+      const rawUrl = text(inner?.previewUrl) ?? text(p.previewUrl);
+      if (
+        rawUrl &&
+        typeof window !== "undefined" &&
+        (window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1") &&
+        rawUrl.startsWith("https://www.coode.cc.cd/")
+      ) {
+        return rawUrl.replace(
+          "https://www.coode.cc.cd/",
+          `http://${window.location.hostname}:5174/`,
+        );
+      }
+      return rawUrl;
+    })(),
     previewExpiresAt:
       text(inner?.previewExpiresAt) ?? text(p.previewExpiresAt),
     previewError: text(inner?.previewError) ?? text(p.previewError),
@@ -227,25 +247,57 @@ const CHECK_ICON: Record<string, string> = {
   pending: "○",
 };
 
+const CHECK_STATUS_CONFIG: Record<
+  string,
+  { label: string; color: string; icon: string }
+> = {
+  done: { label: "已完成", color: "success", icon: "✓" },
+  passed: { label: "已完成", color: "success", icon: "✓" },
+  ok: { label: "已完成", color: "success", icon: "✓" },
+  active: { label: "执行中", color: "processing", icon: "●" },
+  running: { label: "执行中", color: "processing", icon: "●" },
+  failed: { label: "失败", color: "error", icon: "✕" },
+  skipped: { label: "已跳过", color: "default", icon: "↷" },
+  pending: { label: "待执行", color: "default", icon: "○" },
+};
+
 function ChecklistRows({ task }: { task: AdminAssistantTask }) {
   if (!task.checklist || task.checklist.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {task.checklist.map((it, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, fontSize: 13 }}>
-          <span style={{ color: tokens.colorTextSecondary }}>
-            {CHECK_ICON[it.status] ?? "○"}
-          </span>
-          <Typography.Text
-            style={{ flex: 1 }}
-            delete={it.status === "skipped"}
-            type={it.status === "failed" ? "danger" : undefined}
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {task.checklist.map((it, i) => {
+        const conf = CHECK_STATUS_CONFIG[it.status] ?? {
+          label: it.status,
+          color: "default",
+          icon: CHECK_ICON[it.status] ?? "○",
+        };
+        return (
+          <div
+            key={i}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+              padding: "2px 0",
+            }}
           >
-            {it.label}
-          </Typography.Text>
-          <Tag style={{ margin: 0 }}>{it.status}</Tag>
-        </div>
-      ))}
+            <span style={{ color: tokens.colorTextSecondary, width: 14 }}>
+              {conf.icon}
+            </span>
+            <Typography.Text
+              style={{ flex: 1 }}
+              delete={it.status === "skipped"}
+              type={it.status === "failed" ? "danger" : undefined}
+            >
+              {humanizeStepLabel(it.label)}
+            </Typography.Text>
+            <Tag color={conf.color} style={{ margin: 0, fontSize: 12 }}>
+              {conf.label}
+            </Tag>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -283,7 +335,11 @@ export function PlanMessageCard({
     task.status === "active" &&
     !task.runId &&
     !isPlanApproved(task);
-  const [expanded, setExpanded] = useState(false);
+  const [userToggled, setUserToggled] = useState<boolean | null>(null);
+  const showChecklist =
+    userToggled !== null
+      ? userToggled
+      : needsApproval;
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (!autoOpen || autoOpenedRef.current || !onOpenTask) return;
@@ -337,15 +393,51 @@ export function PlanMessageCard({
   const exceptionReason =
     runStatus === "failed"
       ? failedNode?.error
-        ? `失败原因：${failedNode.error.slice(0, 120)}`
+        ? `失败原因：${humanizeTechnicalDetail(failedNode.error).slice(0, 120)}`
         : failedVerdict && failedVerdict.acceptanceGaps.length > 0
-          ? `终审未通过：${failedVerdict.acceptanceGaps.join("；")}`
+          ? `未通过原因：${failedVerdict.acceptanceGaps.map(humanizeTechnicalDetail).join("；")}`
           : null
       : runStatus === "paused"
-        ? `暂停原因：${PAUSE_REASON_LABELS[pausePending?.reason ?? ""] ?? "等你处理"}${pausePending?.detail ? `（${pausePending.detail}）` : ""}${criticPending && criticPending.gaps.length > 0 ? `：${criticPending.gaps.join("；")}` : ""}`
+        ? `暂停原因：${HUMAN_PAUSE_REASONS[pausePending?.reason ?? ""] ?? "等待确认"}${pausePending?.detail ? `（${humanizeTechnicalDetail(pausePending.detail)}）` : ""}${criticPending && criticPending.gaps.length > 0 ? `：${criticPending.gaps.map(humanizeTechnicalDetail).join("；")}` : ""}`
         : null;
   const [acting, setActing] = useState<string | null>(null);
   const [actError, setActError] = useState<string | null>(null);
+  const autoReissuedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const activePending = awaitingHome
+      ? homePending
+      : awaitingPreview
+        ? previewPending
+        : null;
+    if (!activePending || (!awaitingHome && !awaitingPreview)) return;
+    const rawPreviewUrl =
+      activePending.preview?.previewUrl ?? activePending.previewUrl ?? null;
+    const expiresAt =
+      activePending.preview?.previewExpiresAt ??
+      activePending.previewExpiresAt ??
+      null;
+    const isExpired =
+      typeof expiresAt === "string" &&
+      expiresAt.length > 0 &&
+      !Number.isNaN(Date.parse(expiresAt)) &&
+      Date.parse(expiresAt) <= Date.now();
+    const isStaleCloudOnLocal =
+      typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1") &&
+      typeof rawPreviewUrl === "string" &&
+      rawPreviewUrl.startsWith("https://www.coode.cc.cd/");
+    if (!isExpired && !isStaleCloudOnLocal) return;
+    const guardKey = `${taskId}:${rawPreviewUrl ?? ""}:${expiresAt ?? ""}`;
+    if (autoReissuedRef.current === guardKey) return;
+    autoReissuedRef.current = guardKey;
+    void (appId === null
+      ? api.assistant.reissuePreview(taskId)
+      : api.assistant.app.reissuePreview(appId, taskId)
+    )
+      .then(() => setRefreshKey((k) => k + 1))
+      .catch(() => undefined);
+  }, [appId, taskId, awaitingHome, awaitingPreview, homePending, previewPending]);
   const act = async (
     kind:
       | "preview-accept"
@@ -478,10 +570,55 @@ export function PlanMessageCard({
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {task.goal && (
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          <Typography.Text style={{ fontSize: 13, color: tokens.colorTextSecondary }}>
             目标：{task.goal}
           </Typography.Text>
         )}
+        {list.length > 0 && (
+          <div style={{ margin: "2px 0 2px 0" }}>
+            <Progress
+              percent={Math.round((passed / list.length) * 100)}
+              size={["100%", 5]}
+              status={
+                runStatus === "failed"
+                  ? "exception"
+                  : passed === list.length
+                    ? "success"
+                    : "active"
+              }
+              format={() => `${passed}/${list.length} 步 (${Math.round((passed / list.length) * 100)}%)`}
+            />
+          </div>
+        )}
+        {!showChecklist && list.length > 0 && (() => {
+          const current = list.find((it) => it.status === "active") ?? list.find((it) => it.status === "pending");
+          if (!current || runStatus === "failed" || runStatus === "paused") return null;
+          return (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 10px",
+                background: tokens.colorPrimaryBg,
+                border: "1px solid #d0e5ff",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+            >
+              <span style={{ color: "#1677ff", fontSize: 12 }}>⚡</span>
+              <Typography.Text style={{ flex: 1, fontSize: 12 }} ellipsis>
+                {current.status === "active" ? "当前步骤：" : "下一步："}
+                <Typography.Text strong style={{ fontSize: 12 }}>
+                  {humanizeStepLabel(current.label)}
+                </Typography.Text>
+              </Typography.Text>
+              <Tag color={current.status === "active" ? "processing" : "default"} style={{ margin: 0, fontSize: 11 }}>
+                {current.status === "active" ? "执行中" : "待执行"}
+              </Tag>
+            </div>
+          );
+        })()}
         {exceptionReason && (
           <Typography.Text
             type={runStatus === "failed" ? "danger" : "warning"}
@@ -490,16 +627,16 @@ export function PlanMessageCard({
             {exceptionReason}
           </Typography.Text>
         )}
-        {(expanded || needsApproval) && <ChecklistRows task={task} />}
-        <div style={{ display: "flex", gap: 8 }}>
+        {showChecklist && <ChecklistRows task={task} />}
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
           {list.length > 0 && !needsApproval && (
             <Button
               type="link"
               size="small"
               style={{ padding: 0 }}
-              onClick={() => setExpanded((v) => !v)}
+              onClick={() => setUserToggled((v) => !(v !== null ? v : showChecklist))}
             >
-              {expanded ? "收起清单" : `展开清单（${passed}/${list.length}）`}
+              {showChecklist ? "收起清单" : `展开清单（${passed}/${list.length}）`}
             </Button>
           )}
           {onOpenTask && (
@@ -531,34 +668,7 @@ export function PlanMessageCard({
         )}
       </div>
     </Card>
-    {/*
-      执行动画（2026-10-29 用户定）：计划卡里不放执行记录，
-      动画在计划卡外面、下方，只表示对话没有停止；任务进行中
-      才转，等验收 / 终态即停。执行记录与细节只在右侧详情里。
-    */}
-    {!needsApproval &&
-      task.status === "active" &&
-      runStatus !== "awaiting_preview" &&
-      runStatus !== "awaiting_bind" &&
-      runStatus !== "awaiting_home" &&
-      runStatus !== "completed" &&
-      runStatus !== "failed" &&
-      runStatus !== "cancelled" &&
-      runStatus !== "paused" && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "2px 0",
-          }}
-        >
-          <Spin size="small" />
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            执行中…
-          </Typography.Text>
-        </div>
-      )}
+    {/* 运行态指示已移至对话最底部（ChatPane）与卡片自身徽标，避免旧消息卡片下方的动画夹在后续回复之间 */}
     {awaitingHome && (
       <Card
         size="small"
@@ -614,16 +724,34 @@ export function PlanMessageCard({
               >
                 打开首页预览
               </Button>
+              <Button
+                size="small"
+                loading={acting === "preview-reissue"}
+                disabled={acting !== null}
+                onClick={() => void act("preview-reissue")}
+              >
+                刷新预览链接
+              </Button>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 预览与线上绑定隔离，不影响线上呈现
               </Typography.Text>
             </div>
           ) : (
-            <Typography.Text type="warning" style={{ fontSize: 12 }}>
-              预览地址暂不可用
-              {home?.previewError ? `：${home.previewError}` : ""}
-              ，仍可按卡片内容确认或驳回。
-            </Typography.Text>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                预览地址暂不可用
+                {home?.previewError ? `：${home.previewError}` : ""}
+                ，可点击刷新预览链接。
+              </Typography.Text>
+              <Button
+                size="small"
+                loading={acting === "preview-reissue"}
+                disabled={acting !== null}
+                onClick={() => void act("preview-reissue")}
+              >
+                刷新预览链接
+              </Button>
+            </div>
           )}
           {actError && (
             <Typography.Text type="danger" style={{ fontSize: 12 }}>

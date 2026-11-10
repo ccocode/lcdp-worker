@@ -405,6 +405,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
     // 站点定位方式：仅 "path"（默认域名下首段定位应用）时主题层剥首段；
     // 缺失/其他值一律不剥（fail-open，行为与修前逐字一致）。
     siteVia: null,
+    memberSso: null,
   };
   try {
     const cache = caches.default;
@@ -439,6 +440,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
           },
           // 旧信封无此字段时按 null 读（60 秒缓存过期后自愈）
           siteVia: typeof data.siteVia === "string" ? data.siteVia : null,
+          memberSso: data.memberSso && typeof data.memberSso === "object" ? { enabled: data.memberSso.enabled === true, centerBase: typeof data.memberSso.centerBase === "string" ? data.memberSso.centerBase : "" } : null,
         };
       }
       return fallback;
@@ -448,6 +450,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
     let appMeta = emptyMeta;
     // 服务端 /public/site 下发的 site.via：仅 "path" 表示首段定位应用
     let siteVia = null;
+    let memberSso = null;
     try {
       const res = await fetch(
         `${API_BASE}/public/site?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(seg ?? "")}`,
@@ -464,6 +467,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
         };
         appMeta = meta;
         siteVia = typeof data?.site?.via === "string" ? data.site.via : null;
+        if (data?.memberSso && typeof data.memberSso === "object") memberSso = { enabled: data.memberSso.enabled === true, centerBase: typeof data.memberSso.centerBase === "string" ? data.memberSso.centerBase : "" };
         const rawSlots = themeSlotsOf(data?.entry?.theme);
         themeSlots = {
           desktop: await resolveSlotTheme(env, rawSlots.desktop, meta),
@@ -474,7 +478,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
       // 网关/源站不可达 → dynamic + 未绑定（fail-open）
     }
     const resp = new Response(
-      JSON.stringify({ siteMode, themeSlots, appMeta, siteVia }),
+      JSON.stringify({ siteMode, themeSlots, appMeta, siteVia, memberSso }),
       {
         headers: {
           "content-type": "application/json",
@@ -483,7 +487,7 @@ async function loadEntryConfig(host, seg, ctx, env) {
       },
     );
     ctx.waitUntil(cache.put(cacheKey, resp));
-    return { siteMode, themeSlots, appMeta, siteVia };
+    return { siteMode, themeSlots, appMeta, siteVia, memberSso };
   } catch {
     return fallback;
   }
@@ -534,6 +538,7 @@ function injectThemeContext(html, theme, host, opts = {}) {
     version: theme.version,
     config: theme.config ?? {},
     apiBase: API_BASE,
+    ...(opts.memberSso ? { memberSso: opts.memberSso } : {}),
     // 预览模式（第 83 步片五）：仅预览应答追加 preview: true，
     // 正常分发不带此键（行为逐字不变）
     ...(opts.preview ? { preview: true } : {}),
@@ -542,7 +547,11 @@ function injectThemeContext(html, theme, host, opts = {}) {
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e")
     .replace(/&/g, "\\u0026");
-  const tag = `<script>window.__LCDP__=${json};</script>`;
+  const pathFix = "(function(){var a=(window.__LCDP__&&window.__LCDP__.appId)||'';if(!a)return;var p=location.pathname;if(p!=='/' + a&&p.indexOf('/' + a + '/')!==0)return;var b='/' + a;function fx(el){var h=el.getAttribute('href');if(!h||h.charAt(0)!=='/'||h.charAt(1)==='/')return;if(h===b||h.indexOf(b + '/')===0||h.indexOf(b + '?')===0)return;if(h.indexOf('/__lcdp__/')===0||h.indexOf('/public/')===0||h.indexOf('/assets/')===0||h.indexOf('/sso/')===0||h.indexOf('/pay/')===0)return;el.setAttribute('href',b+(h==='/'?'/':h));}function sc(r){if(!r||!r.querySelectorAll)return;var ls=r.querySelectorAll('a[href]');for(var i=0;i<ls.length;i++)fx(ls[i]);}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){sc(document);});else sc(document);try{if(document.documentElement)new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){var ns=ms[i].addedNodes;for(var j=0;j<ns.length;j++){var n=ns[j];if(n.nodeType!==1)continue;if(n.tagName==='A'&&n.hasAttribute('href'))fx(n);sc(n);}}}).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}})();";
+  const a = theme.appId || "";
+  const pn = opts.pathname || "";
+  const appPrefix = a && (pn === "/" + a || pn.startsWith("/" + a + "/")) ? "/" + a : "";
+  const tag = `<script>window.__LCDP__=${json};${pathFix}</script><script defer src="${appPrefix}/__lcdp__/shell/v1/lcdp-member.js"></script>`;
   const m = /<head[^>]*>/i.exec(html);
   if (m) {
     return html.slice(0, m.index + m[0].length) + tag + html.slice(m.index + m[0].length);
@@ -683,6 +692,8 @@ async function serveTheme(env, theme, url, method, opts = {}) {
       const html = await obj.text();
       let out = injectThemeContext(html, theme, url.host, {
         preview: !!opts.preview,
+        memberSso: opts.memberSso ?? null,
+        pathname: opts.pathname ?? "",
       });
       if (opts.viewCheck) out = injectViewCheck(out);
       if (opts.preview) out = injectPreviewBadge(out);
@@ -695,7 +706,15 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     method === "HEAD" ? env.STATIC_R2.head(key) : env.STATIC_R2.get(key);
   if (rel) {
     const obj = await get(prefix + rel);
-    if (obj) return respond(rel, obj, rel === "index.html");
+    if (obj) return respond(rel, obj, rel.toLowerCase().endsWith(".html"));
+    if (rel.includes("/") && /\.[a-z0-9]+$/i.test(rel)) {
+      const parts = rel.split("/").filter(Boolean);
+      for (let i = 1; i < parts.length; i++) {
+        const suffix = parts.slice(i).join("/");
+        const subObj = await get(prefix + suffix);
+        if (subObj) return respond(suffix, subObj, suffix.toLowerCase().endsWith(".html"));
+      }
+    }
   }
   if (!rel || isPagePath(themePath)) {
     // 领域呈现返工·登录门：内置且空路由 = 该应用无公开页（OA/供应商），
@@ -713,7 +732,17 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     // （如 /about → about.html）出同名文件；桥接路由在多文件主题里
     // 不回退 index（否则会员中心恒呈首页内容），改落回 SPA 桥接渲染。
     // 单页主题（无页面类型文件）维持原回退逻辑，桥接判断不拦截。
-    if (opts.preview && rel) {
+    if (rel) {
+      if (Array.isArray(theme.routes) && theme.routes.length > 0 && normalizeRoutePath(themePath) !== "/" && !themeRouteMatches(theme.routes, themePath)) {
+        return null;
+      }
+      const exactNamed = await get(prefix + rel + ".html");
+      if (exactNamed) return respond(rel + ".html", exactNamed, true);
+      const dashRel = rel.replace(/\//g, "-");
+      if (dashRel !== rel) {
+        const dashNamed = await get(prefix + dashRel + ".html");
+        if (dashNamed) return respond(dashRel + ".html", dashNamed, true);
+      }
       if (isPreviewBridgeRoute(themePath)) {
         const probe = async (f) => {
           try {
@@ -997,6 +1026,8 @@ async function tryThemePreview(request, env, ctx, url) {
   if (!theme) return null;
   const themed = await serveTheme(env, theme, url, method, {
     preview: true,
+    memberSso: entryCfg.memberSso ?? null,
+    pathname: url.pathname,
     appPath: themeAppPath(url.pathname, entryCfg.siteVia),
   });
   if (themed) {
@@ -1046,13 +1077,14 @@ async function dispatch(request, env, ctx) {
     // 路径作用域应用需剥首段（与 themeAppPath 同口径的单段剥离）；
     // 本分支不依赖 R2 与站点配置，预览与正常分发共用。
     // __lcdp__ 前缀为平台保留路径，主题文件不得占用该段。
-    const SHELL_PATH = "/__lcdp__/shell/v1/lcdp-patterns.js";
+    const SHELL_PATHS = ["/__lcdp__/shell/v1/lcdp-patterns.js", "/__lcdp__/shell/v1/lcdp-member.js"];
+    const SHELL_PATH = SHELL_PATHS.find((sp) => url.pathname === sp || url.pathname.indexOf(sp) > 0) ?? null;
     let shellPath = url.pathname;
-    if (shellPath !== SHELL_PATH) {
+    if (SHELL_PATH && shellPath !== SHELL_PATH) {
       const shellIdx = shellPath.indexOf(SHELL_PATH);
       if (shellIdx > 0) shellPath = shellPath.slice(shellIdx);
     }
-    if (shellPath === SHELL_PATH && (method === "GET" || method === "HEAD")) {
+    if (SHELL_PATH && shellPath === SHELL_PATH && (method === "GET" || method === "HEAD")) {
       const shellHeaders = new Headers();
       shellHeaders.set("content-type", "text/javascript; charset=utf-8");
       shellHeaders.set("cache-control", "public, max-age=31536000, immutable");
@@ -1115,6 +1147,8 @@ async function dispatch(request, env, ctx) {
             const themed = await serveTheme(env, theme, url, method, {
               // 应用内路径：路径作用域应用剥首段后匹配（见 themeAppPath）
               appPath: themeAppPath(url.pathname, entryCfg.siteVia),
+              memberSso: entryCfg.memberSso ?? null,
+              pathname: url.pathname,
               // 自检注入四条件齐备才开：页面请求、桌面槽 index 应答、
               // 移动槽有绑定、槽位来自默认判定（未被参数/Cookie 明示）
               viewCheck:

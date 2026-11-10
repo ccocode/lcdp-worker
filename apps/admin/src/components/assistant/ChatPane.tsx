@@ -11,9 +11,11 @@ import {
   message as antdMessage,
 } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import { tokens } from "@lcdp/ui";
+import { tokens, MarkdownView, consumeConversationStream, ActionConfirmCard } from "@lcdp/ui";
 import {
   api,
+  API_BASE,
+  getToken,
   type AdminAssistantMessage,
   type AdminAssistantPayload,
   type AdminAssistantTask,
@@ -428,6 +430,7 @@ export default function ChatPane({
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [bgRunning, setBgRunning] = useState(false);
   const [turnError, setTurnError] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   /** 选项卡片点选中（messageId:key，防重复点选；发送中亦禁用） */
@@ -462,16 +465,33 @@ export default function ChatPane({
     appId
       ? api.assistant.app.conversations(appId)
       : api.assistant.conversations();
-  const confirmAction = (messageId: string, decision: "confirm" | "cancel") =>
+  const confirmAction = (
+    messageId: string,
+    decision: "confirm" | "cancel",
+    patchArgs?: Record<string, unknown>,
+  ) =>
     appId
-      ? api.assistant.app.confirm(appId, messageId, decision)
-      : api.assistant.confirm(messageId, decision);
+      ? api.assistant.app.confirm(appId, messageId, decision, patchArgs)
+      : api.assistant.confirm(messageId, decision, patchArgs);
   const chooseOptionAction = (messageId: string, key: string) =>
     appId
       ? api.assistant.app.chooseOption(appId, messageId, key)
       : api.assistant.chooseOption(messageId, key);
   const cancelTurn = (cid: string) =>
     appId ? api.assistant.app.cancel(appId, cid) : api.assistant.cancel(cid);
+
+
+  // 单号深链点击提示与反查通知
+  useEffect(() => {
+    const onLocate = (e: Event) => {
+      const detail = (e as CustomEvent<{ recordId?: string }>).detail;
+      if (detail?.recordId) {
+        antdMessage.success(`已复制单号并通知页面：${detail.recordId}`);
+      }
+    };
+    window.addEventListener("lcdp:locate-record", onLocate);
+    return () => window.removeEventListener("lcdp:locate-record", onLocate);
+  }, []);
 
   // 会话 id 变化回告父级（工作台左栏刷新/高亮）；仅在真正变化时通知
   useEffect(() => {
@@ -577,28 +597,103 @@ export default function ChatPane({
    * 代价是对话框打开期间每 5 秒一次小请求，关闭即停。
    */
   useEffect(() => {
-    if (!conversationId || sending) return;
+    if (!conversationId) {
+      setBgRunning(false);
+      return;
+    }
+    if (sending) return;
     let alive = true;
-    const id = window.setInterval(async () => {
+    let prevRunning = false;
+    const checkBg = async () => {
       try {
         const tasks = appId
           ? await api.assistant.app.tasks(appId, { status: "active" })
           : await api.assistant.tasks({ status: "active" });
-        const mine = tasks.filter((t) => t.conversationId === conversationId);
-        if (!alive || !hasRunningAssistantTask(mine)) return;
-        const detail = await fetchConversation(conversationId);
         if (!alive) return;
-        setMessages(detail.messages ?? []);
-        setDetailToolCalls(detail.toolCalls ?? []);
+        const mine = tasks.filter((t) => t.conversationId === conversationId);
+        const nowRunning = hasRunningAssistantTask(mine);
+        setBgRunning(nowRunning);
+        // 在跑中或刚刚从在跑切停时都拉取最新消息，确保收尾/暂停文案立即到达、底部状态同步消除
+        if (nowRunning || prevRunning) {
+          const detail = await fetchConversation(conversationId);
+          if (!alive) return;
+          setMessages(detail.messages ?? []);
+          setDetailToolCalls(detail.toolCalls ?? []);
+        }
+        prevRunning = nowRunning;
       } catch {
         // 静默失败，下个周期重试
       }
-    }, 5000);
+    };
+    void checkBg();
+    const id = window.setInterval(() => void checkBg(), 3000);
     return () => {
       alive = false;
       window.clearInterval(id);
     };
   }, [conversationId, sending, appId]);
+
+
+  const streamUntilDone = (cid: string, knownAssistantIds: Set<string>) => {
+    const gen = ++pollGenRef.current;
+    const abortCtrl = new AbortController();
+    const token = getToken();
+    const streamPath = appId
+      ? `/admin/apps/${appId}/assistant/conversations/${cid}/stream`
+      : `/admin/assistant/conversations/${cid}/stream`;
+    const streamUrl = `${API_BASE}${streamPath}`;
+
+    consumeConversationStream({
+      url: streamUrl,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: abortCtrl.signal,
+      onInit: (data) => {
+        if (pollGenRef.current !== gen) return;
+        if (data.messages && data.messages.length > 0) {
+          setMessages(data.messages);
+        }
+        if (data.toolCalls) {
+          setDetailToolCalls(data.toolCalls);
+        }
+      },
+      onDelta: ({ messageId, text }) => {
+        if (pollGenRef.current !== gen) return;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, text } : m)),
+        );
+      },
+      onToolCall: ({ toolCalls }) => {
+        if (pollGenRef.current !== gen) return;
+        if (toolCalls) setDetailToolCalls(toolCalls);
+      },
+      onDone: (data) => {
+        if (pollGenRef.current !== gen) return;
+        setSending(false);
+        if (data.message) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === data.message.id ? data.message : m)),
+          );
+          if (data.message.status === "failed") {
+            setTurnError(data.message.text || "助手生成失败，请重试");
+          }
+        } else if (data.messages) {
+          setMessages(data.messages);
+        }
+        if (data.toolCalls) {
+          setDetailToolCalls(data.toolCalls);
+        }
+      },
+      onError: () => {
+        if (pollGenRef.current === gen) {
+          pollUntilDone(cid, knownAssistantIds);
+        }
+      },
+    }).then((ok) => {
+      if (!ok && pollGenRef.current === gen) {
+        pollUntilDone(cid, knownAssistantIds);
+      }
+    });
+  };
 
   const pollUntilDone = (cid: string, knownAssistantIds: Set<string>) => {
     const gen = ++pollGenRef.current;
@@ -634,10 +729,8 @@ export default function ChatPane({
           (m) => m.status === "generating",
         );
         if (!turnGenerating) {
-          // 回合暂无生成中消息时才查运行状态（5 秒节流），在跑就
-          // 继续拉取——后半程消息（首页已确认、预览已就绪、终包卡）
-          // 靠这条续上；查失败按在跑处理，不误停。
-          if (Date.now() - lastRunCheck > 5000) {
+          // 快速同步运行状态（节流缩短为 1 秒），一旦后台进入暂停/等待确认/终态，立即停止 sending 动画，消除时序错乱
+          if (Date.now() - lastRunCheck > 1000) {
             lastRunning = await checkRunning();
             lastRunCheck = Date.now();
             if (pollGenRef.current !== gen) return;
@@ -693,7 +786,7 @@ export default function ChatPane({
         context: pageContext ?? undefined,
       });
       setConversationId(res.conversationId);
-      pollUntilDone(res.conversationId, knownAssistantIds);
+      streamUntilDone(res.conversationId, knownAssistantIds);
     } catch (err) {
       setSending(false);
       setTurnError(err instanceof Error ? err.message : String(err));
@@ -744,11 +837,12 @@ export default function ChatPane({
   const handleAction = async (
     msg: AdminAssistantMessage,
     decision: "confirm" | "cancel",
+    patchArgs?: Record<string, unknown>,
   ) => {
     if (!msg.pendingAction || msg.pendingAction.handled || confirmingId) return;
     setConfirmingId(msg.id);
     try {
-      const res = await confirmAction(msg.id, decision);
+      const res = await confirmAction(msg.id, decision, patchArgs);
       if (res.message) {
         if (res.executed) antdMessage.success(res.message);
         else antdMessage.info(res.message);
@@ -854,7 +948,11 @@ export default function ChatPane({
             wordBreak: "break-word",
           }}
         >
-          {renderRichText(msg.text)}
+          {isUser ? (
+            renderRichText(msg.text)
+          ) : (
+            <MarkdownView content={msg.text} />
+          )}
           {generating && <Spin size="small" style={{ marginLeft: 8 }} />}
         </div>
         {generating && (
@@ -931,58 +1029,12 @@ export default function ChatPane({
           />
         )}
         {!isUser && msg.pendingAction && (
-          <Card
-            size="small"
-            title={msg.pendingAction.summary}
-            style={{
-              borderColor: tokens.colorWarningBorder,
-              background: tokens.colorWarningBg,
-            }}
-          >
-            {msg.pendingAction.fields &&
-              msg.pendingAction.fields.length > 0 && (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
-                >
-                  {msg.pendingAction.fields.map((f, i) => (
-                    <div key={i} style={{ fontSize: 13 }}>
-                      <Typography.Text type="secondary">
-                        {f.label}：
-                      </Typography.Text>
-                      {f.value === "" || f.value == null ? "—" : f.value}
-                    </div>
-                  ))}
-                </div>
-              )}
-            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-              {msg.pendingAction.handled ? (
-                <Tag>
-                  已处理
-                  {msg.pendingAction.handled.outcome
-                    ? `：${msg.pendingAction.handled.outcome}`
-                    : ""}
-                </Tag>
-              ) : (
-                <>
-                  <Button
-                    type="primary"
-                    size="small"
-                    loading={confirmingId === msg.id}
-                    onClick={() => void handleAction(msg, "confirm")}
-                  >
-                    确认执行
-                  </Button>
-                  <Button
-                    size="small"
-                    disabled={confirmingId === msg.id}
-                    onClick={() => void handleAction(msg, "cancel")}
-                  >
-                    取消
-                  </Button>
-                </>
-              )}
-            </div>
-          </Card>
+          <ActionConfirmCard
+            action={msg.pendingAction}
+            loading={confirmingId === msg.id}
+            onConfirm={(patchArgs) => void handleAction(msg, "confirm", patchArgs)}
+            onCancel={() => void handleAction(msg, "cancel")}
+          />
         )}
       </div>
     );
@@ -1049,7 +1101,7 @@ export default function ChatPane({
         ) : (
           messages.map((m, i) => renderMessage(m, i))
         )}
-        {sending && !hasGenerating && (
+        {((sending && !hasGenerating) || (!sending && bgRunning)) && (
           <div
             style={{
               alignSelf: "flex-start",
@@ -1061,11 +1113,11 @@ export default function ChatPane({
             }}
           >
             <Spin size="small" />
-            正在处理…
-            {turnStartRef.current && (
+            {sending ? "正在处理…" : "后台任务执行中…"}
+            {sending && turnStartRef.current && (
               <span>已耗时 {fmtElapsed(nowMs - turnStartRef.current)}</span>
             )}
-            {conversationId && (
+            {sending && conversationId && (
               <Button
                 size="small"
                 danger

@@ -57,7 +57,6 @@ const CORS_ORIGINS = new Set([
   "https://dev.coode.cc.cd",
   "https://admin.coode.cc.cd",
   "https://lcdp-runtime.pages.dev",
-  "https://lcdp-studio.pages.dev",
   "https://lcdp-admin.pages.dev",
   "http://localhost:5173",
   "http://localhost:5174",

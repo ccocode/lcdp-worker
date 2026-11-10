@@ -21,7 +21,7 @@ import type {
  * 平台 api 客户端（M11 起经 Worker 网关 api.coode.cc.cd 转发回源；
  * M1–M10 的 service.coode.cc.cd 直连为临时形态，已收口）。
  */
-const API_BASE =
+export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ??
   "https://api.coode.cc.cd";
 
@@ -1702,11 +1702,12 @@ export const api = {
         `/apps/${encodeURIComponent(appId)}/assistant/conversations/${encodeURIComponent(conversationId)}`,
       );
     },
-    /** 确认/取消一条待确认写动作；fillForm 类返回回填指令由前端执行 */
+    /** 确认/取消一条待确认写动作；fillForm 类返回回填指令由前端执行；支持人工微调参数 patchArgs */
     async confirmAction(
       appId: string,
       messageId: string,
       decision: "confirm" | "cancel",
+      patchArgs?: Record<string, unknown>,
     ): Promise<AssistantConfirmResult> {
       const res = await apiFetch<
         AssistantConfirmResult & {
@@ -1715,7 +1716,7 @@ export const api = {
         }
       >(
         `/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
-        { method: "POST", body: JSON.stringify({ decision }) },
+        { method: "POST", body: JSON.stringify({ decision, patchArgs }) },
       );
       // 兼容契约形态 { navigate: '#/e/<entity>/form', prefill }：归一化为 fillForm
       if (!res.fillForm && res.prefill) {

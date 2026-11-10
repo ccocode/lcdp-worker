@@ -1929,10 +1929,11 @@ export const api = {
     async confirm(
       messageId: string,
       decision: "confirm" | "cancel",
+      patchArgs?: Record<string, unknown>,
     ): Promise<AdminAssistantConfirmResult> {
       return apiFetch(
         `/admin/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
-        { method: "POST", body: JSON.stringify({ decision }) },
+        { method: "POST", body: JSON.stringify({ decision, patchArgs }) },
       );
     },
     /**
@@ -2298,10 +2299,11 @@ export const api = {
         appId: string,
         messageId: string,
         decision: "confirm" | "cancel",
+        patchArgs?: Record<string, unknown>,
       ): Promise<AdminAssistantConfirmResult> {
         return apiFetch(
           `/admin/apps/${encodeURIComponent(appId)}/assistant/actions/${encodeURIComponent(messageId)}/confirm`,
-          { method: "POST", body: JSON.stringify({ decision }) },
+          { method: "POST", body: JSON.stringify({ decision, patchArgs }) },
         );
       },
       /** 应用组选项卡片点选（口径同平台组 chooseOption） */

@@ -5,19 +5,20 @@ import {
   Drawer,
   Empty,
   Input,
+  Space,
   Spin,
   Tag,
   Tooltip,
   Typography,
   message as antdMessage,
 } from "antd";
-import { tokens } from "@lcdp/ui";
+import { tokens, MarkdownView, consumeConversationStream, ActionConfirmCard } from "@lcdp/ui";
 import type {
   AssistantContext,
   AssistantFillForm,
   AssistantMessage,
 } from "./api.js";
-import { api } from "./api.js";
+import { api, API_BASE, getToken } from "./api.js";
 
 /**
  * 运行态助手面板（M7）：外壳级悬浮按钮 + 对话抽屉，任意页面可打开。
@@ -26,6 +27,79 @@ import { api } from "./api.js";
  * 写操作一律经用户确认后由服务端确定性执行；fillForm 类动作不落库，
  * 由前端写 sessionStorage 后跳派生表单回填（表单内由用户最终提交）。
  */
+
+interface ContextPill {
+  label: string;
+  prompt: string;
+}
+
+function getContextPills(appId: string, context: AssistantContext): ContextPill[] {
+  const key = (context.entityKey || "").toLowerCase();
+  const path = (context.path || "").toLowerCase();
+
+  // 1. 物资管理 (procurement-inventory)
+  if (appId === "procurement-inventory" || path.includes("procurement") || path.includes("inventory")) {
+    if (key.includes("purchase") || path.includes("purchase")) {
+      return [
+        { label: "📑 待我审批采购单", prompt: "查询当前待我审批的采购单有哪些？" },
+        { label: "📦 查看低库存预警", prompt: "检查仓库中有哪些物料低于安全库存？" },
+        { label: "💰 统计本月采购额", prompt: "统计本月已生效的采购总金额及明细" },
+      ];
+    }
+    return [
+      { label: "📦 安全库存预警", prompt: "检查哪些物料库存低于安全库存并需要补货？" },
+      { label: "📑 查待审批单据", prompt: "查询当前待审批的采购与领用单据" },
+      { label: "📝 申请物料领用", prompt: "我想申请领用办公耗材，请协助我登记领用单" },
+      { label: "🔍 查在库物料明细", prompt: "列出当前一号仓库中主要办公设备的在库数量" },
+    ];
+  }
+
+  // 2. 星桥商城 (mall)
+  if (appId === "mall" || path.includes("mall") || path.includes("shop")) {
+    return [
+      { label: "🚚 查待发货订单", prompt: "查询最近的待发货订单列表与物流单号" },
+      { label: "📉 查缺货商品", prompt: "有哪些在售商品当前库存为零或不足？" },
+      { label: "💰 统计商城销售额", prompt: "统计本月星桥商城的支付订单销售总额" },
+      { label: "🔍 查商品价格与上架状态", prompt: "查询在售数码终端的价格与保修政策" },
+    ];
+  }
+
+  // 3. 协同办公 (oa)
+  if (appId === "oa" || path.includes("oa")) {
+    return [
+      { label: "📑 待我审批事项", prompt: "查询当前需要我审批的办公申请" },
+      { label: "💰 发起差旅报销", prompt: "我想申请一笔差旅费用报销" },
+      { label: "🏖️ 申请年假调休", prompt: "我想提交年假申请，请说明具体流程与必填项" },
+      { label: "📢 查最新公文公告", prompt: "查询公司最近发布的制度与公文公告" },
+    ];
+  }
+
+  // 4. 供应商服务中心 (support)
+  if (appId === "support" || path.includes("support")) {
+    return [
+      { label: "⚠️ 查待处理售后工单", prompt: "查询当前有哪些未结案的售后工单与客诉？" },
+      { label: "📅 查今日交货预约", prompt: "查询今天是否有供应商交货预约？" },
+      { label: "📋 登记新售后工单", prompt: "收到客户关于设备故障的反馈，帮我登记一条售后维修工单" },
+    ];
+  }
+
+  // 5. 官网 / 内容样例站 (www / contentpilot / forum)
+  if (appId === "www" || appId === "contentpilot" || appId === "forum") {
+    return [
+      { label: "📰 查待审文章列表", prompt: "查询当前有哪些草稿或待审核的新闻文章？" },
+      { label: "🔍 检查静态站点状态", prompt: "检查官网静态页面的最新生成与发布状态" },
+      { label: "💬 查论坛最新帖子", prompt: "查询星桥论坛最近的互动帖子与回复" },
+    ];
+  }
+
+  // 通用兜底
+  return [
+    { label: "🔍 查当前数据概览", prompt: "请帮我概括一下当前页面的主要业务数据" },
+    { label: "❓ 了解相关规章制度", prompt: "这块业务对应公司哪些管理规定和审批权限？" },
+    { label: "📝 快速新建记录", prompt: "我想录入一条新数据，请协助我填写表单" },
+  ];
+}
+
 export default function AssistantPanel({
   appId,
   context,
@@ -50,6 +124,16 @@ export default function AssistantPanel({
   staffEnabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(() => {
+    try {
+      return localStorage.getItem("lcdp_assistant_pinned") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [isWide, setIsWide] = useState(
+    () => typeof window !== "undefined" && window.innerWidth >= 992,
+  );
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [input, setInput] = useState("");
@@ -69,12 +153,46 @@ export default function AssistantPanel({
    */
   const alignInFlightRef = useRef<Set<string>>(new Set());
 
+  // 视口宽度监听（宽屏支持分屏 Pin 模式）
+  useEffect(() => {
+    const handleResize = () => {
+      setIsWide(window.innerWidth >= 992);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // 分屏 Pin 模式下驱动外壳主体右外边距，避免内容被遮挡
+  useEffect(() => {
+    if (open && pinned && isWide) {
+      document.documentElement.style.setProperty("--lcdp-pinned-panel-width", "380px");
+    } else {
+      document.documentElement.style.setProperty("--lcdp-pinned-panel-width", "0px");
+    }
+    return () => {
+      document.documentElement.style.setProperty("--lcdp-pinned-panel-width", "0px");
+    };
+  }, [open, pinned, isWide]);
+
   // AgentChat 组件（renderer）派发的打开事件
   useEffect(() => {
     const onOpen = () => setOpen(true);
     window.addEventListener("lcdp:open-assistant", onOpen);
     return () => window.removeEventListener("lcdp:open-assistant", onOpen);
   }, []);
+
+  // 单号深链点击提示与反查通知
+  useEffect(() => {
+    const onLocate = (e: Event) => {
+      const detail = (e as CustomEvent<{ recordId?: string }>).detail;
+      if (detail?.recordId) {
+        antdMessage.success(`已复制单号并通知页面：${detail.recordId}`);
+      }
+    };
+    window.addEventListener("lcdp:locate-record", onLocate);
+    return () => window.removeEventListener("lcdp:locate-record", onLocate);
+  }, []);
+
 
   // 回填结果留痕上报（第 84 步片三② / 第 85 步分桶）：renderer 表单回读后
   // 派发 lcdp:fill-outcome（detail = { entity, messageId, missed[],
@@ -159,6 +277,55 @@ export default function AssistantPanel({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, open, sending]);
 
+
+  const streamUntilDone = (cid: string, knownAssistantIds: Set<string>) => {
+    const gen = ++pollGenRef.current;
+    const abortCtrl = new AbortController();
+    const token = getToken();
+    const streamUrl = `${API_BASE}/apps/${appId}/assistant/conversations/${cid}/stream`;
+
+    consumeConversationStream({
+      url: streamUrl,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: abortCtrl.signal,
+      onInit: (data) => {
+        if (pollGenRef.current !== gen) return;
+        if (data.messages && data.messages.length > 0) {
+          setMessages(data.messages);
+        }
+      },
+      onDelta: ({ messageId, text }) => {
+        if (pollGenRef.current !== gen) return;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? { ...m, text } : m)),
+        );
+      },
+      onDone: (data) => {
+        if (pollGenRef.current !== gen) return;
+        setSending(false);
+        if (data.message) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === data.message.id ? data.message : m)),
+          );
+          if (data.message.status === "failed") {
+            setTurnError(data.message.text || "助手生成失败，请重试");
+          }
+        } else if (data.messages) {
+          setMessages(data.messages);
+        }
+      },
+      onError: () => {
+        if (pollGenRef.current === gen) {
+          pollUntilDone(cid, knownAssistantIds);
+        }
+      },
+    }).then((ok) => {
+      if (!ok && pollGenRef.current === gen) {
+        pollUntilDone(cid, knownAssistantIds);
+      }
+    });
+  };
+
   const pollUntilDone = (cid: string, knownAssistantIds: Set<string>) => {
     const gen = ++pollGenRef.current;
     const deadline = Date.now() + 180_000;
@@ -193,10 +360,10 @@ export default function AssistantPanel({
     void tick();
   };
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (explicitText?: string) => {
+    const text = typeof explicitText === "string" ? explicitText.trim() : input.trim();
     if (!text || sending) return;
-    setInput("");
+    if (!explicitText) setInput("");
     setTurnError(null);
     const knownAssistantIds = new Set(
       messages.filter((m) => m.role === "assistant").map((m) => m.id),
@@ -213,7 +380,7 @@ export default function AssistantPanel({
         context,
       });
       setConversationId(res.conversationId);
-      pollUntilDone(res.conversationId, knownAssistantIds);
+      streamUntilDone(res.conversationId, knownAssistantIds);
     } catch (err) {
       setSending(false);
       setTurnError(err instanceof Error ? err.message : String(err));
@@ -268,13 +435,13 @@ export default function AssistantPanel({
                 .filter((m) => m.role === "assistant" && m.id !== res.messageId)
                 .map((m) => m.id),
             );
-            pollUntilDone(res.conversationId, known);
+            streamUntilDone(res.conversationId, known);
           } else {
             setSending(false);
           }
           return;
         }
-        pollUntilDone(res.conversationId, knownAssistantIds);
+        streamUntilDone(res.conversationId, knownAssistantIds);
       } catch (err) {
         setSending(false);
         setTurnError(err instanceof Error ? err.message : String(err));
@@ -351,11 +518,12 @@ export default function AssistantPanel({
   const handleAction = async (
     msg: AssistantMessage,
     decision: "confirm" | "cancel",
+    patchArgs?: Record<string, unknown>,
   ) => {
     if (!msg.pendingAction || msg.pendingAction.handled || confirmingId) return;
     setConfirmingId(msg.id);
     try {
-      const res = await api.assistant.confirmAction(appId, msg.id, decision);
+      const res = await api.assistant.confirmAction(appId, msg.id, decision, patchArgs);
       if (res.message) {
         if (res.executed) antdMessage.success(res.message);
         else antdMessage.info(res.message);
@@ -425,7 +593,11 @@ export default function AssistantPanel({
             wordBreak: "break-word",
           }}
         >
-          {msg.text}
+          {isUser ? (
+            <span>{msg.text}</span>
+          ) : (
+            <MarkdownView content={msg.text} />
+          )}
           {generating && <Spin size="small" style={{ marginLeft: 8 }} />}
         </div>
         {!isUser && msg.citations && msg.citations.length > 0 && (
@@ -440,86 +612,12 @@ export default function AssistantPanel({
           </div>
         )}
         {!isUser && msg.pendingAction && (
-          <Card
-            size="small"
-            title={msg.pendingAction.summary}
-            style={{ borderColor: "#ffe58f", background: "#fffbe6" }}
-          >
-            {msg.pendingAction.droppedKeys &&
-              msg.pendingAction.droppedKeys.length > 0 && (
-                <div style={{ fontSize: 12, marginBottom: 6 }}>
-                  <Typography.Text type="secondary">
-                    提案中有 {msg.pendingAction.droppedKeys.length}{" "}
-                    个字段与数据模型不匹配，已忽略：
-                    {msg.pendingAction.droppedKeys.join("、")}
-                  </Typography.Text>
-                </div>
-              )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {msg.pendingAction.fields.map((f, i) => (
-                <div key={i} style={{ fontSize: 13 }}>
-                  <Typography.Text type="secondary">{f.label}：</Typography.Text>
-                  {formatActionValue(f.value)}
-                </div>
-              ))}
-            </div>
-            {(msg.pendingAction.kind === "fillForm" ||
-              msg.pendingAction.kind === "createRecord") &&
-              msg.pendingAction.missingFields &&
-              msg.pendingAction.missingFields.length > 0 && (
-                <details style={{ marginTop: 6 }}>
-                  <summary
-                    style={{
-                      fontSize: 13,
-                      cursor: "pointer",
-                      color: tokens.colorTextSecondary,
-                    }}
-                  >
-                    未提供的字段（{msg.pendingAction.missingFields.length}）
-                  </summary>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      marginTop: 4,
-                    }}
-                  >
-                    {msg.pendingAction.missingFields.map((label, i) => (
-                      <div key={i} style={{ fontSize: 13 }}>
-                        <Typography.Text type="secondary">
-                          {label}：
-                        </Typography.Text>
-                        未提供
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
-            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-              {msg.pendingAction.handled ? (
-                <Tag color="default">已处理</Tag>
-              ) : (
-                <>
-                  <Button
-                    type="primary"
-                    size="small"
-                    loading={confirmingId === msg.id}
-                    onClick={() => void handleAction(msg, "confirm")}
-                  >
-                    确认执行
-                  </Button>
-                  <Button
-                    size="small"
-                    disabled={confirmingId === msg.id}
-                    onClick={() => void handleAction(msg, "cancel")}
-                  >
-                    取消
-                  </Button>
-                </>
-              )}
-            </div>
-          </Card>
+          <ActionConfirmCard
+            action={msg.pendingAction}
+            loading={confirmingId === msg.id}
+            onConfirm={(patchArgs) => void handleAction(msg, "confirm", patchArgs)}
+            onCancel={() => void handleAction(msg, "cancel")}
+          />
         )}
       </div>
     );
@@ -534,78 +632,89 @@ export default function AssistantPanel({
       : null;
   if (staffEnabled === false) return null;
 
-  return (
+  const pills = getContextPills(appId, context);
+
+  const renderPanelBody = () => (
     <>
-      <Button
-        type="primary"
-        shape="round"
-        size="large"
-        onClick={() => setOpen(true)}
+      <div
+        ref={scrollRef}
         style={{
-          position: "fixed",
-          right: 24,
-          bottom: "calc(24px + var(--lcdp-nav-offset, 0px))",
-          zIndex: 999,
-          boxShadow: "0 6px 16px rgba(0,0,0,0.24)",
+          flex: 1,
+          overflowY: "auto",
+          padding: 16,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
         }}
       >
-        ✦ 助手
-      </Button>
-      <Drawer
-        title={faceName ? `✦ ${faceName}` : "✦ 智能助手"}
-        width={"min(480px, 100vw)"}
-        open={open}
-        onClose={() => setOpen(false)}
-        extra={
-          <Button size="small" onClick={startNewConversation}>
-            新对话
-          </Button>
-        }
-        styles={{ body: { display: "flex", flexDirection: "column", padding: 0 } }}
+        {messages.length === 0 && !sending ? (
+          <Empty
+            description="问我查数据、办业务或制度问题都可以"
+            style={{ marginTop: 48 }}
+          />
+        ) : (
+          messages.map(renderMessage)
+        )}
+        {sending &&
+          !messages.some(
+            (m) => m.role === "assistant" && m.status === "generating",
+          ) && (
+            <div style={{ alignSelf: "flex-start", color: "#8c8c8c", fontSize: 13 }}>
+              <Spin size="small" style={{ marginRight: 8 }} />
+              正在处理…
+            </div>
+          )}
+        {turnError && (
+          <Typography.Text type="danger" style={{ fontSize: 13 }}>
+            {turnError}
+          </Typography.Text>
+        )}
+      </div>
+
+      <div
+        style={{
+          borderTop: "1px solid #f0f0f0",
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          background: "#fafafa",
+        }}
       >
-        <div
-          ref={scrollRef}
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: 16,
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-          }}
-        >
-          {messages.length === 0 && !sending ? (
-            <Empty
-              description="问我查数据、办业务或制度问题都可以"
-              style={{ marginTop: 48 }}
-            />
-          ) : (
-            messages.map(renderMessage)
-          )}
-          {sending &&
-            !messages.some(
-              (m) => m.role === "assistant" && m.status === "generating",
-            ) && (
-              <div style={{ alignSelf: "flex-start", color: "#8c8c8c", fontSize: 13 }}>
-                <Spin size="small" style={{ marginRight: 8 }} />
-                正在处理…
-              </div>
-            )}
-          {turnError && (
-            <Typography.Text type="danger" style={{ fontSize: 13 }}>
-              {turnError}
-            </Typography.Text>
-          )}
-        </div>
-        <div
-          style={{
-            borderTop: "1px solid #f0f0f0",
-            padding: 12,
-            display: "flex",
-            gap: 8,
-            alignItems: "flex-end",
-          }}
-        >
+        {pills.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              flexWrap: "wrap",
+              maxHeight: 64,
+              overflowY: "auto",
+            }}
+          >
+            {pills.map((p, idx) => (
+              <Tag
+                key={idx}
+                onClick={() => void send(p.prompt)}
+                style={{
+                  cursor: "pointer",
+                  margin: 0,
+                  borderRadius: 12,
+                  padding: "2px 8px",
+                  fontSize: 12,
+                  background: "#fff",
+                  borderColor: "#d6e4ff",
+                  color: "#1d39c4",
+                  userSelect: "none",
+                  transition: "all 0.2s",
+                }}
+              >
+                {p.label}
+              </Tag>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <Input.TextArea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -627,7 +736,123 @@ export default function AssistantPanel({
             发送
           </Button>
         </div>
-      </Drawer>
+      </div>
+    </>
+  );
+
+  return (
+    <>
+      {(!open || (!pinned || !isWide)) && (
+        <Button
+          type="primary"
+          shape="round"
+          size="large"
+          onClick={() => setOpen(true)}
+          style={{
+            position: "fixed",
+            right: 24,
+            bottom: "calc(24px + var(--lcdp-nav-offset, 0px))",
+            zIndex: 999,
+            boxShadow: "0 6px 16px rgba(0,0,0,0.24)",
+          }}
+        >
+          ✦ 助手
+        </Button>
+      )}
+
+      {open && pinned && isWide ? (
+        <aside
+          style={{
+            position: "fixed",
+            top: 0,
+            right: 0,
+            width: 380,
+            height: "100vh",
+            zIndex: 1000,
+            background: "#fff",
+            borderLeft: "1px solid #e8e8e8",
+            display: "flex",
+            flexDirection: "column",
+            boxShadow: "-2px 0 8px rgba(0,0,0,0.06)",
+          }}
+        >
+          <div
+            style={{
+              height: 56,
+              borderBottom: "1px solid #f0f0f0",
+              padding: "0 16px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: "#fafafa",
+            }}
+          >
+            <Typography.Text strong style={{ fontSize: 15 }}>
+              {faceName ? `✦ ${faceName}` : "✦ 智能助手"}
+            </Typography.Text>
+            <Space size="small">
+              <Tooltip title="取消固定为侧栏（恢复浮动抽屉）">
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  onClick={() => {
+                    setPinned(false);
+                    try {
+                      localStorage.setItem("lcdp_assistant_pinned", "false");
+                    } catch {}
+                  }}
+                >
+                  📌 固定中
+                </Button>
+              </Tooltip>
+              <Button size="small" onClick={startNewConversation}>
+                新对话
+              </Button>
+              <Button
+                size="small"
+                type="text"
+                onClick={() => setOpen(false)}
+              >
+                ✕
+              </Button>
+            </Space>
+          </div>
+          {renderPanelBody()}
+        </aside>
+      ) : (
+        <Drawer
+          title={faceName ? `✦ ${faceName}` : "✦ 智能助手"}
+          width={"min(480px, 100vw)"}
+          open={open}
+          onClose={() => setOpen(false)}
+          extra={
+            <Space size="small">
+              {isWide && (
+                <Tooltip title="固定为右侧常驻侧栏（宽屏分屏协同，不遮挡页面）">
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setPinned(true);
+                      try {
+                        localStorage.setItem("lcdp_assistant_pinned", "true");
+                      } catch {}
+                    }}
+                  >
+                    📍 分屏固定
+                  </Button>
+                </Tooltip>
+              )}
+              <Button size="small" onClick={startNewConversation}>
+                新对话
+              </Button>
+            </Space>
+          }
+          styles={{ body: { display: "flex", flexDirection: "column", padding: 0 } }}
+        >
+          {renderPanelBody()}
+        </Drawer>
+      )}
     </>
   );
 }

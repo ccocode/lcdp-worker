@@ -129,14 +129,14 @@
         endEl = document.createElement("p");
         endEl.className = "lcdp-l1-end";
         endEl.textContent = "没有更多了";
-        endEl.hidden = true;
+        setHidden(endEl, true);
         tailEl.appendChild(endEl);
       }
       errBox = tailEl.querySelector("[data-lcdp-error]");
       if (!errBox) {
         errBox = document.createElement("div");
         errBox.className = "lcdp-l1-error";
-        errBox.hidden = true;
+        setHidden(errBox, true);
         errBtn = document.createElement("button");
         errBtn.type = "button";
         errBtn.className = "lcdp-l1-retry";
@@ -154,6 +154,12 @@
         if (state.failedMode === "more") loadMore();
         else loadInitial();
       });
+    }
+
+    function setHidden(el, hide) {
+      if (!el) return;
+      el.hidden = !!hide;
+      el.style.display = hide ? "none" : "";
     }
 
     function setLoading(on) {
@@ -177,25 +183,26 @@
 
     function showEnd() {
       state.ended = true;
-      if (loadBtn) loadBtn.hidden = true;
-      if (endEl) endEl.hidden = false;
-      if (errBox) errBox.hidden = true;
+      setHidden(loadBtn, true);
+      setHidden(endEl, false);
+      setHidden(emptyEl, true);
+      setHidden(errBox, true);
     }
 
     function showList() {
-      if (loadBtn) loadBtn.hidden = false;
-      if (endEl) endEl.hidden = true;
-      if (errBox) errBox.hidden = true;
-      if (emptyEl) emptyEl.hidden = true;
+      setHidden(loadBtn, false);
+      setHidden(endEl, true);
+      setHidden(errBox, true);
+      setHidden(emptyEl, true);
     }
 
     function showEmpty() {
       state.ended = true;
-      if (loadBtn) loadBtn.hidden = true;
-      if (endEl) endEl.hidden = true;
-      if (errBox) errBox.hidden = true;
+      setHidden(loadBtn, true);
+      setHidden(endEl, true);
+      setHidden(errBox, true);
       if (emptyEl) {
-        emptyEl.hidden = false;
+        setHidden(emptyEl, false);
       } else if (listEl) {
         var p = document.createElement("p");
         p.className = "lcdp-l1-empty";
@@ -208,9 +215,10 @@
       state.failed = true;
       state.failedMode = mode;
       setLoading(false);
-      if (loadBtn) loadBtn.hidden = true;
-      if (endEl) endEl.hidden = true;
-      if (errBox) errBox.hidden = false;
+      setHidden(loadBtn, true);
+      setHidden(endEl, true);
+      setHidden(errBox, false);
+      setHidden(emptyEl, true);
     }
 
     function insertRows(rows, append) {
@@ -298,7 +306,7 @@
       if (state.loading) return;
       setLoading(true);
       state.ended = false;
-      if (errBox) errBox.hidden = true;
+      setHidden(errBox, true);
       fetchPage(0)
         .then(function (res) {
           setLoading(false);
@@ -312,7 +320,7 @@
     function loadMore() {
       if (state.loading || state.ended) return;
       setLoading(true);
-      if (errBox) errBox.hidden = true;
+      setHidden(errBox, true);
       fetchPage(state.offset)
         .then(function (res) {
           setLoading(false);
@@ -325,6 +333,7 @@
 
     function refresh() {
       loadInitial();
+  
       try {
         var top =
           container.getBoundingClientRect().top + window.scrollY;
@@ -334,16 +343,18 @@
 
     if (refreshEl) refreshEl.addEventListener("click", refresh);
     if (loadBtn) loadBtn.addEventListener("click", loadMore);
+    loadInitial();
+
 
     // 上拉自动追加：尾区进入“距底小于一屏”即触发，与按钮同一逻辑
-    if (tailEl && "IntersectionObserver" in window) {
+    if (tailEl && "IntersectionObserver" in window) { try {
       var io = new IntersectionObserver(
         function (entries) {
           if (entries[0] && entries[0].isIntersecting) loadMore();
         },
-        { rootMargin: "0px 0px 100vh 0px" },
+        { rootMargin: "0px 0px " + Math.max(300, Math.round(window.innerHeight || 800)) + "px 0px" },
       );
-      io.observe(tailEl);
+      io.observe(tailEl); } catch (e) {}
     }
 
     // 移动端下拉刷新：页面顶部下拉超过 80px 松手即刷新（桌面不模拟拖动）
@@ -378,7 +389,7 @@
       touchY = null;
     });
 
-    loadInitial();
+
   }
 
   /* ---------------- H1：轮播 + 公告 ---------------- */
@@ -463,6 +474,7 @@
       var items = ann.querySelectorAll("[data-lcdp-announcement-item]");
       if (items.length === 0) {
         ann.hidden = true;
+        ann.style.display = "none";
       } else if (items.length > 1) {
         var track = ann.querySelector("[data-lcdp-announcement-track]");
         if (track) {

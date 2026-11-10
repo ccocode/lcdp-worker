@@ -4348,7 +4348,13 @@ function AppView({
     const brand = brandTextOf(cfg, primary.snapshot.app.name);
     return (
       <ConfigProvider locale={zhCN} theme={{ token }}>
-        <Layout style={{ minHeight: "100vh" }}>
+        <Layout
+          style={{
+            minHeight: "100vh",
+            marginRight: "var(--lcdp-pinned-panel-width, 0px)",
+            transition: "margin-right 0.2s ease",
+          }}
+        >
           <SiteHeader
             brand={brand}
             navItems={flatNavItems(menuItems)}
@@ -4452,7 +4458,13 @@ function AppView({
         },
       }}
     >
-      <Layout style={{ minHeight: "100vh" }}>
+      <Layout
+        style={{
+          minHeight: "100vh",
+          marginRight: "var(--lcdp-pinned-panel-width, 0px)",
+          transition: "margin-right 0.2s ease",
+        }}
+      >
         <Layout.Sider
           theme="light"
           width={220}

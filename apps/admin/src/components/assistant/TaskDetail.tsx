@@ -1,3 +1,10 @@
+import {
+  humanizeNodeName,
+  humanizeStepLabel,
+  humanizeTechnicalDetail,
+  humanizeTimelineSummary,
+  summarizeArtifactFiles,
+} from "./semanticLabels";
 /**
  * 任务详情体（工作台右栏与任务记录页抽屉共用）：
  * 只展示本实体自己的数据，不跨实体取数——统一壳 = 标题 +
@@ -13,7 +20,8 @@
  * 去助手查看）；不传则只展示待决、不给入口。
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge, Button, message, Spin, Tag, Typography } from "antd";
+import { Badge, Button, message, Progress, Spin, Tag, Typography } from "antd";
+import { tokens } from "@lcdp/ui";
 import {
   api,
   type AdminAssistantTask,
@@ -112,19 +120,20 @@ export const NODE_STATUS_LABELS: Record<string, string> = {
 
 /** 暂停原因中文（D6 首批；服务端 reason 键直传，未列出的回通用文案） */
 export const PAUSE_REASON_LABELS: Record<string, string> = {
-  "budget-exhausted": "预算已用完",
-  "script-failure": "节点执行失败",
-  "consecutive-failures": "连续失败",
+  "budget-exhausted": "单次调用达到上限",
+  "script-failure": "设计步骤执行遇阻",
+  "consecutive-failures": "多次尝试未成功",
+  "home-gate-stalled": "等待首页风格确认",
 };
 
 /** 暂停处置动作中文（与服务端通知正文同口径；未知键原样回落） */
 export const RECOVERY_ACTION_LABELS: Record<string, string> = {
-  "raise-budget": "提高预算",
-  abandon: "放弃任务",
-  "fix-contract": "修规约",
-  "start-successor-run": "开后继任务",
-  "inspect-failures": "查看失败节点",
-  "retry-nodes": "重试失败节点",
+  "raise-budget": "提高调用上限",
+  abandon: "终止当前任务",
+  "fix-contract": "调整设计要求",
+  "start-successor-run": "重新开始生成",
+  "inspect-failures": "查看详细原因",
+  "retry-nodes": "重试未成功步骤",
 };
 
 export default function TaskDetail({
@@ -184,7 +193,7 @@ export default function TaskDetail({
     }
     const id = window.setInterval(() => {
       setRunTick((t) => t + 1);
-    }, 20_000);
+    }, 3_000);
     return () => window.clearInterval(id);
   }, [task.status, appId, task.runId]);
   /**
@@ -266,13 +275,15 @@ export default function TaskDetail({
       setActing(null);
     }
   };
-  const arts = task.artifacts as Record<string, unknown> | null | undefined;
+  // 始终以服务端最新返回的 runDetail.task 为准，防止左侧计划卡已推进（1/5、3/5）而右侧仍滞后为 0/5
+  const activeTask = runDetail?.task ?? task;
+  const arts = activeTask.artifacts as Record<string, unknown> | null | undefined;
   const themeLine =
-    task.kind === "theme_build" && typeof arts?.themeId === "string"
+    activeTask.kind === "theme_build" && typeof arts?.themeId === "string"
       ? `主题：${arts.themeId}${typeof arts.version === "string" ? `@${arts.version}` : ""}`
       : null;
 
-  /** 步骤清单（任务头下面的唯一正文）：✓ + 文字，中间不显示时间。 */
+  /** 步骤清单（任务头下面的唯一正文）：✓ + 文字。 */
   type StepState = "passed" | "failed" | "skipped" | "pending";
   const stepState = (status: string): StepState =>
     CHECK_PASSED.has(status)
@@ -282,10 +293,10 @@ export default function TaskDetail({
         : CHECK_SKIPPED.has(status)
           ? "skipped"
           : "pending";
-  const checklist = task.checklist ?? [];
+  const checklist = activeTask.checklist ?? [];
   const runStatus = runDetail?.run?.runStatus ?? null;
   /** 详情头状态跟 runStatus（收尾1）：等验收/等确认首页等态不再只显示“进行中”，与对话框卡角标同口径；run 详情未到时回落任务行 runStatus。 */
-  const headerRunStatus = runStatus ?? task.runStatus ?? null;
+  const headerRunStatus = runStatus ?? activeTask.runStatus ?? null;
   const headerStatusLabel =
     headerRunStatus === "failed"
       ? "已失败"
@@ -297,7 +308,7 @@ export default function TaskDetail({
             ? "等你确认绑定"
             : headerRunStatus === "awaiting_home"
               ? "等你确认首页"
-              : (TASK_STATUS_LABELS[task.status] ?? task.status);
+              : (TASK_STATUS_LABELS[activeTask.status] ?? activeTask.status);
   const headerStatusColor =
     headerRunStatus === "failed"
       ? "red"
@@ -311,7 +322,7 @@ export default function TaskDetail({
               ? "cyan"
               : undefined;
   const isRunning =
-    task.status === "active" &&
+    activeTask.status === "active" &&
     runStatus !== "failed" &&
     runStatus !== "paused" &&
     runStatus !== "completed" &&
@@ -322,11 +333,32 @@ export default function TaskDetail({
   const failedStepIndex = checklist.findIndex(
     (it) => stepState(it.status) === "failed",
   );
+  // 从最后一个已完成步骤之后寻找当前焦点步骤，避免历史前置项遗留导致步骤错挂到第 1 步
+  const lastDoneIndex = checklist.reduce(
+    (acc, it, idx) =>
+      stepState(it.status) === "passed" || stepState(it.status) === "skipped"
+        ? idx
+        : acc,
+    -1,
+  );
+  const firstOpenAfterDone = (() => {
+    const after = checklist.findIndex(
+      (it, idx) => idx > lastDoneIndex && stepState(it.status) === "pending",
+    );
+    return after >= 0
+      ? after
+      : checklist.findIndex((it) => stepState(it.status) === "pending");
+  })();
   const currentStepIndex = isRunning
-    ? checklist.findIndex((it) => stepState(it.status) === "pending")
-    : -1;
-  // 默认展开：失败步骤优先（看错误），否则当前执行步骤；手动
-  // 展开收起优先于默认，轮询重拉不打掉手动选择；切任务清零。
+    ? firstOpenAfterDone
+    : headerRunStatus === "awaiting_home" ||
+        headerRunStatus === "awaiting_preview" ||
+        headerRunStatus === "awaiting_bind" ||
+        headerRunStatus === "paused" ||
+        headerRunStatus === "failed"
+      ? (failedStepIndex >= 0 ? failedStepIndex : firstOpenAfterDone)
+      : -1;
+  // 默认展开：失败步骤优先（看错误），否则当前焦点步骤；切任务清零。
   const defaultExpandedIndex =
     failedStepIndex >= 0 ? failedStepIndex : currentStepIndex;
   const [expandedOverride, setExpandedOverride] = useState<
@@ -381,7 +413,7 @@ export default function TaskDetail({
     return false;
   };
   /** 全部完成行：任务已关闭，或清单全过且 run 已完成；终审结论并入。 */
-  const taskDone = task.status === "done" || task.status === "closed";
+  const taskDone = activeTask.status === "done" || activeTask.status === "closed";
   const showDoneRow =
     taskDone ||
     (checklist.length > 0 &&
@@ -421,26 +453,44 @@ export default function TaskDetail({
         <Typography.Text
           style={{ fontSize: 13, flex: 1 }}
           ellipsis
-          title={task.title}
+          title={activeTask.title}
         >
-          {task.title}
+          {activeTask.title}
         </Typography.Text>
-        {task.kind && (
+        {activeTask.kind && (
           <Tag style={{ marginInlineEnd: 0 }}>
-            {TASK_KIND_LABELS[task.kind] ?? task.kind}
+            {TASK_KIND_LABELS[activeTask.kind] ?? activeTask.kind}
           </Tag>
         )}
         <Tag style={{ marginInlineEnd: 0 }} color={headerStatusColor}>
           {headerStatusLabel}
         </Tag>
       </div>
-      {task.goal && (
+      {activeTask.goal && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          目标：{task.goal}
+          目标：{activeTask.goal}
         </Typography.Text>
       )}
       {themeLine && (
         <Typography.Text style={{ fontSize: 12 }}>{themeLine}</Typography.Text>
+      )}
+      {checklist.length > 0 && (
+        <div style={{ margin: "6px 0 4px 0" }}>
+          <Progress
+            percent={Math.round((countPassed(activeTask) / checklist.length) * 100)}
+            size="small"
+            status={
+              headerRunStatus === "failed" || activeTask.status === "failed"
+                ? "exception"
+                : countPassed(activeTask) === checklist.length
+                  ? "success"
+                  : isRunning
+                    ? "active"
+                    : "normal"
+            }
+            format={() => `${countPassed(activeTask)}/${checklist.length} (${Math.round((countPassed(activeTask) / checklist.length) * 100)}%)`}
+          />
+        </div>
       )}
       {checklist.length > 0 && (
         <div
@@ -490,7 +540,7 @@ export default function TaskDetail({
                       color: st === "failed" ? "#ff4d4f" : undefined,
                     }}
                   >
-                    {it.label}
+                    {humanizeStepLabel(it.label)}
                   </span>
                   {expandable && (
                     <Typography.Text
@@ -515,9 +565,9 @@ export default function TaskDetail({
                     {nodesForStep.map((n) => (
                       <div key={n.nodeId}>
                         <div>
-                          {n.nodeId}（
-                          {NODE_STATUS_LABELS[n.status] ?? n.status}，尝试{" "}
-                          {n.attempts} 次）
+                          {humanizeNodeName(n.nodeId)}（
+                          {NODE_STATUS_LABELS[n.status] ?? n.status}
+                          {n.attempts > 1 ? "，正在优化调整" : ""}）
                         </div>
                         {n.error && (
                           <Typography.Text
@@ -528,7 +578,7 @@ export default function TaskDetail({
                               wordBreak: "break-word",
                             }}
                           >
-                            {n.error}
+                            {humanizeTechnicalDetail(n.error)}
                           </Typography.Text>
                         )}
                         {n.outputArtifacts.length > 0 && (
@@ -540,18 +590,66 @@ export default function TaskDetail({
                               wordBreak: "break-word",
                             }}
                           >
-                            产物：{n.outputArtifacts.join("、")}
+                            {summarizeArtifactFiles(n.outputArtifacts)}
                           </Typography.Text>
                         )}
                       </div>
                     ))}
-                    {isCurrent &&
-                      latestTimeline.map((e, j) => (
-                        <div key={j} style={{ wordBreak: "break-word" }}>
-                          {e.summary}
+                    {isCurrent && (() => {
+                      const chronological = [...latestTimeline].sort(
+                        (a, b) => (a.seq ?? 0) - (b.seq ?? 0),
+                      );
+                      const deduped: { text: string; time: string | null; count: number }[] = [];
+                      for (let idx = 0; idx < chronological.length; idx++) {
+                        const ev = chronological[idx]!;
+                        const isLastAndRunning = isRunning && idx === chronological.length - 1;
+                        const text = humanizeTimelineSummary(ev.summary, { isLastAndRunning });
+                        if (!text) continue;
+                        const time = ev.createdAt
+                          ? new Date(ev.createdAt).toLocaleTimeString("zh-CN", {
+                              hour12: false,
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            })
+                          : null;
+                        if (deduped.length > 0 && deduped[deduped.length - 1]!.text === text) {
+                          deduped[deduped.length - 1]!.count++;
+                          if (time) deduped[deduped.length - 1]!.time = time;
+                        } else {
+                          deduped.push({ text, time, count: 1 });
+                        }
+                      }
+                      return deduped.map((item, j) => (
+                        <div
+                          key={j}
+                          style={{
+                            fontSize: 12,
+                            color: tokens.colorTextSecondary,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "2px 0",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
+                          {item.time && (
+                            <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                              {item.time}
+                            </span>
+                          )}
+                          <span style={{ flex: 1 }}>{item.text}</span>
+                          {item.count > 1 && (
+                            <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
+                              x{item.count}
+                            </Tag>
+                          )}
                         </div>
-                      ))}
+                      ));
+                    })()}
                     {isCurrent &&
+                      isRunning &&
                       nodesForStep.length === 0 &&
                       latestTimeline.length === 0 && (
                         <Typography.Text
@@ -576,7 +674,7 @@ export default function TaskDetail({
                   >
                     {failedNodes.map((n) => (
                       <div key={n.nodeId}>
-                        <div>{n.nodeId}</div>
+                        <div>{humanizeNodeName(n.nodeId)}</div>
                         {n.error && (
                           <Typography.Text
                             type="danger"
@@ -586,7 +684,7 @@ export default function TaskDetail({
                               wordBreak: "break-word",
                             }}
                           >
-                            {n.error}
+                            {humanizeTechnicalDetail(n.error)}
                           </Typography.Text>
                         )}
                       </div>
@@ -601,8 +699,10 @@ export default function TaskDetail({
                           wordBreak: "break-word",
                         }}
                       >
-                        缺口：
-                        {latestFailedVerdict?.acceptanceGaps.join("；")}
+                        待完善项：
+                        {latestFailedVerdict?.acceptanceGaps
+                          .map(humanizeTechnicalDetail)
+                          .join("；")}
                       </Typography.Text>
                     )}
                   </div>
