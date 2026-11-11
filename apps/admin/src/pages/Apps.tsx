@@ -7,10 +7,12 @@ import {
   Space,
   Switch,
   Table,
+  Tag,
+  Tooltip,
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { api, type Row } from "../api";
+import { api, type DomainInfo, type Row } from "../api";
 import { asText, fmtTime } from "../helpers";
 import type { PageContext } from "../registry";
 import { tokens } from "@lcdp/ui";
@@ -46,6 +48,7 @@ const DOMAIN_LABEL: Record<string, string> = {
  */
 export default function Apps({ ctx }: { ctx: PageContext }) {
   const [rows, setRows] = useState<Row[]>([]);
+  const [domains, setDomains] = useState<DomainInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   /** 设计器覆盖层当前设计的应用 id（null = 未打开） */
@@ -62,7 +65,12 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await api.apps.list());
+      const [appRows, domainList] = await Promise.all([
+        api.apps.list(),
+        api.domains.list().catch(() => [] as DomainInfo[]),
+      ]);
+      setRows(appRows);
+      setDomains(domainList);
     } catch (err) {
       message.error(err instanceof Error ? err.message : "加载应用失败");
     } finally {
@@ -174,8 +182,19 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
       render: (v) => {
         const key = asText(v);
         if (!key) return "—";
-        const label = DOMAIN_LABEL[key];
-        return label ? `${label}（${key}）` : key;
+        const label = DOMAIN_LABEL[key] ?? (key === "procurement" ? "采购库存" : undefined);
+        const def = domains.find((d) => d.key === key);
+        const appKind =
+          def?.defaultAppKind ??
+          (["content", "commerce", "forum"].includes(key) ? "c-end" : "b-end");
+        return (
+          <Space size={6}>
+            <span>{label ? `${label}（${key}）` : key}</span>
+            <Tag color={appKind === "c-end" ? "green" : "blue"}>
+              {appKind === "c-end" ? "C端" : "B端"}
+            </Tag>
+          </Space>
+        );
       },
     },
     { title: "租户", dataIndex: "tenant_id", render: (v, r) => asText(v ?? r.tenantId) },
@@ -195,19 +214,32 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
     {
       title: "主应用",
       width: 110,
-      render: (_, r) => (
-        <Switch
-          checked={!!r.isPrimary}
-          // 当前主应用不可关（只能改设到别的应用）；改设走确认弹窗
-          disabled={!!r.isPrimary}
-          loading={busyId === String(r.id)}
-          checkedChildren="是"
-          unCheckedChildren="否"
-          onChange={(next) => {
-            if (next) setPrimary(r);
-          }}
-        />
-      ),
+      render: (_, r) => {
+        const domainKey = asText(r.domain).trim().toLowerCase();
+        const disallowedDomain =
+          Boolean(domainKey) && domainKey !== "content" && domainKey !== "generic";
+        const isPrimary = !!r.isPrimary;
+        const switchEl = (
+          <Switch
+            checked={isPrimary}
+            // 当前主应用不可关闭（只能改设到别的应用）；非官网/B端领域不可设为主应用
+            disabled={isPrimary || disallowedDomain}
+            loading={busyId === String(r.id)}
+            checkedChildren="是"
+            unCheckedChildren="否"
+            onChange={(next) => {
+              if (next) setPrimary(r);
+            }}
+          />
+        );
+        return !isPrimary && disallowedDomain ? (
+          <Tooltip title="主应用应为官网（C 端 content 站点），B 端应用或商城/论坛子站不能设为主应用">
+            {switchEl}
+          </Tooltip>
+        ) : (
+          switchEl
+        );
+      },
     },
     {
       title: "状态",
