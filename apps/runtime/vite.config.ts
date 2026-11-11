@@ -195,10 +195,15 @@ function localThemePlugin(): Plugin {
           if (
             validPreview &&
             siteAppId &&
-            siteAppId !== validPreview.appId &&
-            (siteVia === "path" || url.pathname === "/" || !!fromParam)
+            siteAppId !== validPreview.appId
           ) {
             validPreview = null;
+            if (
+              !fromParam &&
+              (siteVia === "primary" || url.pathname === "/" || url.pathname === "/index.html")
+            ) {
+              clearStaleCookie = true;
+            }
           }
 
           if (validPreview) {
@@ -245,6 +250,9 @@ function localThemePlugin(): Plugin {
           }
 
           if (!mode || !appId || !themeId || !version) {
+            if (clearStaleCookie) {
+              res.setHeader("Set-Cookie", "lcdp_preview=; Path=/; Max-Age=0; SameSite=Lax");
+            }
             return next();
           }
 

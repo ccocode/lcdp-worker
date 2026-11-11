@@ -262,6 +262,7 @@ export default function AppShell() {
   );
   /** 应用行清单（仅作当前应用信息富化；切换器与归位口径走 grants/me） */
   const [appsRows, setAppsRows] = useState<Row[]>([]);
+  const [appsLoaded, setAppsLoaded] = useState(false);
   const [appMeta, setAppMeta] = useState<AdminDataMeta | null>(null);
   const [metaState, setMetaState] = useState<"idle" | "loading" | "ok" | "error">("idle");
 
@@ -308,15 +309,23 @@ export default function AppShell() {
   // 应用行清单（服务端已按 grants 过滤）：只用于当前应用的资料富化
   // （名称/场景/版本等）；派生应用不在此清单内时以 grants 条目兜底。
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setAppsLoaded(false);
+      return;
+    }
     let cancelled = false;
+    setAppsLoaded(false);
     api
       .apps.list()
       .then((list) => {
-        if (!cancelled) setAppsRows(list);
+        if (!cancelled) {
+          setAppsRows(list);
+          setAppsLoaded(true);
+        }
       })
       .catch(() => {
         /* 失败时当前应用信息降级为 grants 条目，不打断使用 */
+        if (!cancelled) setAppsLoaded(true);
       });
     return () => {
       cancelled = true;
@@ -333,13 +342,17 @@ export default function AppShell() {
     })();
 
   // 上下文归位：进入管理台即默认身处一个应用（对象形态归正 W4）——
-  // appId 缺失或不在可运营集内时，全身份（含 admin）一律落到首个可用应用
-  // （admin 取 apps/grants 全量首个、运营者取可运营集首个，同为 operableApps 口径）。
-  // 可运营集为空（如应用全删）时不动，工作台呈现 app-list 空态。
+  // appId 缺失时优先落到主应用（官网），无主应用或无权限时落到首个可运营应用；
+  // appId 不在可运营集内时同步归位到首个可用应用。
   useEffect(() => {
     if (!user || !grants || operableApps.length === 0) return;
+    if (!appId && !appsLoaded) return;
     if (!appId || !operableApps.some((a) => a.id === appId)) {
-      const first = operableApps[0]!.id;
+      const operableIds = new Set(operableApps.map((a) => a.id));
+      const primaryApp = appsRows.find(
+        (a) => Boolean(a.isPrimary) && operableIds.has(String(a.id)),
+      );
+      const first = primaryApp ? String(primaryApp.id) : operableApps[0]!.id;
       if (first !== appId) {
         window.history.replaceState(null, "", pathWithApp(page, first));
         setAppId(first);
@@ -351,7 +364,7 @@ export default function AppShell() {
       window.history.replaceState(null, "", pathWithApp(page, appId));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grants, user, appId]);
+  }, [grants, user, appId, appsLoaded, appsRows]);
 
   // 当前应用的领域元数据（领域菜单与模版页共用一份，切换应用即重拉）。
   // 第 65 步补 user 维度：meta 是按调用者数据权限裁剪的（actions/字段/菜单）——
