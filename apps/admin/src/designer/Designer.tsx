@@ -28,6 +28,7 @@ import WorkflowDesigner from "./WorkflowDesigner.js";
 import Copilot from "./Copilot.js";
 import AgentsTab from "./AgentsTab.js";
 import { errText, fmtTime, tokens } from "@lcdp/ui";
+import { resolveLocalRuntimeHref } from "../helpers";
 
 /**
  * 应用设计器（第 89 步自独立设计台迁入管理台 designer 模块）：数据模型 +
@@ -877,7 +878,13 @@ export default function Designer({
         <div style={{ flex: 1 }} />
         <Button
           onClick={() =>
-            window.open(`https://www.coode.cc.cd/${encodeURIComponent(appId)}`, "_blank")
+            window.open(
+              resolveLocalRuntimeHref(
+                `https://www.coode.cc.cd/${encodeURIComponent(appId)}`,
+                appId,
+              ),
+              "_blank",
+            )
           }
         >
           在运行态打开

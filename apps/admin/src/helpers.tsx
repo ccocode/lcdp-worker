@@ -94,6 +94,36 @@ export function accessFormText(
   }`;
 }
 
+function localRuntimeOrigin(): string | null {
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname;
+  if (host !== "localhost" && host !== "127.0.0.1") return null;
+  return `${window.location.protocol}//${host}:5174`;
+}
+
+/**
+ * 本地开发（localhost / 127.0.0.1）运行态地址重写：将设计器/向导拼出的
+ * 线上运行态 URL 统一切回 runtime 本地端口 :5174 并保留 /<appId>/ 路径前缀。
+ */
+export function resolveLocalRuntimeHref(
+  rawUrl: string,
+  appId?: string | null,
+): string {
+  const origin = localRuntimeOrigin();
+  if (!origin) return rawUrl;
+  try {
+    const u = new URL(rawUrl, window.location.origin);
+    const path = appId
+      ? `/${encodeURIComponent(appId)}/`
+      : u.pathname && u.pathname !== "/"
+        ? u.pathname
+        : "/";
+    return `${origin}${path}${u.search}`;
+  } catch {
+    return rawUrl;
+  }
+}
+
 /**
  * 本地开发（localhost / 127.0.0.1）预览地址重写：服务端签发给线上域名的
  * 预览 URL（含默认域名或专属域名）在本地无子域 DNS，统一切回 runtime 本地
@@ -103,19 +133,12 @@ export function resolveLocalPreviewHref(
   rawUrl: string,
   appId?: string | null,
 ): string {
-  if (typeof window === "undefined") return rawUrl;
-  const host = window.location.hostname;
-  if (host !== "localhost" && host !== "127.0.0.1") return rawUrl;
+  const origin = localRuntimeOrigin();
+  if (!origin) return rawUrl;
   try {
     const u = new URL(rawUrl, window.location.origin);
-    const token = u.searchParams.get("lcdp_preview");
-    if (!token) return rawUrl;
-    const path = appId
-      ? `/${encodeURIComponent(appId)}/`
-      : u.pathname && u.pathname !== "/"
-        ? u.pathname
-        : "/";
-    return `${window.location.protocol}//${host}:5174${path}?lcdp_preview=${encodeURIComponent(token)}`;
+    if (!u.searchParams.get("lcdp_preview")) return rawUrl;
+    return resolveLocalRuntimeHref(rawUrl, appId);
   } catch {
     return rawUrl;
   }

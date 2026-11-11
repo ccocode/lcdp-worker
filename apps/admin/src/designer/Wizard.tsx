@@ -27,6 +27,7 @@ import type {
 import { api } from "./api.js";
 import { errText, tokens } from "@lcdp/ui";
 import { ProposalDiffView } from "./Copilot.js";
+import { resolveLocalRuntimeHref } from "../helpers";
 
 /**
  * 创建向导（AGENT 三期）：只服务新建应用——选型（领域）→ 抉择（样板 /
@@ -573,7 +574,10 @@ export default function WizardDrawer({
                       type="primary"
                       onClick={() =>
                         window.open(
-                          `https://coode.cc.cd/app/${encodeURIComponent(session.appId!)}`,
+                          resolveLocalRuntimeHref(
+                            `https://coode.cc.cd/app/${encodeURIComponent(session.appId!)}`,
+                            session.appId,
+                          ),
                           "_blank",
                         )
                       }
