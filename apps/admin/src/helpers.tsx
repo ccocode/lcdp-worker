@@ -93,3 +93,30 @@ export function accessFormText(
     app.nameEn ? `（应用别名 /${app.nameEn} 亦可达）` : ""
   }`;
 }
+
+/**
+ * 本地开发（localhost / 127.0.0.1）预览地址重写：服务端签发给线上域名的
+ * 预览 URL（含默认域名或专属域名）在本地无子域 DNS，统一切回 runtime 本地
+ * 端口 :5174，并保留 /<appId>/ 路径前缀与 lcdp_preview 令牌。
+ */
+export function resolveLocalPreviewHref(
+  rawUrl: string,
+  appId?: string | null,
+): string {
+  if (typeof window === "undefined") return rawUrl;
+  const host = window.location.hostname;
+  if (host !== "localhost" && host !== "127.0.0.1") return rawUrl;
+  try {
+    const u = new URL(rawUrl, window.location.origin);
+    const token = u.searchParams.get("lcdp_preview");
+    if (!token) return rawUrl;
+    const path = appId
+      ? `/${encodeURIComponent(appId)}/`
+      : u.pathname && u.pathname !== "/"
+        ? u.pathname
+        : "/";
+    return `${window.location.protocol}//${host}:5174${path}?lcdp_preview=${encodeURIComponent(token)}`;
+  } catch {
+    return rawUrl;
+  }
+}

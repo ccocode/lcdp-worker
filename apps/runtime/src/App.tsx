@@ -4109,9 +4109,6 @@ function AppView({
     void refreshTodoCount();
   }, [refreshTodoCount]);
 
-  /** 待办中心是外壳级视图（/flow），不属于任何页面 Schema */
-  const isFlow = inPath === "/flow";
-
   const goPage = useMemo(
     () =>
       (to: string) => {
@@ -4128,6 +4125,10 @@ function AppView({
     () => (loaded ? buildPageUnion(loaded) : null),
     [loaded],
   );
+  /** 待办中心是外壳级视图（/flow），不属于任何页面 Schema；当应用对当前角色无业务页面时，根路径（/）默认落待办中心 */
+  const isFlow =
+    inPath === "/flow" ||
+    (inPath === "/" && union !== null && union.deduped.length === 0);
   /** 跨应用并集菜单仅用于当前页解析（根路径落点等），不再直接展示 */
   const mergedMenu = useMemo(
     () => (loaded && union ? assembleMergedMenu(union, loaded) : null),

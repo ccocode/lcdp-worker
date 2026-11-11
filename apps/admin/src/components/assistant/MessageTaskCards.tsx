@@ -21,6 +21,7 @@ import {
   type AdminTaskRunDetail,
   type AdminTaskRunPending,
 } from "../../api";
+import { resolveLocalPreviewHref } from "../../helpers";
 import { PAUSE_REASON_LABELS } from "./TaskDetail";
 
 /** 任务状态中文（与工作台左栏/详情同一张表） */
@@ -154,7 +155,7 @@ function useTaskCard(appId: string | null, taskId: string, refreshKey = 0) {
  * 主题预览 payload 防御式读取（待决项 preview 字段优先、顶层
  * 同名字段回落；缺失时返回空，界面以通用文案呈现、不现编主题名）。
  */
-function readDialogPreview(p: AdminTaskRunPending): {
+function readDialogPreview(p: AdminTaskRunPending, appId?: string | null): {
   themeName: string | null;
   styleSummary: string | null;
   pages: string[];
@@ -172,27 +173,13 @@ function readDialogPreview(p: AdminTaskRunPending): {
       : [];
   const pages = list(inner?.pages);
   const changes = list(inner?.changes);
+  const rawUrl = text(inner?.previewUrl) ?? text(p.previewUrl);
   return {
     themeName: text(inner?.themeName) ?? text(p.themeName),
     styleSummary: text(inner?.styleSummary) ?? text(p.styleSummary),
     pages: pages.length > 0 ? pages : list(p.pages),
     changes: changes.length > 0 ? changes : list(p.changes),
-    previewUrl: (() => {
-      const rawUrl = text(inner?.previewUrl) ?? text(p.previewUrl);
-      if (
-        rawUrl &&
-        typeof window !== "undefined" &&
-        (window.location.hostname === "localhost" ||
-          window.location.hostname === "127.0.0.1") &&
-        rawUrl.startsWith("https://www.coode.cc.cd/")
-      ) {
-        return rawUrl.replace(
-          "https://www.coode.cc.cd/",
-          `http://${window.location.hostname}:5174/`,
-        );
-      }
-      return rawUrl;
-    })(),
+    previewUrl: rawUrl ? resolveLocalPreviewHref(rawUrl, appId) : null,
     previewExpiresAt:
       text(inner?.previewExpiresAt) ?? text(p.previewExpiresAt),
     previewError: text(inner?.previewError) ?? text(p.previewError),

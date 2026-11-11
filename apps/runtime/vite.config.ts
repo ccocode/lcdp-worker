@@ -190,8 +190,18 @@ function localThemePlugin(): Plugin {
           const resolveSiteAppId = (d: SitePayload | null | undefined) =>
             d?.site?.app?.id || d?.primary?.appId || d?.apps?.[0]?.id || "";
 
+          const siteAppId = resolveSiteAppId(siteData);
+          const siteVia = siteData?.site?.via ?? null;
+          if (
+            validPreview &&
+            siteAppId &&
+            siteAppId !== validPreview.appId &&
+            (siteVia === "path" || url.pathname === "/" || !!fromParam)
+          ) {
+            validPreview = null;
+          }
+
           if (validPreview) {
-            const siteAppId = resolveSiteAppId(siteData);
             const liveSlots = siteData?.entry?.theme;
             const liveMatch =
               liveSlots?.[validPreview.slot as "desktop" | "mobile"] ??
@@ -218,7 +228,6 @@ function localThemePlugin(): Plugin {
               version = validPreview.version;
             }
           } else if (siteData) {
-            const siteAppId = resolveSiteAppId(siteData);
             const liveSlots = siteData.entry?.theme;
             const chosenName: "desktop" | "mobile" =
               wantSlot === "mobile"
@@ -246,6 +255,24 @@ function localThemePlugin(): Plugin {
           }
           const cleanRel = relPath.replace(/^\/+/, "");
 
+          const bridgeRoutes = new Set([
+            "/cart",
+            "/checkout",
+            "/shop/order",
+            "/my-orders",
+            "/my-orders/detail",
+            "/account",
+            "/account/memories",
+            "/my-topics",
+            "/my-topics/detail",
+          ]);
+          const isBridgeRoutePath = (r: string) => {
+            const norm = r.replace(/\/+$/, "") || "/";
+            return bridgeRoutes.has(norm) || norm.startsWith("/sso/") || norm.startsWith("/pay/");
+          };
+          const hasPublicPageRoutes = (routes: string[]) =>
+            routes.some((r) => !isBridgeRoutePath(r));
+
           const fetchAsset = async (assetPath: string) => {
             const endpoint =
               mode === "preview"
@@ -267,7 +294,7 @@ function localThemePlugin(): Plugin {
                 } | null)
               : null;
             const routes = Array.isArray(manifest?.routes) ? manifest!.routes : [];
-            if (manifest?.builtin === true && routes.length === 0) {
+            if (manifest?.builtin === true && !hasPublicPageRoutes(routes)) {
               return next();
             }
             servedPath = "index.html";
@@ -337,21 +364,7 @@ function localThemePlugin(): Plugin {
                   if (targetRes) servedPath = "list.html";
                 }
               }
-              const isBridgeRoute =
-                normRoute.startsWith("/sso/") ||
-                normRoute.startsWith("/pay/") ||
-                new Set([
-                  "/cart",
-                  "/checkout",
-                  "/shop/order",
-                  "/my-orders",
-                  "/my-orders/detail",
-                  "/account",
-                  "/account/memories",
-                  "/my-topics",
-                  "/my-topics/detail",
-                ]).has(normRoute);
-              if (!targetRes && isBridgeRoute) {
+              if (!targetRes && isBridgeRoutePath(normRoute)) {
                 const isMulti =
                   !!(await fetchAsset("list.html")) ||
                   !!(await fetchAsset("detail.html")) ||
@@ -408,6 +421,12 @@ function localThemePlugin(): Plugin {
               .replace(/&/g, "\\u0026");
             const appPrefix =
               url.pathname === prefix || url.pathname.startsWith(`${prefix}/`) ? prefix : "";
+            if (appPrefix) {
+              html = html.replace(
+                /(\b(?:href|src)=["'])(?:\.\/)?(theme|assets)\//gi,
+                `$1${appPrefix}/$2/`,
+              );
+            }
             const ctxScript = `<script>window.__LCDP__=${json};${PATH_FIX_SCRIPT}</script><script defer src="${escapeAttr(appPrefix)}/__lcdp__/shell/v1/lcdp-member.js"></script>`;
             if (/<head[^>]*>/i.test(html)) {
               html = html.replace(/<head[^>]*>/i, (m) => m + ctxScript);

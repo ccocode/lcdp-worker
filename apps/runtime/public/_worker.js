@@ -551,6 +551,12 @@ function injectThemeContext(html, theme, host, opts = {}) {
   const a = theme.appId || "";
   const pn = opts.pathname || "";
   const appPrefix = a && (pn === "/" + a || pn.startsWith("/" + a + "/")) ? "/" + a : "";
+  if (appPrefix) {
+    html = html.replace(
+      /(\b(?:href|src)=["'])(?:\.\/)?(theme|assets)\//gi,
+      `$1${appPrefix}/$2/`,
+    );
+  }
   const tag = `<script>window.__LCDP__=${json};${pathFix}</script><script defer src="${appPrefix}/__lcdp__/shell/v1/lcdp-member.js"></script>`;
   const m = /<head[^>]*>/i.exec(html);
   if (m) {
@@ -723,7 +729,10 @@ async function serveTheme(env, theme, url, method, opts = {}) {
     // 无标记的老主题保持全路径回退不动；精确文件命中在上文已直出，不受影响。
     if (
       theme.builtin === true &&
-      (!Array.isArray(theme.routes) || theme.routes.length === 0)
+      (!Array.isArray(theme.routes) ||
+        theme.routes.length === 0 ||
+        (normalizeRoutePath(themePath) === "/" &&
+          !theme.routes.some((r) => !isPreviewBridgeRoute(r))))
     ) {
       return null;
     }

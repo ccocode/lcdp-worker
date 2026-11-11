@@ -28,6 +28,7 @@ import {
   type ThemeSlots,
   type ThemeVersionView,
 } from "../api";
+import { resolveLocalPreviewHref } from "../helpers";
 
 /**
  * 主题（第 68 步口径：入口模型退役后，主题绑定是**应用自身的属性**；
@@ -329,7 +330,7 @@ export default function AppThemeSettings({
           slot,
         });
         if (win) {
-          win.location.href = res.url;
+          win.location.href = resolveLocalPreviewHref(res.url, appId);
         } else {
           message.warning("新标签被浏览器拦截，请允许弹窗后重试");
         }
@@ -357,7 +358,7 @@ export default function AppThemeSettings({
     const win = window.open("", "_blank");
     try {
       const res = await api.themes.clonePreview(appId, theme.id);
-      if (win) win.location.href = res.url;
+      if (win) win.location.href = resolveLocalPreviewHref(res.url, appId);
       else message.warning("新标签被浏览器拦截，请允许弹窗后重试");
     } catch (err) {
       win?.close();
