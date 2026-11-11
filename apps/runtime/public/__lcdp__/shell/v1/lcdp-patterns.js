@@ -81,6 +81,19 @@
   function firstElFromHtml(html) {
     var d = document.createElement("div");
     d.innerHTML = html;
+    var imgs = d.querySelectorAll("img");
+    for (var i = 0; i < imgs.length; i++) {
+      var img = imgs[i];
+      var src = (img.getAttribute("src") || "").trim();
+      if (!src || src === "#" || src === "null" || src === "undefined") {
+        img.removeAttribute("src");
+        img.style.display = "none";
+      } else {
+        img.addEventListener("error", function () {
+          this.style.display = "none";
+        });
+      }
+    }
     return d.firstElementChild;
   }
 

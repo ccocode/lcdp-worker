@@ -259,6 +259,17 @@ function localThemePlugin(): Plugin {
           let servedPath = cleanRel || "index.html";
 
           if (!cleanRel || cleanRel === "index.html") {
+            const mRes = await fetchAsset("theme.json");
+            const manifest = mRes
+              ? ((await mRes.json().catch(() => null)) as {
+                  builtin?: boolean;
+                  routes?: string[];
+                } | null)
+              : null;
+            const routes = Array.isArray(manifest?.routes) ? manifest!.routes : [];
+            if (manifest?.builtin === true && routes.length === 0) {
+              return next();
+            }
             servedPath = "index.html";
             targetRes = await fetchAsset("index.html");
           } else if (cleanRel.includes(".")) {
@@ -426,5 +437,5 @@ function localThemePlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), localThemePlugin()],
-  server: { host: "::", port: 5174 },
+  server: { host: "::", port: 5174, allowedHosts: true },
 });

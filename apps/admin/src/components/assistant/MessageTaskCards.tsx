@@ -426,7 +426,7 @@ export function PlanMessageCard({
       (window.location.hostname === "localhost" ||
         window.location.hostname === "127.0.0.1") &&
       typeof rawPreviewUrl === "string" &&
-      rawPreviewUrl.startsWith("https://www.coode.cc.cd/");
+      rawPreviewUrl.startsWith("https://");
     if (!isExpired && !isStaleCloudOnLocal) return;
     const guardKey = `${taskId}:${rawPreviewUrl ?? ""}:${expiresAt ?? ""}`;
     if (autoReissuedRef.current === guardKey) return;
