@@ -607,6 +607,7 @@ export function getToken(): string | null {
 
 export function getStoredUser(): UserInfo | null {
   try {
+    if (!getToken()) return null;
     const raw = localStorage.getItem(USER_KEY);
     return raw ? (JSON.parse(raw) as UserInfo) : null;
   } catch {
@@ -621,6 +622,31 @@ export function storeSession(token: string | null, user: UserInfo | null): void 
   else localStorage.removeItem(USER_KEY);
 }
 
+export const EMPLOYEE_SESSION_EXPIRED_EVENT = "lcdp:session-expired";
+const EXPIRED_KEY = "lcdp.runtime.expired";
+
+export function consumeExpiredFlag(): boolean {
+  try {
+    const v = sessionStorage.getItem(EXPIRED_KEY);
+    if (v) sessionStorage.removeItem(EXPIRED_KEY);
+    return Boolean(v);
+  } catch {
+    return false;
+  }
+}
+
+function expireEmployeeSession(): void {
+  storeSession(null, null);
+  try {
+    sessionStorage.setItem(EXPIRED_KEY, "1");
+  } catch {
+    /* sessionStorage 不可用时仅清本地会话回落 */
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(EMPLOYEE_SESSION_EXPIRED_EVENT));
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
@@ -631,6 +657,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+  if (res.status === 401 && path !== "/auth/login") {
+    expireEmployeeSession();
+  }
   const body = (await res.json().catch(() => null)) as
     | (Record<string, unknown> & { message?: string; error?: string })
     | null;
@@ -1553,6 +1582,9 @@ export const api = {
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: fd,
       });
+      if (res.status === 401) {
+        expireEmployeeSession();
+      }
       const body = (await res.json().catch(() => null)) as
         | (AssetMeta & { message?: string; error?: string })
         | null;

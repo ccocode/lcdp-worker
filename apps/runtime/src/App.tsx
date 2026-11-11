@@ -55,12 +55,14 @@ import SupportWidget, { SupportAutoMount } from "./SupportWidget.js";
 import { ErrorStatePage, statusToVariant } from "./ErrorState.js";
 import {
   EMPTY_MEMBER_POLICY,
+  EMPLOYEE_SESSION_EXPIRED_EVENT,
   SSO_APP_KEY,
   SSO_RETURN_KEY,
   SSO_STATE_KEY,
   api,
   beginSsoAuthorize,
   confirmSandboxPayment,
+  consumeExpiredFlag,
   fetchSandboxPaymentStatus,
   getStoredUser,
   loadCenterSession,
@@ -279,6 +281,14 @@ export default function App() {
   const [user, setUser] = useState<UserInfo | null>(() => getStoredUser());
   const device = useDevice();
 
+  useEffect(() => {
+    const onExpired = () => setUser(null);
+    window.addEventListener(EMPLOYEE_SESSION_EXPIRED_EVENT, onExpired);
+    return () => {
+      window.removeEventListener(EMPLOYEE_SESSION_EXPIRED_EVENT, onExpired);
+    };
+  }, []);
+
   // 已登录态进 /login 不再落入员工壳 404：按 from 校验后回跳（无合法 from 回首页）。
   // 覆盖登录回跳被旧解析弹回、书签与后退等一切已登录态停在 /login 的情形。
   useEffect(() => {
@@ -365,6 +375,7 @@ function LoginView({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expired] = useState<boolean>(() => consumeExpiredFlag());
 
   const submit = async (values: { username: string; password: string }) => {
     setBusy(true);
@@ -401,6 +412,14 @@ function LoginView({
             ? `登录${appName}的员工系统（管理员账号在初始化向导中设置）`
             : "登录后直达本入口的应用系统（管理员账号在初始化向导中设置）"}
         </Typography.Paragraph>
+        {expired && !error && (
+          <Alert
+            type="warning"
+            showIcon
+            message="登录已失效，请重新登录"
+            style={{ marginBottom: 16 }}
+          />
+        )}
         {error && (
           <Alert type="error" message={error} style={{ marginBottom: 16 }} />
         )}
@@ -3567,6 +3586,13 @@ function EntryView({
   }, [site]);
 
   if (error) {
+    if (error.status === 401) {
+      return (
+        <div style={{ padding: 80, textAlign: "center" }}>
+          <Spin size="large" tip="登录已失效，正在前往登录页…" />
+        </div>
+      );
+    }
     return (
       <ErrorStatePage
         variant={statusToVariant(error.status)}
@@ -4161,6 +4187,13 @@ function AppView({
   );
 
   if (error) {
+    if (error.status === 401) {
+      return (
+        <div style={{ padding: 80, textAlign: "center" }}>
+          <Spin size="large" tip="登录已失效，正在前往登录页…" />
+        </div>
+      );
+    }
     return (
       <ErrorStatePage
         variant={statusToVariant(error.status)}
