@@ -652,7 +652,6 @@ export default function Designer({
     (working.appConfig?.userSystem as UserSystemKind | undefined) ??
     cls?.userSystem ??
     "platform";
-  const effectiveAppKind = userSystem === "platform" ? "b-end" : "c-end";
   const allowedSystems: UserSystemKind[] = cls?.allowedUserSystems ?? [
     "platform",
     "member",
@@ -668,7 +667,7 @@ export default function Designer({
   const settingsTab = (
     <div style={{ padding: 20, maxWidth: 720 }}>
       <Typography.Title level={5} style={{ marginTop: 0 }}>
-        用户系统与端定性
+        用户系统
       </Typography.Title>
       <Space size={10} wrap>
         <Typography.Text style={{ width: 90 }}>用户系统</Typography.Text>
@@ -694,15 +693,19 @@ export default function Designer({
             },
           ]}
         />
-        <Tag color={effectiveAppKind === "c-end" ? "green" : "blue"}>
-          {effectiveAppKind === "c-end" ? "C 端应用" : "B 端应用"}
+        <Tag color={userSystem === "platform" ? "blue" : "green"}>
+          {userSystem === "platform"
+            ? "平台用户（员工登录）"
+            : userSystem === "member"
+              ? "会员域（公开 + 会员）"
+              : "无用户（纯访客）"}
         </Tag>
       </Space>
       <Typography.Paragraph
         type="secondary"
         style={{ fontSize: 12, marginTop: 8, maxWidth: 560 }}
       >
-        由主领域约束可用的用户系统，并据此决定 B/C 端属性：使用平台系统用户定性为 B 端（默认首页即员工登录）；使用会员域或无用户系统定性为 C 端（必须含访客公开页面、支撑 SEO 静态化，且永不跳员工登录）。
+        由主领域约束可用的用户系统：仅使用 platform（平台系统用户）时默认首页为员工登录；使用 member（会员域）或 none（无用户系统）时须配置访客公开页面、支撑 SEO 静态化，且永不跳转员工登录。
       </Typography.Paragraph>
       <Typography.Title level={5} style={{ marginTop: 28 }}>
         外壳形态

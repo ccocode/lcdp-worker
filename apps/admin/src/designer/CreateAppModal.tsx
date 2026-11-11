@@ -116,8 +116,14 @@ export default function CreateAppModal({
           />
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {selectedDomain?.description ?? ""}
-            {selectedDomain?.defaultAppKind
-              ? `（默认定性：${selectedDomain.defaultAppKind === "c-end" ? "C 端应用 · 公开访客/会员" : "B 端应用 · 平台系统用户"}）`
+            {selectedDomain?.defaultUserSystem
+              ? `（默认用户系统：${
+                  selectedDomain.defaultUserSystem === "platform"
+                    ? "平台系统用户"
+                    : selectedDomain.defaultUserSystem === "member"
+                      ? "应用会员域"
+                      : "无用户系统 · 公开访客"
+                }）`
               : ""}
           </Typography.Text>
         </Form.Item>

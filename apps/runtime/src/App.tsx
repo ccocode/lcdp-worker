@@ -504,12 +504,14 @@ function AnonGate({
   }, [pub]);
 
   const primary = pub?.primary ?? null;
-  const isCEndApp =
-    primary?.appKind === "c-end" || site?.app?.appKind === "c-end";
+  const resolvedUserSystem = primary?.userSystem ?? site?.app?.userSystem;
+  // 只有使用平台系统用户（platform）时才是内部系统（需员工登录）；member / none 面向外部访客与会员，绝不跳员工登录
+  const isPlatformUserApp =
+    resolvedUserSystem !== "member" && resolvedUserSystem !== "none";
 
   // 整页跳转登录（用户 2026-10-30 定：登录交互只取弹窗或整页跳转两种形态，
-  // 原地渲染登录卡两头不靠、废止）：B 端应用无公开面（或员工预览深链）时
-  // 统一跳专用 /login 页；C 端应用绝不跳员工登录。
+  // 原地渲染登录卡两头不靠、废止）：仅采用平台用户系统的内部应用在无公开面（或员工预览深链）时
+  // 统一跳专用 /login 页；member / none 绝不跳员工登录。
   const showPublicShell = !!(
     primary &&
     primary.pages.length > 0 &&
@@ -521,7 +523,7 @@ function AnonGate({
     (primary?.name ? `&app=${encodeURIComponent(primary.name)}` : "");
   const shouldLoginRedirect =
     loaded &&
-    !isCEndApp &&
+    isPlatformUserApp &&
     site?.mode !== "redirect" &&
     route.path !== "/sso/callback" &&
     pub?.entry?.kind !== "member-center" &&
@@ -607,7 +609,7 @@ function AnonGate({
       </>
     );
   }
-  if (isCEndApp) {
+  if (!isPlatformUserApp) {
     const siteTitle = primary?.name ?? site?.app?.name ?? "公开站点";
     return (
       <>
@@ -615,7 +617,7 @@ function AnonGate({
           <Result
             status="info"
             title={siteTitle}
-            subTitle="该 C 端应用暂未发布公开访问页面，请在管理台配置公开页面并发布。"
+            subTitle="该应用暂未发布公开访问页面，请在管理台配置公开页面并发布。"
             extra={
               <Button type="primary" onClick={() => navigateTo("/")}>
                 返回主站首页
@@ -3288,11 +3290,12 @@ function PublicShell({
   const current = resolveCurrentPage(primary.pages, menu, inPath);
   const token = themeTokenOf(primary.appConfig, "c-end");
 
-  const isCEndApp = primary.appKind === "c-end";
-  // B2 员工闸（整页跳转形态）：仅对 B 端应用（特殊开放了公开页的场景）生效，
-  // 访问未公开内部路径时跳员工 /login；C 端应用绝不跳员工登录。
+  const isPlatformUserApp =
+    primary.userSystem !== "member" && primary.userSystem !== "none";
+  // B2 员工闸（整页跳转形态）：仅对使用平台系统用户的应用（特殊开放了公开页的场景）生效，
+  // 访问未公开内部路径时跳员工 /login；member / none 应用绝不跳员工登录。
   const gateLoginUrl =
-    !isCEndApp && !current && inPath !== "/pay/sandbox"
+    isPlatformUserApp && !current && inPath !== "/pay/sandbox"
       ? `/login?from=${encodeURIComponent(
           `${basePrefix}${inPath}${window.location.search}`,
         )}&app=${encodeURIComponent(primary.name)}`
@@ -3343,7 +3346,7 @@ function PublicShell({
       access={access}
       theme={primary.appConfig?.theme}
     />
-  ) : isCEndApp ? (
+  ) : !isPlatformUserApp ? (
     <div style={{ maxWidth: 560, margin: "64px auto", textAlign: "center" }}>
       <Result
         status="404"

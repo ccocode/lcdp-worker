@@ -184,14 +184,15 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
         if (!key) return "—";
         const label = DOMAIN_LABEL[key] ?? (key === "procurement" ? "采购库存" : undefined);
         const def = domains.find((d) => d.key === key);
-        const appKind =
-          def?.defaultAppKind ??
-          (["content", "commerce", "forum"].includes(key) ? "c-end" : "b-end");
+        const defaultUs =
+          def?.defaultUserSystem ??
+          (["content", "commerce", "forum"].includes(key) ? "member" : "platform");
+        const isPlatform = defaultUs === "platform";
         return (
           <Space size={6}>
             <span>{label ? `${label}（${key}）` : key}</span>
-            <Tag color={appKind === "c-end" ? "green" : "blue"}>
-              {appKind === "c-end" ? "C端" : "B端"}
+            <Tag color={isPlatform ? "blue" : "green"}>
+              {isPlatform ? "平台用户" : defaultUs === "member" ? "会员域" : "公开访客"}
             </Tag>
           </Space>
         );

@@ -81,7 +81,6 @@ export interface SiteDirectoryItem {
   scenario: string | null;
   domain?: string | null;
   userSystem?: "platform" | "member" | "none";
-  appKind?: "b-end" | "c-end";
   isPrimary: boolean;
   boundHost: string | null;
   nameEn: string | null;
@@ -112,7 +111,6 @@ export interface SiteInfo {
     scenario: string | null;
     domain?: string | null;
     userSystem?: "platform" | "member" | "none";
-    appKind?: "b-end" | "c-end";
     isPrimary: boolean;
     boundHost: string | null;
   } | null;
@@ -591,7 +589,6 @@ export interface PublicSiteResult {
     name: string;
     domain?: string | null;
     userSystem?: "platform" | "member" | "none";
-    appKind?: "b-end" | "c-end";
     /** 仅含公开策略声明的页面（已发布设计页 ∪ 派生页中 route ∈ public.pages 者） */
     pages: PageSchema[];
     /** 仅含公开可读/公开表单涉及的实体定义 */

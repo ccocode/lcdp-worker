@@ -39,12 +39,10 @@ export interface UserInfo {
 }
 
 export type UserSystemKind = "platform" | "member" | "none";
-export type AppKind = "b-end" | "c-end";
 
 export interface AppClassification {
   domain: string | null;
   userSystem: UserSystemKind;
-  appKind: AppKind;
   constrained: boolean;
   allowedUserSystems: UserSystemKind[];
 }
@@ -76,7 +74,6 @@ export interface DomainInfo {
   skeleton: string | null;
   allowedUserSystems?: UserSystemKind[];
   defaultUserSystem?: UserSystemKind;
-  defaultAppKind?: AppKind;
   /** 样板库（仅样板库型领域有，如审批协同 OA） */
   templates?: DomainTemplateInfo[];
 }
