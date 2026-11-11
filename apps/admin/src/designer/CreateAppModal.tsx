@@ -115,7 +115,10 @@ export default function CreateAppModal({
             }))}
           />
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {domains.find((d) => d.key === newAppDomain)?.description ?? ""}
+            {selectedDomain?.description ?? ""}
+            {selectedDomain?.defaultAppKind
+              ? `（默认定性：${selectedDomain.defaultAppKind === "c-end" ? "C 端应用 · 公开访客/会员" : "B 端应用 · 平台系统用户"}）`
+              : ""}
           </Typography.Text>
         </Form.Item>
         {templateGroups.length > 0 && (

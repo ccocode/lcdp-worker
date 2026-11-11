@@ -109,6 +109,9 @@ export interface DomainInfo {
   key: string;
   name: string;
   available: boolean;
+  allowedUserSystems?: Array<"platform" | "member" | "none">;
+  defaultUserSystem?: "platform" | "member" | "none";
+  defaultAppKind?: "b-end" | "c-end";
 }
 
 /** 主题清单里的可配置项声明（主题页 values 表单按此渲染） */

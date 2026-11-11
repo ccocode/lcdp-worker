@@ -20,7 +20,13 @@ import {
   message as antdMessage,
 } from "antd";
 import type { DataSchema, Entity, Field, FieldType } from "@naka1205/schema";
-import type { AppConfig, BundleView, DesignData, UserInfo } from "./api.js";
+import type {
+  AppConfig,
+  BundleView,
+  DesignData,
+  UserInfo,
+  UserSystemKind,
+} from "./api.js";
 import { ApiError, api, normalizeAgents } from "./api.js";
 import PageDesigner from "./PageDesigner.js";
 import Permissions from "./Permissions.js";
@@ -641,12 +647,64 @@ export default function Designer({
       else delete next.memberScope;
       b.appConfig = next;
     });
+  const cls = design.app.classification;
+  const userSystem: UserSystemKind =
+    (working.appConfig?.userSystem as UserSystemKind | undefined) ??
+    cls?.userSystem ??
+    "platform";
+  const effectiveAppKind = userSystem === "platform" ? "b-end" : "c-end";
+  const allowedSystems: UserSystemKind[] = cls?.allowedUserSystems ?? [
+    "platform",
+    "member",
+    "none",
+  ];
+  const setUserSystem = (v: UserSystemKind) =>
+    updateBundle((b) => {
+      b.appConfig = { ...(b.appConfig ?? { theme: {} }), userSystem: v };
+    });
   const colorPrimary =
     typeof theme.colorPrimary === "string" ? theme.colorPrimary : tokens.colorPrimary;
 
   const settingsTab = (
     <div style={{ padding: 20, maxWidth: 720 }}>
       <Typography.Title level={5} style={{ marginTop: 0 }}>
+        用户系统与端定性
+      </Typography.Title>
+      <Space size={10} wrap>
+        <Typography.Text style={{ width: 90 }}>用户系统</Typography.Text>
+        <Select
+          style={{ width: 320 }}
+          value={userSystem}
+          onChange={setUserSystem}
+          options={[
+            {
+              value: "platform",
+              label: "平台系统用户（内部员工账号 · 员工登录）",
+              disabled: !allowedSystems.includes("platform"),
+            },
+            {
+              value: "member",
+              label: "应用会员域（访客公开 + 会员登录）",
+              disabled: !allowedSystems.includes("member"),
+            },
+            {
+              value: "none",
+              label: "无用户系统（纯访客公开展示）",
+              disabled: !allowedSystems.includes("none"),
+            },
+          ]}
+        />
+        <Tag color={effectiveAppKind === "c-end" ? "green" : "blue"}>
+          {effectiveAppKind === "c-end" ? "C 端应用" : "B 端应用"}
+        </Tag>
+      </Space>
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 12, marginTop: 8, maxWidth: 560 }}
+      >
+        由主领域约束可用的用户系统，并据此决定 B/C 端属性：使用平台系统用户定性为 B 端（默认首页即员工登录）；使用会员域或无用户系统定性为 C 端（必须含访客公开页面、支撑 SEO 静态化，且永不跳员工登录）。
+      </Typography.Paragraph>
+      <Typography.Title level={5} style={{ marginTop: 28 }}>
         外壳形态
       </Typography.Title>
       <Space size={10}>

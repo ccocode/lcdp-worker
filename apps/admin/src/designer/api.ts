@@ -38,6 +38,17 @@ export interface UserInfo {
   departmentId?: string | null;
 }
 
+export type UserSystemKind = "platform" | "member" | "none";
+export type AppKind = "b-end" | "c-end";
+
+export interface AppClassification {
+  domain: string | null;
+  userSystem: UserSystemKind;
+  appKind: AppKind;
+  constrained: boolean;
+  allowedUserSystems: UserSystemKind[];
+}
+
 export interface AppInfo {
   id: string;
   name: string;
@@ -45,6 +56,7 @@ export interface AppInfo {
   /** M15 主领域（创建响应携带；列表接口未带时为空） */
   domain?: string | null;
   skeleton?: string | null;
+  classification?: AppClassification;
 }
 
 /** 样板库条目（GET /domains 的 templates；样板库型领域如 OA 建应用时勾选整束装配） */
@@ -62,6 +74,9 @@ export interface DomainInfo {
   description: string;
   available: boolean;
   skeleton: string | null;
+  allowedUserSystems?: UserSystemKind[];
+  defaultUserSystem?: UserSystemKind;
+  defaultAppKind?: AppKind;
   /** 样板库（仅样板库型领域有，如审批协同 OA） */
   templates?: DomainTemplateInfo[];
 }
@@ -82,6 +97,8 @@ export interface AppConfig {
   /** 外壳形态：system（默认）| site（站点型外壳，顶栏导航 + 页脚），M10 起由应用设置维护 */
   shell?: string;
   globalVars?: Record<string, unknown>;
+  /** 前台用户体系（受主领域约束）：platform=平台系统用户（B端）| member=会员域（C端）| none=无用户公开站（C端） */
+  userSystem?: UserSystemKind;
   /** 生效会员域（会员试点）：缺省 = 本应用 id；多应用填同一值即共用一套会员 */
   memberScope?: string;
 }

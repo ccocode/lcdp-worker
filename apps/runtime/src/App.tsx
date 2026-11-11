@@ -13,6 +13,7 @@ import {
   Layout,
   Menu,
   Modal,
+  Result,
   Space,
   Spin,
   Tabs,
@@ -503,11 +504,12 @@ function AnonGate({
   }, [pub]);
 
   const primary = pub?.primary ?? null;
+  const isCEndApp =
+    primary?.appKind === "c-end" || site?.app?.appKind === "c-end";
 
   // 整页跳转登录（用户 2026-10-30 定：登录交互只取弹窗或整页跳转两种形态，
-  // 原地渲染登录卡两头不靠、废止）：无公开面（或员工预览深链）的匿名入口不再
-  // 原地渲染登录卡，统一跳专用 /login 页；from 只作登录后回跳（登录页内校验），
-  // app 只作登录页应用名展示。跳转本身是 effect，首帧先见下方加载屏。
+  // 原地渲染登录卡两头不靠、废止）：B 端应用无公开面（或员工预览深链）时
+  // 统一跳专用 /login 页；C 端应用绝不跳员工登录。
   const showPublicShell = !!(
     primary &&
     primary.pages.length > 0 &&
@@ -519,6 +521,7 @@ function AnonGate({
     (primary?.name ? `&app=${encodeURIComponent(primary.name)}` : "");
   const shouldLoginRedirect =
     loaded &&
+    !isCEndApp &&
     site?.mode !== "redirect" &&
     route.path !== "/sso/callback" &&
     pub?.entry?.kind !== "member-center" &&
@@ -600,6 +603,26 @@ function AnonGate({
           memberSso={pub?.memberSso ?? null}
           basePrefix={basePrefix}
         />
+        {anonSupport}
+      </>
+    );
+  }
+  if (isCEndApp) {
+    const siteTitle = primary?.name ?? site?.app?.name ?? "公开站点";
+    return (
+      <>
+        <div style={{ maxWidth: 560, margin: "80px auto", padding: "0 24px", textAlign: "center" }}>
+          <Result
+            status="info"
+            title={siteTitle}
+            subTitle="该 C 端应用暂未发布公开访问页面，请在管理台配置公开页面并发布。"
+            extra={
+              <Button type="primary" onClick={() => navigateTo("/")}>
+                返回主站首页
+              </Button>
+            }
+          />
+        </div>
         {anonSupport}
       </>
     );
@@ -3265,10 +3288,11 @@ function PublicShell({
   const current = resolveCurrentPage(primary.pages, menu, inPath);
   const token = themeTokenOf(primary.appConfig, "c-end");
 
-  // B2 员工闸（整页跳转形态）：公开面无此路由时跳专用 /login 页（from 回跳＋
-  // app 展示）；收银台内置路由除外。跳转在 effect 里执行，首帧先见下方加载屏。
+  const isCEndApp = primary.appKind === "c-end";
+  // B2 员工闸（整页跳转形态）：仅对 B 端应用（特殊开放了公开页的场景）生效，
+  // 访问未公开内部路径时跳员工 /login；C 端应用绝不跳员工登录。
   const gateLoginUrl =
-    !current && inPath !== "/pay/sandbox"
+    !isCEndApp && !current && inPath !== "/pay/sandbox"
       ? `/login?from=${encodeURIComponent(
           `${basePrefix}${inPath}${window.location.search}`,
         )}&app=${encodeURIComponent(primary.name)}`
@@ -3308,6 +3332,7 @@ function PublicShell({
 
   // B2 员工闸（整页跳转形态）：公开面无此路由时（员工路由或误输地址）不再呈 404
   // 掩盖未登录，也不再原地嵌登录卡；跳转由上方 effect 执行，此处只呈加载屏。
+  const homeRoute = primary.pages[0]?.route ?? "/";
   const publicContent = current ? (
     <SchemaRenderer
       page={current}
@@ -3318,6 +3343,24 @@ function PublicShell({
       access={access}
       theme={primary.appConfig?.theme}
     />
+  ) : isCEndApp ? (
+    <div style={{ maxWidth: 560, margin: "64px auto", textAlign: "center" }}>
+      <Result
+        status="404"
+        title="页面不存在"
+        subTitle={`未找到路径 ${inPath} 对应的公开页面`}
+        extra={
+          <Space>
+            <Button type="primary" onClick={() => goPage(homeRoute)}>
+              返回首页
+            </Button>
+            {hasMemberPages && !memberSession && (
+              <Button onClick={() => openAuth("login")}>会员登录</Button>
+            )}
+          </Space>
+        }
+      />
+    </div>
   ) : (
     <div style={{ padding: 80, textAlign: "center" }}>
       <Spin size="large" tip="正在前往登录页…" />
