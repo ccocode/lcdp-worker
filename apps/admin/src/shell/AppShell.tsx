@@ -16,7 +16,6 @@ import {
   Modal,
   Select,
   Space,
-  Spin,
   Typography,
   message,
 } from "antd";
@@ -29,7 +28,7 @@ import {
   SafetyOutlined,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
-import { PageHelp, tokens } from "@lcdp/ui";
+import { LoadingState, PageHelp, tokens } from "@lcdp/ui";
 import { HELP } from "../help";
 import AssistantModal from "../components/AssistantModal";
 import { hasRunningAssistantTask } from "../components/assistant/assistantRunning";
@@ -123,6 +122,7 @@ function Login({ onLogin }: { onLogin: (u: UserInfo) => void }) {
     <div
       style={{
         minHeight: "100vh",
+        boxSizing: "border-box",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -619,9 +619,7 @@ export default function AppShell() {
         description="无法读取该应用的已发布设计与领域信息，请稍后刷新重试。"
       />
     ) : (
-      <div style={{ padding: 48, textAlign: "center" }}>
-        <Spin tip="加载应用信息…" />
-      </div>
+      <LoadingState tip="加载应用信息…" block style={{ padding: 48 }} />
     );
 
   const ctx: PageContext = {

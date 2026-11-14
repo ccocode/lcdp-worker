@@ -4,7 +4,6 @@ import {
   Col,
   Row,
   Space,
-  Spin,
   Statistic,
   Table,
   Tag,
@@ -14,6 +13,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { api, type AgentFaceKey, type AgentOverrideRow, type Row as DataRow } from "../api";
 import { asText, fmtTime } from "../helpers";
+import { LoadingState } from "@lcdp/ui";
 
 /**
  * 平台区「智能服务」页（第 83 步片四第 2 点）：呈现层汇总——两项
@@ -148,11 +148,7 @@ export default function AgentService() {
   ];
 
   if (loading) {
-    return (
-      <div style={{ padding: 48, textAlign: "center" }}>
-        <Spin tip="加载中…" />
-      </div>
-    );
+    return <LoadingState tip="加载中…" block style={{ padding: 48 }} />;
   }
 
   return (

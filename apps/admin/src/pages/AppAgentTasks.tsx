@@ -26,6 +26,11 @@ import TaskDetail, {
   countPassed,
 } from "../components/assistant/TaskDetail";
 import { formatDelegationRound } from "../components/assistant/MessageTaskCards";
+import {
+  humanizeOpsCopy,
+  humanizeStepLabel,
+  humanizeTaskTitle,
+} from "../components/assistant/semanticLabels";
 import { useAssistantShell } from "../shell/assistantShellContext";
 
 /** 派发记录（任务行 artifacts.delegations 的元素，防御式读取） */
@@ -289,7 +294,7 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
   const taskColumns: ColumnsType<AdminAssistantTask> = [
     {
       title: "任务",
-      render: (_, t) => t.title || "（无标题）",
+      render: (_, t) => humanizeTaskTitle(t.title || "") || "（无标题）",
     },
     {
       title: "种类",
@@ -443,9 +448,9 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
                       type="secondary"
                       ellipsis
                       style={{ fontSize: 12, maxWidth: 320 }}
-                      title={d.goal}
+                      title={humanizeOpsCopy(d.goal)}
                     >
-                      {d.goal}
+                      {humanizeOpsCopy(d.goal)}
                     </Typography.Text>
                   )}
                   {d.childConversationId && (
@@ -471,7 +476,7 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
         locale={{ emptyText: "暂无任务记录" }}
       />
       <Drawer
-        title={detail?.title ?? "任务记录"}
+        title={detail?.title ? humanizeTaskTitle(detail.title) : "任务记录"}
         width={"min(520px, 100vw)"}
         open={detail !== null}
         onClose={() => {
@@ -494,7 +499,7 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
         )}
       </Drawer>
       <Drawer
-        title={childDetail?.stepLabel ?? "子会话"}
+        title={childDetail?.stepLabel ? humanizeStepLabel(childDetail.stepLabel) : "子会话"}
         width={"min(520px, 100vw)"}
         open={childDetail !== null}
         onClose={() => setChildDetail(null)}
@@ -511,7 +516,7 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {childDetail?.goal && (
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                目标：{childDetail.goal}
+                目标：{humanizeOpsCopy(childDetail.goal)}
               </Typography.Text>
             )}
             {childDetail?.messages.map((m) => (

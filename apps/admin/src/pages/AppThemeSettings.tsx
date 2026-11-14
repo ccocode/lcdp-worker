@@ -88,12 +88,15 @@ function findVersion(
 }
 
 /**
- * 主题名显示：去掉应用名前缀，只显风格定义（如“星桥科技官网内置主题”
- * 在本应用页显示为“内置主题”；上传主题名不含应用名时原样显示）。
+ * 主题名显示：去掉应用名前缀及紧随分隔符，只显风格定义（如“星桥科技官网 · 深蓝商务”
+ * 在本应用页显示为“深蓝商务”；上传主题名不含应用名时原样显示）。
  */
-function displayThemeName(name: string, appName: string | null): string {
+export function displayThemeName(name: string, appName: string | null): string {
   if (appName && name.startsWith(appName)) {
-    const rest = name.slice(appName.length);
+    const rest = name
+      .slice(appName.length)
+      .replace(/^[\s·•\-—–:|/]+/, "")
+      .trim();
     return rest === "" ? name : rest;
   }
   return name;
@@ -647,6 +650,7 @@ export default function AppThemeSettings({
         // 主题模板删除：只给本应用私有、非内置的行；领域货架、他应用私有、
         // 内置行不渲染删除入口（内置服务端也禁删，货架属共享供给）。
         const deletable = t.ownerAppId === appId && t.kind !== "builtin";
+        const active = isActive(t.id, slot);
         return (
           <Space size={8} wrap>
             <Button
@@ -656,7 +660,7 @@ export default function AppThemeSettings({
               disabled={readOnly || slotVersions.length === 0}
               onClick={() => openBinding(t, slot)}
             >
-              设为当前
+              {active ? "调整配置" : "设为当前"}
             </Button>
             {current && (
               <Button
@@ -759,11 +763,17 @@ export default function AppThemeSettings({
           THEME_SLOTS.map((slot) => {
             // 克隆行刚创建时还没有生效版本，仍须列出（否则绑定/预览无入口）；
             // 槽位归属以克隆目标为准，目标未明时两槽都列出，绑定时服务端定槽。
-            const rows = myThemes.filter(
-              (t) =>
-                t.versions.some((v) => versionFitsSlot(v, slot)) ||
-                Boolean(t.sourceThemeId),
-            );
+            // 当前激活主题置顶，避免过多克隆把激活项与移动端表挤出首屏。
+            const rows = myThemes
+              .filter(
+                (t) =>
+                  t.versions.some((v) => versionFitsSlot(v, slot)) ||
+                  Boolean(t.sourceThemeId),
+              )
+              .sort(
+                (a, b) =>
+                  Number(isActive(b.id, slot)) - Number(isActive(a.id, slot)),
+              );
             return (
               <div key={slot} style={{ marginTop: slot === "mobile" ? 24 : 0 }}>
                 {/* 空槽亦渲染空表（表头可见），空态文案走 locale emptyText。 */}
@@ -773,7 +783,11 @@ export default function AppThemeSettings({
                   loading={loading}
                   columns={themeColumnsFor(slot)}
                   dataSource={rows}
-                  pagination={false}
+                  pagination={
+                    rows.length > 8
+                      ? { pageSize: 8, size: "small", showSizeChanger: false }
+                      : false
+                  }
                   locale={{
                     emptyText: `暂无${slot === "desktop" ? "桌面" : "移动"}端主题`,
                   }}

@@ -1,6 +1,8 @@
 import {
   humanizeNodeName,
+  humanizeOpsCopy,
   humanizeStepLabel,
+  humanizeTaskTitle,
   humanizeTechnicalDetail,
   humanizeTimelineSummary,
   summarizeArtifactFiles,
@@ -453,9 +455,9 @@ export default function TaskDetail({
         <Typography.Text
           style={{ fontSize: 13, flex: 1 }}
           ellipsis
-          title={activeTask.title}
+          title={humanizeTaskTitle(activeTask.title)}
         >
-          {activeTask.title}
+          {humanizeTaskTitle(activeTask.title)}
         </Typography.Text>
         {activeTask.kind && (
           <Tag style={{ marginInlineEnd: 0 }}>
@@ -468,7 +470,7 @@ export default function TaskDetail({
       </div>
       {activeTask.goal && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          目标：{activeTask.goal}
+          目标：{humanizeOpsCopy(activeTask.goal)}
         </Typography.Text>
       )}
       {themeLine && (
@@ -727,7 +729,9 @@ export default function TaskDetail({
                           wordBreak: "break-word",
                         }}
                       >
-                        {typeof it.evidence === "string" ? it.evidence : ""}
+                        {typeof it.evidence === "string"
+                          ? humanizeOpsCopy(it.evidence)
+                          : ""}
                       </Typography.Text>
                     )}
                   </div>
@@ -792,13 +796,15 @@ export default function TaskDetail({
                 {p.type === "pause"
                   ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
                   : "终审未达标"}
-                {p.type === "pause" && p.detail ? `（${p.detail}）` : ""}
+                {p.type === "pause" && p.detail
+                  ? `（${humanizeTechnicalDetail(p.detail)}）`
+                  : ""}
                 {p.type === "pause" &&
                   p.recoveryActions.length > 0 &&
                   `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
                 {p.type === "critic" &&
                   p.gaps.length > 0 &&
-                  `：${p.gaps.join("；")}`}
+                  `：${p.gaps.map(humanizeTechnicalDetail).join("；")}`}
               </span>
               {p.type === "pause" &&
                 runDetail?.run?.runStatus === "paused" && (

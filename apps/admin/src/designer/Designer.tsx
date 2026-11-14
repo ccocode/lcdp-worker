@@ -11,7 +11,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Spin,
   Switch,
   Table,
   Tabs,
@@ -33,7 +32,7 @@ import Permissions from "./Permissions.js";
 import WorkflowDesigner from "./WorkflowDesigner.js";
 import Copilot from "./Copilot.js";
 import AgentsTab from "./AgentsTab.js";
-import { errText, fmtTime, tokens } from "@lcdp/ui";
+import { LoadingState, errText, fmtTime, tokens } from "@lcdp/ui";
 import { resolveLocalRuntimeHref } from "../helpers";
 
 /**
@@ -302,11 +301,7 @@ export default function Designer({
     );
   }
   if (!design || !working) {
-    return (
-      <div style={{ padding: 80, textAlign: "center" }}>
-        <Spin size="large" tip="正在加载设计器…" />
-      </div>
-    );
+    return <LoadingState size="large" tip="正在加载设计器…" block style={{ padding: 80 }} />;
   }
 
   const updateEntity = (patch: Partial<Entity>) => {

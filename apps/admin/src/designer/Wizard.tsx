@@ -11,7 +11,6 @@ import {
   Radio,
   Select,
   Space,
-  Spin,
   Tag,
   Typography,
   message as antdMessage,
@@ -25,7 +24,7 @@ import type {
   WizardStepKey,
 } from "./api.js";
 import { api } from "./api.js";
-import { errText, tokens } from "@lcdp/ui";
+import { LoadingState, errText, tokens } from "@lcdp/ui";
 import { ProposalDiffView } from "./Copilot.js";
 import { resolveLocalRuntimeHref } from "../helpers";
 
@@ -521,7 +520,7 @@ export default function WizardDrawer({
       {!session ? (
         <div style={{ padding: "48px 0", textAlign: "center" }}>
           {starting ? (
-            <Spin size="large" tip="正在开启向导…" />
+            <LoadingState size="large" tip="正在开启向导…" />
           ) : (
             <>
               <Typography.Paragraph type="secondary">

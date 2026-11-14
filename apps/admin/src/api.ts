@@ -475,6 +475,8 @@ export interface AdminAssistantPayload {
 /** 助手任务卡行（第 90 步线 B tasks 端点；第 91 步线 A 工作台补全详情字段，皆可选、缺失即不展示） */
 export interface AdminAssistantTask {
   id: string;
+  /** 目标应用 ID（平台超集任务会携带实际归属应用，如 "mall"；全局任务可能为空串） */
+  appId?: string | null;
   title: string;
   status: string;
   /** 任务种类（服务端 taskView 本就回，前端此前漏声明）：plan 计划、theme_build 主题 */

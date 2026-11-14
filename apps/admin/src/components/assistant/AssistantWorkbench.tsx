@@ -19,6 +19,7 @@ import TaskDetail from "./TaskDetail";
 import type { DelegationViewTarget } from "./MessageTaskCards";
 import { MEMORY_CATEGORY_LABELS } from "./AssistantMemoryPanel";
 import { isPendingMemory } from "./turnSteps";
+import { humanizeOpsCopy, humanizeStepLabel } from "./semanticLabels";
 
 /**
  * 助手全页工作台（第 91 步线 A · A1，设计 8.4 双形态的主场）：
@@ -79,11 +80,11 @@ function DelegationDetail({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <Typography.Text strong style={{ fontSize: 13 }}>
-        {target.stepLabel}
+        {humanizeStepLabel(target.stepLabel)}
       </Typography.Text>
       {target.goal && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          目标：{target.goal}
+          目标：{humanizeOpsCopy(target.goal)}
         </Typography.Text>
       )}
       {target.roundLabel && (
@@ -313,11 +314,11 @@ export default function AssistantWorkbench({
   };
 
   /** 计划卡片“查看详情”：右侧打开该任务详情（并把右侧展开；
-   * 子代理详情中点计划卡即由此回到计划详情） */
+   * 子代理详情中点计划卡即由此回到计划详情；每次打开刷新任务快照防旧进度） */
   const openTask = (taskId: string) => {
     setSelectedTaskId(taskId);
     setDelegationView(null);
-    if (!tasks.some((t) => t.id === taskId)) void loadAllTasks();
+    void loadAllTasks();
     onExpandRight?.();
   };
 
@@ -428,9 +429,9 @@ export default function AssistantWorkbench({
                 <Typography.Text
                   ellipsis
                   style={{ fontSize: 13, display: "block" }}
-                  title={c.title ?? undefined}
+                  title={c.title ? humanizeOpsCopy(c.title) : undefined}
                 >
-                  {c.title || "（无标题）"}
+                  {c.title ? humanizeOpsCopy(c.title) : "（无标题）"}
                 </Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {fmtTime(c.updatedAt)}
@@ -468,6 +469,9 @@ export default function AssistantWorkbench({
           draftSignal={draftSignal}
           onOpenDelegation={openDelegation}
           onOpenTask={openTask}
+          onTasksSync={() => {
+            void loadAllTasks();
+          }}
           onConversationChange={(cid) => {
             setCurrentCid(cid);
             void loadConversations();

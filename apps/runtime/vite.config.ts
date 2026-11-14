@@ -1,5 +1,52 @@
+import fs from "node:fs";
+import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
+
+const THEME_TOKEN_COLOR_KEYS = [
+  "primary",
+  "accent",
+  "background",
+  "surface",
+  "text",
+  "textSecondary",
+  "border",
+] as const;
+
+const THEME_TOKEN_CSS_VARS: ReadonlyArray<readonly [string, string]> = [
+  ["primary", "--lcdp-primary"],
+  ["accent", "--lcdp-accent"],
+  ["background", "--lcdp-background"],
+  ["surface", "--lcdp-surface"],
+  ["text", "--lcdp-text"],
+  ["textSecondary", "--lcdp-text-secondary"],
+  ["border", "--lcdp-border"],
+  ["radius", "--lcdp-radius"],
+  ["fontFamily", "--lcdp-font-family"],
+];
+
+const THEME_TOKEN_FORBIDDEN_RE = /[<>;{}]|url\(/i;
+const PREVIEW_BADGE_HTML = `<div style="position:fixed;left:12px;bottom:12px;z-index:2147483647;background:rgba(17,24,39,.92);color:#f9fafb;font:13px/1.5 -apple-system,'Segoe UI',sans-serif;padding:6px 12px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.35)">预览效果 · 未生效 <a href="?lcdp_preview=off" style="color:#93c5fd;margin-left:8px">退出预览</a></div>`;
+
+function sanitizeThemeTokens(raw: unknown): Record<string, string | number> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const src = raw as Record<string, unknown>;
+  const out: Record<string, string | number> = {};
+  for (const key of THEME_TOKEN_COLOR_KEYS) {
+    const v = src[key];
+    if (typeof v === "string" && v.length > 0 && !THEME_TOKEN_FORBIDDEN_RE.test(v)) {
+      out[key] = v;
+    }
+  }
+  const ff = src.fontFamily;
+  if (typeof ff === "string" && ff.length > 0 && !THEME_TOKEN_FORBIDDEN_RE.test(ff)) {
+    out.fontFamily = ff;
+  }
+  if (typeof src.radius === "number" && Number.isFinite(src.radius)) {
+    out.radius = Math.min(32, Math.max(0, src.radius));
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
 
 function parseCookie(header: string | undefined, name: string): string | null {
   if (!header) return null;
@@ -145,9 +192,20 @@ function localThemePlugin(): Plugin {
           }
 
           // 解析站点激活配置（用于无令牌的线上模拟访问，及判断已激活主题是否与残留预览 Cookie 一致）
-          const rawSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
+          const rawPathSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
+          let effectiveSeg = rawPathSeg;
+          if (url.pathname === "/login") {
+            const fromRaw = url.searchParams.get("from") || "";
+            if (fromRaw.startsWith("/") && !fromRaw.startsWith("//")) {
+              const fromPath = fromRaw.split(/[?#]/)[0] || "/";
+              const fromSeg = fromPath.split("/").filter(Boolean)[0] ?? "";
+              if (fromSeg && fromSeg !== "login") {
+                effectiveSeg = fromSeg;
+              }
+            }
+          }
           const siteRes = await fetch(
-            `${apiBase}/public/site?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(rawSeg)}`,
+            `${apiBase}/public/site?host=${encodeURIComponent(host)}&seg=${encodeURIComponent(effectiveSeg)}`,
             { headers: { accept: "application/json" } },
           ).catch(() => null);
           let siteData = siteRes && siteRes.ok
@@ -155,13 +213,13 @@ function localThemePlugin(): Plugin {
             : null;
           const hostnameOnly = host.split(":")[0]?.toLowerCase() ?? "";
           if (
-            rawSeg &&
+            effectiveSeg &&
             (hostnameOnly === "localhost" || hostnameOnly === "127.0.0.1" || hostnameOnly === "[") &&
             siteData?.site?.mode === "shell" &&
             siteData.site.defaultHost
           ) {
             const defRes = await fetch(
-              `${apiBase}/public/site?host=${encodeURIComponent(siteData.site.defaultHost)}&seg=${encodeURIComponent(rawSeg)}`,
+              `${apiBase}/public/site?host=${encodeURIComponent(siteData.site.defaultHost)}&seg=${encodeURIComponent(effectiveSeg)}`,
               { headers: { accept: "application/json" } },
             ).catch(() => null);
             const defData = defRes && defRes.ok
@@ -200,6 +258,7 @@ function localThemePlugin(): Plugin {
             validPreview = null;
             if (
               !fromParam &&
+              url.pathname !== "/login" &&
               (siteVia === "primary" || url.pathname === "/" || url.pathname === "/index.html")
             ) {
               clearStaleCookie = true;
@@ -290,19 +349,110 @@ function localThemePlugin(): Plugin {
             return aRes && aRes.ok ? aRes : null;
           };
 
+          let manifestCache: {
+            builtin?: boolean;
+            functionalCss?: boolean;
+            tokens?: unknown;
+            config?: Array<{ key?: string; default?: string }>;
+            routes?: string[];
+            patterns?: Record<string, string[]>;
+          } | null | undefined;
+          const getManifest = async () => {
+            if (manifestCache !== undefined) return manifestCache;
+            const mRes = await fetchAsset("theme.json");
+            manifestCache = mRes
+              ? ((await mRes.json().catch(() => null)) as typeof manifestCache)
+              : null;
+            return manifestCache;
+          };
+
+          const resolvedAppPrefix =
+            siteVia === "path" && effectiveSeg && effectiveSeg !== "login"
+              ? `/${effectiveSeg}`
+              : url.pathname === prefix || url.pathname.startsWith(`${prefix}/`)
+                ? prefix
+                : "";
+
+          const serveSpaFallback = async (): Promise<boolean> => {
+            if (req.method !== "GET" || cleanRel.includes(".")) return false;
+            if (
+              url.pathname.startsWith("/__lcdp__/") ||
+              url.pathname.startsWith("/public/") ||
+              url.pathname.startsWith("/api/")
+            ) {
+              return false;
+            }
+            const manifest = await getManifest();
+            const routes = Array.isArray(manifest?.routes)
+              ? manifest!.routes.filter((r): r is string => typeof r === "string" && r.startsWith("/"))
+              : [];
+            const sanitized = sanitizeThemeTokens(manifest?.tokens);
+            const hasFunctionalCss =
+              manifest?.functionalCss === true || Boolean(await fetchAsset("functional.css"));
+            if (!hasFunctionalCss && !sanitized && routes.length === 0) return false;
+            const payload = {
+              themeId,
+              version,
+              tokens: sanitized ?? {},
+              ...(routes.length > 0 ? { routes } : {}),
+            };
+            const themeJson = JSON.stringify(payload)
+              .replace(/</g, "\\u003c")
+              .replace(/>/g, "\\u003e")
+              .replace(/&/g, "\\u0026");
+            let snippet = `<script>window.__LCDP_THEME__=${themeJson};</script>`;
+            const decls: string[] = [];
+            if (sanitized) {
+              for (const [k, vName] of THEME_TOKEN_CSS_VARS) {
+                if (!(k in sanitized)) continue;
+                const val = sanitized[k];
+                decls.push(`${vName}:${k === "radius" ? `${val}px` : val}`);
+              }
+            }
+            if (decls.length > 0) snippet += `<style>:root{${decls.join(";")}}</style>`;
+            if (hasFunctionalCss) {
+              const pQuery =
+                mode === "preview" && fromParam && token
+                  ? `&lcdp_preview=${encodeURIComponent(token)}`
+                  : "";
+              snippet += `<link rel="stylesheet" href="${escapeAttr(`${resolvedAppPrefix}/functional.css?v=${themeId}@${version}${pQuery}`)}">`;
+            }
+            const indexFile = path.resolve(server.config.root, "index.html");
+            if (!fs.existsSync(indexFile)) return false;
+            const rawHtml = fs.readFileSync(indexFile, "utf8");
+            let out = await server.transformIndexHtml(req.url || "/", rawHtml);
+            out = /<head[^>]*>/i.test(out)
+              ? out.replace(/<head[^>]*>/i, (m) => m + snippet)
+              : snippet + out;
+            if (mode === "preview") {
+              out = /<\/body>/i.test(out)
+                ? out.replace(/<\/body>/i, (m) => PREVIEW_BADGE_HTML + m)
+                : out + PREVIEW_BADGE_HTML;
+            }
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.setHeader("Cache-Control", "no-store");
+            res.setHeader("X-Lcdp-Theme", `${themeId}@${version}`);
+            if (mode === "preview") {
+              res.setHeader("X-Lcdp-Theme-Preview", `${themeId}@${version}`);
+              if (fromParam && token) {
+                res.setHeader("Set-Cookie", `lcdp_preview=${encodeURIComponent(token)}; Path=/; SameSite=Lax`);
+              }
+            } else if (clearStaleCookie) {
+              res.setHeader("Set-Cookie", "lcdp_preview=; Path=/; Max-Age=0; SameSite=Lax");
+            }
+            res.end(out);
+            return true;
+          };
+
           let targetRes = null as Awaited<ReturnType<typeof fetchAsset>>;
           let servedPath = cleanRel || "index.html";
 
           if (!cleanRel || cleanRel === "index.html") {
-            const mRes = await fetchAsset("theme.json");
-            const manifest = mRes
-              ? ((await mRes.json().catch(() => null)) as {
-                  builtin?: boolean;
-                  routes?: string[];
-                } | null)
-              : null;
+            const manifest = await getManifest();
             const routes = Array.isArray(manifest?.routes) ? manifest!.routes : [];
             if (manifest?.builtin === true && !hasPublicPageRoutes(routes)) {
+              if (await serveSpaFallback()) return;
               return next();
             }
             servedPath = "index.html";
@@ -325,22 +475,16 @@ function localThemePlugin(): Plugin {
               }
             }
           } else {
-            const mRes = await fetchAsset("theme.json");
-            const manifest = mRes
-              ? ((await mRes.json().catch(() => null)) as {
-                  builtin?: boolean;
-                  config?: Array<{ key?: string; default?: string }>;
-                  routes?: string[];
-                  patterns?: Record<string, string[]>;
-                } | null)
-              : null;
+            const manifest = await getManifest();
             const routes = Array.isArray(manifest?.routes) ? manifest!.routes : [];
             const normRoute = "/" + cleanRel;
 
             if (manifest?.builtin === true && routes.length === 0) {
+              if (await serveSpaFallback()) return;
               return next();
             }
             if (routes.length > 0 && normRoute !== "/" && !routes.some((r) => r.replace(/\/+$/, "") === normRoute)) {
+              if (await serveSpaFallback()) return;
               return next();
             }
 
@@ -377,7 +521,10 @@ function localThemePlugin(): Plugin {
                   !!(await fetchAsset("list.html")) ||
                   !!(await fetchAsset("detail.html")) ||
                   !!(await fetchAsset("about.html"));
-                if (isMulti) return next();
+                if (isMulti) {
+                  if (await serveSpaFallback()) return;
+                  return next();
+                }
               }
               if (!targetRes && (routes.length === 0 || routes.some((r) => r.replace(/\/+$/, "") === normRoute))) {
                 servedPath = "index.html";
@@ -386,7 +533,10 @@ function localThemePlugin(): Plugin {
             }
           }
 
-          if (!targetRes) return next();
+          if (!targetRes) {
+            if (await serveSpaFallback()) return;
+            return next();
+          }
 
           const contentType = targetRes.headers.get("content-type") || "application/octet-stream";
           const buf = Buffer.from(await targetRes.arrayBuffer());
@@ -427,8 +577,7 @@ function localThemePlugin(): Plugin {
               .replace(/</g, "\\u003c")
               .replace(/>/g, "\\u003e")
               .replace(/&/g, "\\u0026");
-            const appPrefix =
-              url.pathname === prefix || url.pathname.startsWith(`${prefix}/`) ? prefix : "";
+            const appPrefix = resolvedAppPrefix;
             if (appPrefix) {
               html = html.replace(
                 /(\b(?:href|src)=["'])(?:\.\/)?(theme|assets)\//gi,
@@ -442,11 +591,10 @@ function localThemePlugin(): Plugin {
               html = ctxScript + html;
             }
             if (mode === "preview") {
-              const badge = `<div style="position:fixed;left:12px;bottom:12px;z-index:2147483647;background:rgba(17,24,39,.92);color:#f9fafb;font:13px/1.5 -apple-system,'Segoe UI',sans-serif;padding:6px 12px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.35)">预览效果 · 未生效 <a href="?lcdp_preview=off" style="color:#93c5fd;margin-left:8px">退出预览</a></div>`;
               if (/<\/body>/i.test(html)) {
-                html = html.replace(/<\/body>/i, (m) => badge + m);
+                html = html.replace(/<\/body>/i, (m) => PREVIEW_BADGE_HTML + m);
               } else {
-                html += badge;
+                html += PREVIEW_BADGE_HTML;
               }
             }
             res.end(html);

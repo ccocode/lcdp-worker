@@ -167,18 +167,27 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
     {
       title: "编号",
       dataIndex: "appNo",
-      width: 70,
+      width: 68,
       render: (v) => (v === null || v === undefined ? "—" : asText(v)),
     },
-    { title: "应用 ID", dataIndex: "id", render: (v) => asText(v) },
+    {
+      title: "应用 ID",
+      dataIndex: "id",
+      width: 175,
+      ellipsis: true,
+      render: (v) => asText(v),
+    },
     {
       title: "应用名称",
       dataIndex: "name",
+      width: 155,
+      ellipsis: true,
       render: (v) => asText(v) || "—",
     },
     {
       title: "领域模型",
       dataIndex: "domain",
+      width: 195,
       render: (v) => {
         const key = asText(v);
         if (!key) return "—";
@@ -189,24 +198,36 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
           (["content", "commerce", "forum"].includes(key) ? "member" : "platform");
         const isPlatform = defaultUs === "platform";
         return (
-          <Space size={6}>
+          <Space size={6} style={{ whiteSpace: "nowrap" }}>
             <span>{label ? `${label}（${key}）` : key}</span>
-            <Tag color={isPlatform ? "blue" : "green"}>
+            <Tag color={isPlatform ? "blue" : "green"} style={{ marginInlineEnd: 0 }}>
               {isPlatform ? "平台用户" : defaultUs === "member" ? "会员域" : "公开访客"}
             </Tag>
           </Space>
         );
       },
     },
-    { title: "租户", dataIndex: "tenant_id", render: (v, r) => asText(v ?? r.tenantId) },
+    {
+      title: "租户",
+      dataIndex: "tenant_id",
+      width: 90,
+      ellipsis: true,
+      render: (v, r) => asText(v ?? r.tenantId),
+    },
     {
       // 第 75 步续：场景列（来源标记、仅 setup 播种的应用有值）去掉，
       // 改显应用创建时间（服务端按审计/版本证据回填、fmtTime 统一格式）。
       title: "创建时间",
-      render: (_, r) => fmtTime(r.createdAt ?? r.created_at),
+      width: 165,
+      render: (_, r) => (
+        <span style={{ whiteSpace: "nowrap" }}>
+          {fmtTime(r.createdAt ?? r.created_at)}
+        </span>
+      ),
     },
     {
       title: "当前版本",
+      width: 88,
       render: (_, r) => {
         const v = r.current_version ?? r.currentVersion;
         return v === null || v === undefined ? "未发布" : `v${asText(v)}`;
@@ -214,7 +235,7 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
     },
     {
       title: "主应用",
-      width: 110,
+      width: 92,
       render: (_, r) => {
         const domainKey = asText(r.domain).trim().toLowerCase();
         const disallowedDomain =
@@ -244,7 +265,7 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
     },
     {
       title: "状态",
-      width: 110,
+      width: 92,
       render: (_, r) => (
         <Switch
           checked={asText(r.status ?? "active") !== "disabled"}
@@ -259,7 +280,7 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
       ? [
           {
             title: "操作",
-            width: 130,
+            width: 120,
             render: (_: unknown, r: Row) => (
               <Space size={4}>
                 <Button
@@ -305,9 +326,13 @@ export default function Apps({ ctx }: { ctx: PageContext }) {
         <Table
           rowKey={(r) => String(r.id)}
           loading={loading}
-          columns={columns}
+          columns={columns.map((col) => ({
+            ...col,
+            onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }),
+          }))}
           dataSource={rows}
           pagination={false}
+          scroll={{ x: "max-content" }}
         />
       </Card>
 

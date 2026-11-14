@@ -165,7 +165,7 @@ function themeHasTheming(theme) {
  * 的 JSON 转义与 __LCDP__ 同口径（<>& 转义防 </script> 突破）；
  * style 只出已声明键，radius 出 <n>px。
  */
-function functionalThemingSnippet(theme) {
+function functionalThemingSnippet(theme, opts = {}) {
   const routes = Array.isArray(theme?.routes)
     ? theme.routes.filter((r) => typeof r === "string" && r.startsWith("/"))
     : [];
@@ -190,7 +190,10 @@ function functionalThemingSnippet(theme) {
   }
   if (decls.length > 0) out += `<style>:root{${decls.join(";")}}</style>`;
   if (theme.functionalCss === true) {
-    out += `<link rel="stylesheet" href="/functional.css?v=${theme.id}@${theme.version}">`;
+    const appPrefix = typeof opts.appPrefix === "string" ? opts.appPrefix : "";
+    const previewQuery =
+      typeof opts.previewQuery === "string" ? opts.previewQuery : "";
+    out += `<link rel="stylesheet" href="${appPrefix}/functional.css?v=${theme.id}@${theme.version}${previewQuery}">`;
   }
   return out;
 }
@@ -200,7 +203,7 @@ function functionalThemingSnippet(theme) {
  * 同位；无 head 则置于文首）。opts.badge 为真时同注入预览角标（A3）。
  */
 function injectFunctionalTheming(html, theme, opts = {}) {
-  const snippet = functionalThemingSnippet(theme);
+  const snippet = functionalThemingSnippet(theme, opts);
   if (snippet === null) return html;
   const m = /<head[^>]*>/i.exec(html);
   let out = m
@@ -902,10 +905,10 @@ function previewTokenOf(url, request) {
  * 头 + 预览角标）。未声明主题化 / 非页面路径 / 壳不可得一律返回
  * null，调用方落回正常分发（现行行为逐字不变）。
  */
-async function previewSpaShell(request, env, method, url, theme) {
+async function previewSpaShell(request, env, method, url, theme, extraOpts = {}) {
   if (!env.ASSETS) return null;
   if (!isPagePath(url.pathname)) return null;
-  if (functionalThemingSnippet(theme) === null) return null;
+  if (functionalThemingSnippet(theme, extraOpts) === null) return null;
   let res = await env.ASSETS.fetch(request);
   if (res.status === 404 && (method === "GET" || method === "HEAD")) {
     const indexRes = await env.ASSETS.fetch(
@@ -928,7 +931,11 @@ async function previewSpaShell(request, env, method, url, theme) {
     headers.set("x-lcdp-theme-preview", `${theme.id}@${theme.version}`);
     return new Response(null, { status: 200, headers });
   }
-  const out = await injectSpaTheming(res, theme, { preview: true, badge: true });
+  const out = await injectSpaTheming(res, theme, {
+    ...extraOpts,
+    preview: true,
+    badge: true,
+  });
   // 注入未实际发生（如壳非 HTML）→ 不接管，落回正常分发
   return out === res ? null : out;
 }
@@ -966,6 +973,34 @@ function previewUnavailablePage(url) {
     },
   });
   return withClearedPreviewCookie(res);
+}
+
+/** 解析请求生效的首段作用域：/login?from=/<seg>/... 时跟随 from 的首段，否则取 pathname 首段 */
+function resolveEffectiveSeg(url) {
+  const pathSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
+  let segRaw = pathSeg;
+  if (url.pathname === "/login") {
+    const fromRaw = url.searchParams.get("from") || "";
+    if (fromRaw.startsWith("/") && !fromRaw.startsWith("//")) {
+      const fromPath = fromRaw.split(/[?#]/)[0] || "/";
+      const fromSeg = fromPath.split("/").filter(Boolean)[0] ?? "";
+      if (fromSeg && fromSeg !== "login") segRaw = fromSeg;
+    }
+  }
+  let seg = segRaw;
+  try {
+    seg = decodeURIComponent(segRaw);
+  } catch {
+    seg = segRaw;
+  }
+  return { rawSeg: segRaw, seg };
+}
+
+/** 路径作用域 /login 直通判定：/login 本身不走 themeAppPath 首段剥离 */
+function resolvedThemeAppPath(pathname, siteVia) {
+  return normalizeRoutePath(pathname) === "/login"
+    ? "/login"
+    : themeAppPath(pathname, siteVia);
 }
 
 /**
@@ -1014,13 +1049,7 @@ async function tryThemePreview(request, env, ctx, url) {
   }
   // 站点配置走既有路径（60 秒缓存）：本站点解析出的应用须与
   // 令牌作用域一致，否则忽略预览（防跨应用串用令牌）
-  const rawSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
-  let seg = rawSeg;
-  try {
-    seg = decodeURIComponent(rawSeg);
-  } catch {
-    seg = rawSeg;
-  }
+  const { rawSeg, seg } = resolveEffectiveSeg(url);
   const entryCfg = await loadEntryConfig(url.host, seg, ctx, env);
   if (!entryCfg.appMeta || entryCfg.appMeta.appId !== valid.appId) {
     return null;
@@ -1037,14 +1066,24 @@ async function tryThemePreview(request, env, ctx, url) {
     preview: true,
     memberSso: entryCfg.memberSso ?? null,
     pathname: url.pathname,
-    appPath: themeAppPath(url.pathname, entryCfg.siteVia),
+    appPath: resolvedThemeAppPath(url.pathname, entryCfg.siteVia),
   });
   if (themed) {
     return found.fromParam ? withPreviewCookie(themed, found.token) : themed;
   }
   // 第 93 步线 A3：桥接路径（serveTheme 未命中）——预览主题声明了
   // 主题化时把预览主题带入 SPA 回落注入；未声明则维持现行落回
-  const spaRes = await previewSpaShell(request, env, method, url, theme);
+  const previewAppPrefix =
+    entryCfg.siteVia === "path" && rawSeg && rawSeg !== "login"
+      ? `/${rawSeg}`
+      : "";
+  const previewQuery = found.fromParam
+    ? `&lcdp_preview=${encodeURIComponent(found.token)}`
+    : "";
+  const spaRes = await previewSpaShell(request, env, method, url, theme, {
+    appPrefix: previewAppPrefix,
+    previewQuery,
+  });
   if (!spaRes) return null;
   return found.fromParam ? withPreviewCookie(spaRes, found.token) : spaRes;
 }
@@ -1114,16 +1153,15 @@ async function dispatch(request, env, ctx) {
     // 功能页主题化（第 93 步线 A2）：回落 SPA 段注入用的已解析槽主题，
     // 在主题层判定处赋值（未绑主题/无 R2 时恒 null → 回落逐字不变）
     let spaTheme = null;
+    let spaAppPrefix = "";
     if ((method === "GET" || method === "HEAD") && env.STATIC_R2) {
       // 站点模型：首段路径定位作用域应用，配置随作用域而变（68.2）
-      const rawSeg = url.pathname.split("/").filter(Boolean)[0] ?? "";
-      let seg = rawSeg;
-      try {
-        seg = decodeURIComponent(rawSeg);
-      } catch {
-        seg = rawSeg;
-      }
+      const { rawSeg, seg } = resolveEffectiveSeg(url);
       const entryCfg = await loadEntryConfig(url.host, seg, ctx, env);
+      spaAppPrefix =
+        entryCfg.siteVia === "path" && rawSeg && rawSeg !== "login"
+          ? `/${rawSeg}`
+          : "";
       // 1. 主题层（M14 线二 + 第⑤步双槽）：按槽尝试，未命中/异常落回下一层
       const slots = entryCfg.themeSlots;
       const slotPick = requestedSlot(url, request);
@@ -1154,8 +1192,8 @@ async function dispatch(request, env, ctx) {
             const theme = slots[name];
             if (!theme) continue;
             const themed = await serveTheme(env, theme, url, method, {
-              // 应用内路径：路径作用域应用剥首段后匹配（见 themeAppPath）
-              appPath: themeAppPath(url.pathname, entryCfg.siteVia),
+              // 应用内路径：路径作用域应用剥首段后匹配（见 themeAppPath），/login 不剥
+              appPath: resolvedThemeAppPath(url.pathname, entryCfg.siteVia),
               memberSso: entryCfg.memberSso ?? null,
               pathname: url.pathname,
               // 自检注入四条件齐备才开：页面请求、桌面槽 index 应答、
@@ -1231,7 +1269,7 @@ async function dispatch(request, env, ctx) {
     // 功能页主题化注入：页面路径 + GET + 落到壳 + 槽主题有声明才动，
     // 任一不满足逐字透传（injectSpaTheming 内部再核壳的 HTML 形状）
     if (isShell && spaTheme && method === "GET" && isPagePath(url.pathname)) {
-      res = await injectSpaTheming(res, spaTheme);
+      res = await injectSpaTheming(res, spaTheme, { appPrefix: spaAppPrefix });
     }
     return res;
   } catch {

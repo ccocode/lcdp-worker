@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { Empty, Spin } from "antd";
+import { Empty, Spin, Typography } from "antd";
 
 /**
  * 三态统一封装（第 73 步片二）：加载 / 空 两态全平台同形。
@@ -20,7 +20,24 @@ export function LoadingState({
   block?: boolean;
   style?: CSSProperties;
 }) {
-  const spin = <Spin tip={tip || undefined} size={size} />;
+  // Antd v5 独立 <Spin tip> 无 children 时既触发控制台警告又不会渲染文字，改为 Spin + 独立文案。
+  const spin = tip ? (
+    <div
+      style={{
+        display: "inline-flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 10,
+      }}
+    >
+      <Spin size={size} />
+      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        {tip}
+      </Typography.Text>
+    </div>
+  ) : (
+    <Spin size={size} />
+  );
   if (!block) return spin;
   return (
     <div style={{ padding: "28px 0", textAlign: "center", ...style }}>

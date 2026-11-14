@@ -15,7 +15,6 @@ import {
   Modal,
   Result,
   Space,
-  Spin,
   Tabs,
   Typography,
   theme,
@@ -149,21 +148,41 @@ function normalizeThemeRoutePath(p: string): string {
   return p.replace(/\/+$/, "") || "/";
 }
 
-function isThemeRoutePath(pathname: string): boolean {
+function isThemeRoutePath(pathname: string, basePrefix = ""): boolean {
   const routes = siteThemeRoutesOf();
   if (routes.length === 0) return false;
-  const p = normalizeThemeRoutePath(pathname);
-  return routes.some((r) => normalizeThemeRoutePath(r) === p);
+  const candidates = [normalizeThemeRoutePath(pathname)];
+  const pfx =
+    basePrefix ||
+    (() => {
+      const a = (window as Window & { __LCDP__?: { appId?: string } }).__LCDP__?.appId;
+      return a && (pathname === `/${a}` || pathname.startsWith(`/${a}/`)) ? `/${a}` : "";
+    })();
+  if (pfx && (pathname === pfx || pathname.startsWith(`${pfx}/`))) {
+    candidates.push(normalizeThemeRoutePath(pathname.slice(pfx.length) || "/"));
+  }
+  return candidates.some((c) => routes.some((r) => normalizeThemeRoutePath(r) === c));
+}
+
+function withPreviewQuery(to: string): string {
+  if (typeof window === "undefined") return to;
+  const tok = new URLSearchParams(window.location.search).get("lcdp_preview");
+  if (!tok || tok === "off" || to.includes("lcdp_preview=")) return to;
+  const hashIdx = to.indexOf("#");
+  const hash = hashIdx >= 0 ? to.slice(hashIdx) : "";
+  const base = hashIdx >= 0 ? to.slice(0, hashIdx) : to;
+  return `${base}${base.includes("?") ? "&" : "?"}lcdp_preview=${encodeURIComponent(tok)}${hash}`;
 }
 
 /** 站内导航统一写侧：命中主题自理路由改整页跳（交边缘主题层出页）；其余 pushState 后派发 popstate 让路由钩子重解析（pushState 本身不触发 popstate） */
-function navigateTo(to: string): void {
-  const pathname = to.split(/[?#]/)[0] || "/";
-  if (isThemeRoutePath(pathname)) {
-    window.location.assign(to);
+function navigateTo(to: string, basePrefix = ""): void {
+  const target = withPreviewQuery(to);
+  const pathname = target.split(/[?#]/)[0] || "/";
+  if (isThemeRoutePath(pathname, basePrefix)) {
+    window.location.assign(target);
     return;
   }
-  window.history.pushState(null, "", to);
+  window.history.pushState(null, "", target);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -317,8 +336,9 @@ export default function App() {
   const previewAppId = match ? decodeURIComponent(match[1]!) : null;
   const previewInPath = match?.[2] ?? "/";
 
+  const rootTheme = siteThemeTokensOf() ? siteAntdThemeOf(null, "c-end") : runtimeTheme;
   return (
-    <ConfigProvider locale={zhCN} theme={runtimeTheme} button={{ autoInsertSpace: false }}>
+    <ConfigProvider locale={zhCN} theme={rootTheme} button={{ autoInsertSpace: false }}>
       {/* 站点主题兜底（第 93 步线 B2）：边缘注入的 :root 变量 --lcdp-background /
           --lcdp-text 在此落到 SPA 根——非 antd 区域（加载屏、空白态）也垫站点
           底色与文字色、不跳色。无注入时回退值与现行为等效（透明=不涂、
@@ -366,6 +386,78 @@ export default function App() {
   );
 }
 
+function AuthPageFrame({
+  eyebrow,
+  brandTitle,
+  brandDesc,
+  brandFoot = "安全认证 · 主题风格实时同步",
+  children,
+}: {
+  eyebrow: string;
+  brandTitle: string;
+  brandDesc: string;
+  brandFoot?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className="lcdp-login-stage"
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <style>{`
+        :where(.lcdp-login-stage){background:var(--lcdp-background, #f7f8fa);}
+        :where(.lcdp-login-brand-panel){display:none;}
+        :where(.lcdp-login-card){width:360px;max-width:calc(100vw - 32px);}
+      `}</style>
+      <div className="lcdp-login-frame">
+        <div className="lcdp-login-brand-panel" aria-hidden="true">
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                opacity: 0.78,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                marginBottom: 10,
+              }}
+            >
+              {eyebrow}
+            </div>
+            <Typography.Title
+              level={3}
+              style={{ margin: "0 0 10px", color: "inherit" }}
+            >
+              {brandTitle}
+            </Typography.Title>
+            <Typography.Paragraph
+              style={{
+                margin: 0,
+                color: "inherit",
+                opacity: 0.86,
+                fontSize: 14,
+                lineHeight: 1.65,
+              }}
+            >
+              {brandDesc}
+            </Typography.Paragraph>
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.72, marginTop: 24 }}>
+            {brandFoot}
+          </div>
+        </div>
+        <Card className="lcdp-login-card">{children}</Card>
+      </div>
+    </div>
+  );
+}
+
 function LoginView({
   onLoggedIn,
   appName,
@@ -392,63 +484,123 @@ function LoginView({
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#f7f8fa",
-      }}
+    <AuthPageFrame
+      eyebrow="WORKSPACE PORTAL"
+      brandTitle={appName || "应用空间登录"}
+      brandDesc="登录您的账号，立即进入统一的数据台账、业务协同与内容管理中心。"
     >
-      <Card style={{ width: 360 }}>
-        <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
-          员工登录
-        </Typography.Title>
-        <Typography.Paragraph
-          type="secondary"
-          style={{ fontSize: 14, marginBottom: 20 }}
+      <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
+        员工登录
+      </Typography.Title>
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 14, marginBottom: 20 }}
+      >
+        {appName
+          ? `登录${appName}的员工系统（管理员账号在初始化向导中设置）`
+          : "登录后直达本入口的应用系统（管理员账号在初始化向导中设置）"}
+      </Typography.Paragraph>
+      {expired && !error && (
+        <Alert
+          type="warning"
+          showIcon
+          message="登录已失效，请重新登录"
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {error && (
+        <Alert type="error" message={error} style={{ marginBottom: 16 }} />
+      )}
+      <Form
+        layout="vertical"
+        initialValues={{ username: "admin" }}
+        onFinish={(v) => void submit(v)}
+      >
+        <Form.Item
+          label="用户名"
+          name="username"
+          rules={[{ required: true, message: "请输入用户名" }]}
         >
-          {appName
-            ? `登录${appName}的员工系统（管理员账号在初始化向导中设置）`
-            : "登录后直达本入口的应用系统（管理员账号在初始化向导中设置）"}
-        </Typography.Paragraph>
-        {expired && !error && (
-          <Alert
-            type="warning"
-            showIcon
-            message="登录已失效，请重新登录"
-            style={{ marginBottom: 16 }}
-          />
-        )}
-        {error && (
-          <Alert type="error" message={error} style={{ marginBottom: 16 }} />
-        )}
-        <Form
-          layout="vertical"
-          initialValues={{ username: "admin" }}
-          onFinish={(v) => void submit(v)}
+          <Input autoComplete="username" />
+        </Form.Item>
+        <Form.Item
+          label="密码"
+          name="password"
+          rules={[{ required: true, message: "请输入密码" }]}
         >
-          <Form.Item
-            label="用户名"
-            name="username"
-            rules={[{ required: true, message: "请输入用户名" }]}
-          >
-            <Input autoComplete="username" />
-          </Form.Item>
-          <Form.Item
-            label="密码"
-            name="password"
-            rules={[{ required: true, message: "请输入密码" }]}
-          >
-            <Input.Password autoComplete="current-password" />
-          </Form.Item>
-          <Button type="primary" htmlType="submit" block loading={busy}>
-            登录
-          </Button>
-        </Form>
-      </Card>
-    </div>
+          <Input.Password autoComplete="current-password" />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" block loading={busy}>
+          登录
+        </Button>
+      </Form>
+    </AuthPageFrame>
+  );
+}
+
+/** 独立会员登录页（/<appId>/login 或 /login?from=...，C 端/会员应用复用主题化登录页框） */
+function MemberLoginView({
+  appId,
+  appName,
+  homeUrl,
+  memberSso,
+  onAuthed,
+}: {
+  appId: string;
+  appName?: string | null;
+  homeUrl: string;
+  memberSso?: MemberSsoInfo | null;
+  onAuthed: () => void;
+}) {
+  const [view, setView] = useState<"auth" | "reset">("auth");
+  const initialTab =
+    new URLSearchParams(window.location.search).get("tab") === "register"
+      ? "register"
+      : "login";
+
+  return (
+    <AuthPageFrame
+      eyebrow="MEMBER PORTAL"
+      brandTitle={appName || "会员服务中心"}
+      brandDesc="登录或注册会员账号，即可同步访问订单、互动消息与个人中心。"
+    >
+      <Typography.Title level={4} style={{ margin: "0 0 4px" }}>
+        {view === "reset" ? "找回密码" : "会员登录"}
+      </Typography.Title>
+      <Typography.Paragraph
+        type="secondary"
+        style={{ fontSize: 14, marginBottom: 16 }}
+      >
+        {appName
+          ? `登录${appName}会员账号，畅享全部会员服务`
+          : "登录会员账号后自动返回原页面"}
+      </Typography.Paragraph>
+      <MemberAuthPanel
+        appId={appId}
+        active
+        initialTab={initialTab}
+        onViewChange={setView}
+        onAuthed={() => onAuthed()}
+      />
+      {memberSso?.enabled && memberSso.centerBase && (
+        <Button
+          block
+          style={{ marginTop: 10 }}
+          onClick={() => {
+            window.location.assign(
+              beginSsoAuthorize(memberSso.centerBase!, appId, homeUrl),
+            );
+          }}
+        >
+          前往统一会员中心登录
+        </Button>
+      )}
+      <div style={{ marginTop: 14, textAlign: "center" }}>
+        <a href={homeUrl} style={{ fontSize: 13 }}>
+          返回首页
+        </a>
+      </div>
+    </AuthPageFrame>
   );
 }
 
@@ -467,44 +619,113 @@ function AnonGate({
 }) {
   const [pub, setPub] = useState<PublicSiteResult | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<{
+    message: string;
+    status?: number;
+  } | null>(null);
+
+  const searchParams = useMemo(
+    () => new URLSearchParams(window.location.search),
+    [route.path],
+  );
+  const rawFrom = searchParams.get("from");
+  const fromPath =
+    rawFrom &&
+    rawFrom.startsWith("/") &&
+    !rawFrom.startsWith("//") &&
+    !rawFrom.startsWith("/login")
+      ? rawFrom
+      : null;
+  const fromSeg = fromPath ? decodedSeg(fromPath.split(/[?#]/)[0] || "/") : "";
+  const effectiveSeg =
+    route.path === "/login"
+      ? fromSeg && fromSeg !== "login"
+        ? fromSeg
+        : ""
+      : decodedSeg(window.location.pathname);
 
   useEffect(() => {
     let alive = true;
     api
-      .publicSite(
-        window.location.host,
-        decodedSeg(window.location.pathname),
-      )
+      .publicSite(window.location.host, effectiveSeg)
       .then((r) => {
         if (alive) {
           setPub(r);
+          setLoadError(null);
           setLoaded(true);
         }
       })
-      .catch(() => {
-        if (alive) setLoaded(true);
+      .catch((err) => {
+        if (alive) {
+          // 区分接口/网络失败与正常“无公开页”，防止后端 500 被误当作需员工登录并跳走。
+          setLoadError({
+            message: err instanceof Error ? err.message : String(err),
+            status: (err as { status?: number } | null)?.status,
+          });
+          setLoaded(true);
+        }
       });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [effectiveSeg]);
 
   // 站点解析 mode=redirect：整页跳（根域跳默认域名；段命中应用时剥段跳）
   const site = pub?.site ?? null;
+  const primary = pub?.primary ?? null;
+  const resolvedUserSystem = primary?.userSystem ?? site?.app?.userSystem;
+  const rawSeg = rawFirstSeg(route.path);
+  const basePrefix = site?.via === "path" && rawSeg ? `/${rawSeg}` : "";
+  const inPath = stripSitePrefix(route.path, basePrefix);
+  const customLoginPage = !!primary?.pages?.some((p) => p.route === "/login");
+  const isLoginRoute =
+    (route.path === "/login" || inPath === "/login") && !customLoginPage;
+  const loginAppParam = searchParams.get("app");
+  const loginAppName =
+    loginAppParam ??
+    (primary?.name && (site?.via !== "path" || route.path !== "/login" || fromSeg)
+      ? primary.name
+      : undefined);
+
   useEffect(() => {
     if (site?.mode === "redirect") redirectPerSite(site);
   }, [site]);
 
-  // 第 80 步：匿名面标题跟随解析出的应用（会员中心由 MemberCenterApp 自设）。
+  // 第 80 步：匿名面标题跟随解析出的应用（会员中心由 MemberCenterApp 自设）；
+  // 失败或无主应用时及时刷新标题，避免长期停留在 index.html 初始“正在加载…”。
   // 必须在下方早期 return 之前调用，否则加载前后 hook 数量变化会触发 React #310。
   useEffect(() => {
     if (pub?.entry?.kind === "member-center") return;
+    if (isLoginRoute) {
+      const fallbackTitle =
+        resolvedUserSystem === "member" ? "会员登录" : "员工登录";
+      document.title = loginAppName
+        ? `${loginAppName} · ${fallbackTitle}`
+        : fallbackTitle;
+      return;
+    }
+    if (loadError) {
+      document.title =
+        loadError.status === 502 || loadError.status === 503
+          ? "服务暂不可用"
+          : "加载失败";
+      return;
+    }
     const n = pub?.primary?.name;
-    if (n) document.title = n;
-  }, [pub]);
+    if (n) {
+      document.title = n;
+    } else if (loaded) {
+      document.title = pub?.site?.app?.name ?? "公开站点";
+    }
+  }, [
+    pub,
+    loadError,
+    loaded,
+    isLoginRoute,
+    resolvedUserSystem,
+    loginAppName,
+  ]);
 
-  const primary = pub?.primary ?? null;
-  const resolvedUserSystem = primary?.userSystem ?? site?.app?.userSystem;
   // 只有使用平台系统用户（platform）时才是内部系统（需员工登录）；member / none 面向外部访客与会员，绝不跳员工登录
   const isPlatformUserApp =
     resolvedUserSystem !== "member" && resolvedUserSystem !== "none";
@@ -523,22 +744,19 @@ function AnonGate({
     (primary?.name ? `&app=${encodeURIComponent(primary.name)}` : "");
   const shouldLoginRedirect =
     loaded &&
+    !loadError &&
     isPlatformUserApp &&
     site?.mode !== "redirect" &&
     route.path !== "/sso/callback" &&
     pub?.entry?.kind !== "member-center" &&
-    route.path !== "/login" &&
+    !isLoginRoute &&
     !showPublicShell;
   useEffect(() => {
     if (shouldLoginRedirect) navigateTo(loginUrl);
   }, [shouldLoginRedirect, loginUrl]);
 
   if (!loaded || site?.mode === "redirect") {
-    return (
-      <div style={{ padding: 80, textAlign: "center" }}>
-        <Spin size="large" tip="正在加载…" />
-      </div>
-    );
+    return <LoadingState size="large" tip="正在加载…" block style={{ padding: 80 }} />;
   }
   /** 匿名面客服咨询窗：逐个装配应用探测 support/config，首个 enabled 挂载（M12） */
   const anonSupport = (
@@ -553,22 +771,31 @@ function AnonGate({
   if (pub?.entry?.kind === "member-center") {
     return <MemberCenterApp route={route} />;
   }
-  // 专用员工登录页（整页跳转目标）：from 经校验后作登录后回跳（仅相对路径、
-  // 排除 /login 自身防循环）；app 仅作应用名展示，无 app 参数时路径作用域站点
-  // 回落通用文案（主应用名会误导）、域名绑定站点用解析出的应用名。
-  if (route.path === "/login") {
-    const search = new URLSearchParams(window.location.search);
-    const rawFrom = search.get("from");
-    const backTo =
-      rawFrom &&
-      rawFrom.startsWith("/") &&
-      !rawFrom.startsWith("//") &&
-      !rawFrom.startsWith("/login")
-        ? rawFrom
-        : "/";
-    const appParam = search.get("app");
-    const appName =
-      appParam ?? (site?.via === "path" ? undefined : primary?.name) ?? undefined;
+  // 专用登录页（/login 或 /<appId>/login）：C 端 member 应用渲染主题化会员登录页，
+  // B 端 platform 应用渲染主题化员工登录页；回跳默认回到当前应用首页。
+  if (isLoginRoute) {
+    const loginHomeUrl =
+      route.path !== "/login" && basePrefix
+        ? `${basePrefix}/`
+        : site?.via === "path" && fromSeg && fromSeg !== "login"
+          ? `/${fromSeg}/`
+          : "/";
+    const backTo = fromPath ?? loginHomeUrl;
+    const memberAppId = primary?.appId ?? site?.app?.id ?? null;
+    if (resolvedUserSystem === "member" && memberAppId) {
+      return (
+        <>
+          <MemberLoginView
+            appId={memberAppId}
+            appName={loginAppName}
+            homeUrl={loginHomeUrl}
+            memberSso={pub?.memberSso ?? null}
+            onAuthed={() => window.location.assign(backTo)}
+          />
+          {anonSupport}
+        </>
+      );
+    }
     return (
       <>
         <LoginView
@@ -580,10 +807,21 @@ function AnonGate({
             // api.login 已先把会话写进 localStorage，重载后直接恢复登录态。
             window.location.assign(backTo);
           }}
-          appName={appName}
+          appName={loginAppName}
         />
         {anonSupport}
       </>
+    );
+  }
+  if (loadError) {
+    return (
+      <ErrorStatePage
+        variant={statusToVariant(loadError.status)}
+        detail={loadError.message}
+        fullPage
+        onHome={() => window.location.assign("/")}
+        onRetry={() => window.location.reload()}
+      />
     );
   }
   if (
@@ -591,15 +829,11 @@ function AnonGate({
     primary.pages.length > 0 &&
     !route.path.startsWith("/app/")
   ) {
-    // 路径作用域（默认域名 /<应用段>）：外壳内路径剥前缀、链接生成再拼回
-    const rawSeg = rawFirstSeg(route.path);
-    const basePrefix =
-      site?.via === "path" && rawSeg ? `/${rawSeg}` : "";
     return (
       <>
         <PublicShell
           primary={primary}
-          inPath={stripSitePrefix(route.path, basePrefix)}
+          inPath={inPath}
           params={route.params}
           device={device}
           memberSso={pub?.memberSso ?? null}
@@ -630,11 +864,7 @@ function AnonGate({
     );
   }
   // 跳转 pending 帧：effect 在首帧后执行跳转，此处只呈加载屏，不再原地渲染登录卡。
-  return (
-    <div style={{ padding: 80, textAlign: "center" }}>
-      <Spin size="large" tip="正在前往登录页…" />
-    </div>
-  );
+  return <LoadingState size="large" tip="正在前往登录页…" block style={{ padding: 80 }} />;
 }
 
 /* ---------- 会员 SSO：回调页与会员中心页组（平台内置页，不走应用 PageSchema） ---------- */
@@ -710,7 +940,7 @@ function SsoCallbackPage({ params }: { params: Record<string, string> }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f7f8fa",
+        background: "var(--lcdp-background, #f7f8fa)",
         padding: 16,
       }}
     >
@@ -728,9 +958,7 @@ function SsoCallbackPage({ params }: { params: Record<string, string> }) {
             </Button>
           </>
         ) : (
-          <div style={{ textAlign: "center", padding: "24px 0" }}>
-            <Spin size="large" tip="正在完成登录…" />
-          </div>
+          <LoadingState size="large" tip="正在完成登录…" block style={{ padding: "24px 0" }} />
         )}
       </Card>
     </div>
@@ -768,7 +996,7 @@ function CenterFrame({
       <div
         style={{
           minHeight: "100vh",
-          background: "#f7f8fa",
+          background: "var(--lcdp-background, #f7f8fa)",
           padding: "28px 20px",
         }}
       >
@@ -1285,9 +1513,7 @@ function CenterAuthorizePage({
   if (phase === "checking") {
     return (
       <CenterFrame subtitle="正在确认授权…" narrow>
-        <div style={{ textAlign: "center", padding: "16px 0" }}>
-          <Spin tip="正在确认授权…" />
-        </div>
+        <LoadingState tip="正在确认授权…" block style={{ padding: "16px 0" }} />
       </CenterFrame>
     );
   }
@@ -1777,7 +2003,7 @@ function MobileShell({
         style={{
           padding:
             "12px 12px calc(68px + env(safe-area-inset-bottom, 0px))",
-          background: "#f7f8fa",
+          background: "var(--lcdp-background, #f7f8fa)",
         }}
       >
         {children}
@@ -1898,42 +2124,34 @@ function SiteHeader({
   const { token } = theme.useToken();
   return (
     <>
-      <style>{`.site-nav-link:hover{background:${token.colorBgLayout};color:${token.colorPrimary};}`}</style>
-      <Layout.Header
-        style={{
-          background: token.colorBgContainer,
-          borderBottom: `1px solid ${token.colorBorder}`,
-          display: "flex",
-          alignItems: "center",
-          gap: 24,
-          padding: "16px 20px",
-          flexWrap: "wrap",
-          height: "auto",
-          minHeight: 73,
-          lineHeight: "normal",
-        }}
-      >
+      <style>{`
+        :where(.site-head){display:flex;align-items:center;gap:24px;padding:14px max(20px,calc(50% - 580px));box-sizing:border-box;width:100%;flex-wrap:wrap;height:auto;min-height:68px;line-height:normal;background:${token.colorBgContainer};border-bottom:1px solid ${token.colorBorder};color:${token.colorText};}
+        :where(.site-brand){font-weight:800;font-size:22px;letter-spacing:.2px;white-space:nowrap;cursor:pointer;color:inherit;}
+        :where(.site-nav){display:flex;gap:4px;flex-wrap:wrap;flex:1;min-width:0;align-items:center;}
+        .site-nav-link{text-decoration:none;padding:8px 10px 6px;border-radius:0;border-bottom:2px solid transparent;font-size:15px;cursor:pointer;white-space:nowrap;transition:color .15s,border-color .15s;}
+        :where(.site-nav-link){color:${token.colorText};background:transparent;font-weight:400;}
+        :where(.site-nav-link:hover){background:transparent;color:${token.colorPrimary};border-bottom-color:color-mix(in srgb,${token.colorPrimary} 55%,transparent);}
+        :where(.site-nav-link.is-active){color:${token.colorPrimary};font-weight:700;background:transparent;border-bottom-color:${token.colorPrimary};}
+        :where(.site-right){display:inline-flex;align-items:center;gap:12px;flex-shrink:0;margin-left:auto;}
+        /* 窄屏（<=640px）与 BUILTIN_CSS 对齐为双行紧凑顶栏 + 横向单行可滚动导航，避免折成 3-4 行 */
+        @media (max-width:640px){
+          :where(.site-head){position:static;display:flex;flex-direction:row;flex-wrap:wrap;padding:10px 14px;gap:8px;min-height:0;justify-content:space-between;}
+          :where(.site-brand){font-size:18px;order:1;}
+          :where(.site-right){order:2;margin-left:auto;gap:8px;}
+          :where(.site-nav){order:3;flex:1 0 100%;width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px;}
+          .site-nav::-webkit-scrollbar{display:none;}
+          .site-nav-link{padding:6px 10px;font-size:14px;flex-shrink:0;}
+          .site-search{width:130px !important;}
+        }
+      `}</style>
+      <header className="site-head">
         <span
-          style={{
-            fontWeight: 800,
-            fontSize: 22,
-            letterSpacing: ".2px",
-            whiteSpace: "nowrap",
-            cursor: "pointer",
-          }}
+          className="site-brand"
           onClick={() => onNavigate("/")}
         >
           {brand}
         </span>
-        <nav
-          style={{
-            display: "flex",
-            gap: 4,
-            flexWrap: "wrap",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
+        <nav className="site-nav">
           {(navItems ?? []).map((item) => {
             if (!item) return null;
             const anyItem = item as {
@@ -1948,21 +2166,10 @@ function SiteHeader({
               <a
                 key={String(anyItem.key)}
                 href="#"
-                className="site-nav-link"
+                className={`site-nav-link${active ? " is-active" : ""}`}
                 onClick={(e) => {
                   e.preventDefault();
                   onNavigate(String(anyItem.key));
-                }}
-                style={{
-                  color: active ? token.colorPrimary : token.colorText,
-                  textDecoration: "none",
-                  padding: "8px 12px",
-                  borderRadius: 10,
-                  fontSize: 15,
-                  fontWeight: active ? 700 : 400,
-                  background: active ? token.colorPrimaryBg : "transparent",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
                 }}
               >
                 {anyItem.label}
@@ -1970,21 +2177,26 @@ function SiteHeader({
             );
           })}
         </nav>
-      {searchRoute && (
-        <Input.Search
-          placeholder="搜索"
-          allowClear
-          style={{ width: 200, flexShrink: 0 }}
-          onSearch={(q) => {
-            const kw = q.trim();
-            if (kw) {
-              onNavigate(`${searchRoute}?q=${encodeURIComponent(kw)}`);
-            }
-          }}
-        />
-      )}
-      {right}
-      </Layout.Header>
+      {(searchRoute || right) ? (
+        <span className="site-right">
+          {searchRoute && (
+            <Input.Search
+              className="site-search"
+              placeholder="搜索"
+              allowClear
+              style={{ width: 180, flexShrink: 0 }}
+              onSearch={(q) => {
+                const kw = q.trim();
+                if (kw) {
+                  onNavigate(`${searchRoute}?q=${encodeURIComponent(kw)}`);
+                }
+              }}
+            />
+          )}
+          {right}
+        </span>
+      ) : null}
+      </header>
     </>
   );
 }
@@ -2003,19 +2215,23 @@ function SiteFooter({
   text: string;
   themeFooter?: boolean;
 }) {
+  const { token } = theme.useToken();
   return (
-    <Layout.Footer
-      style={{
-        textAlign: "center",
-        color: "#6b7280",
-        background: themeFooter ? "#fff" : "#f7f8fa",
-        borderTop: "1px solid #e6e8ec",
-        padding: themeFooter ? "20px" : "18px 24px",
-        fontSize: themeFooter ? 13 : undefined,
-      }}
-    >
-      <div>{text}</div>
-    </Layout.Footer>
+    <>
+      <style>{`
+        :where(.site-foot){color:${token.colorTextSecondary};background:${themeFooter ? token.colorBgContainer : token.colorBgLayout};border-top:1px solid ${token.colorBorder};}
+      `}</style>
+      <footer
+        className="site-foot"
+        style={{
+          textAlign: "center",
+          padding: themeFooter ? "20px" : "18px 24px",
+          fontSize: themeFooter ? 13 : undefined,
+        }}
+      >
+        <div>{text}</div>
+      </footer>
+    </>
   );
 }
 
@@ -2193,29 +2409,26 @@ function CodeHint({
   );
 }
 
-/**
- * 会员登录/注册弹窗（验证码与邮箱验证）：Tabs 两页签（会员登录 / 注册）+ 找回密码视图。
- * - 注册：图形验证码强制（打开页签自动拉取、点图刷新、校验失败自动换新）；标识为邮箱时
- *   可发邮箱验证码（发送须先过图形验证码）；邮件服务未配置时邮箱验证码降级为非必填（服务端同口径）。
- * - 登录：默认无验证码行；服务端回 captcha_required（连续失败后）才展开图形验证码行、重试自动带上。
- * - 找回：邮箱 + 图形验证码发重置码 + 新密码确认；邮件未配置时诚实提示并禁用发送。
- * 成功后服务端返回令牌 + 简档 + 策略，调用方落 localStorage 会话并切换会员态。
- */
-function MemberAuthModal({
+/** 会员认证表单主体：弹窗（MemberAuthModal）与独立会员登录页（MemberLoginView）共用 */
+function MemberAuthPanel({
   appId,
-  open,
+  active,
   initialTab,
-  onClose,
   onAuthed,
+  onViewChange,
 }: {
   appId: string;
-  open: boolean;
+  active: boolean;
   initialTab: "login" | "register";
-  onClose: () => void;
   onAuthed: (session: MemberSession) => void;
+  onViewChange?: (view: "auth" | "reset") => void;
 }) {
   const [tab, setTab] = useState<"login" | "register">(initialTab);
   const [view, setView] = useState<"auth" | "reset">("auth");
+  const switchView = (next: "auth" | "reset") => {
+    setView(next);
+    onViewChange?.(next);
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -2247,20 +2460,20 @@ function MemberAuthModal({
   }>();
   const registerCaptcha = useMemberCaptcha(
     appId,
-    open && view === "auth" && tab === "register",
+    active && view === "auth" && tab === "register",
   );
   const loginCaptcha = useMemberCaptcha(
     appId,
-    open && view === "auth" && tab === "login" && loginNeedCaptcha,
+    active && view === "auth" && tab === "login" && loginNeedCaptcha,
   );
-  const resetCaptcha = useMemberCaptcha(appId, open && view === "reset");
+  const resetCaptcha = useMemberCaptcha(appId, active && view === "reset");
   const registerCountdown = useEmailCountdown();
   const resetCountdown = useEmailCountdown();
 
   useEffect(() => {
-    if (open) {
+    if (active) {
       setTab(initialTab);
-      setView("auth");
+      switchView("auth");
       setError(null);
       setNotice(null);
       setBusy(false);
@@ -2270,7 +2483,7 @@ function MemberAuthModal({
       setResetMailOff(false);
       setResetSentHint(null);
     }
-  }, [open, initialTab]);
+  }, [active, initialTab]);
 
   const finish = (res: MemberAuthResult) => {
     const session: MemberSession = {
@@ -2470,7 +2683,7 @@ function MemberAuthModal({
         newPassword: v.newPassword,
       });
       // 成功回登录页签：预填标识 + 成功提示，用新密码登录
-      setView("auth");
+      switchView("auth");
       setTab("login");
       setResetSentHint(null);
       loginForm.setFieldValue("identifier", v.email.trim());
@@ -2497,10 +2710,204 @@ function MemberAuthModal({
   ) : null;
 
   const backToLogin = () => {
-    setView("auth");
+    switchView("auth");
     setTab("login");
     setError(null);
   };
+
+  return view === "reset" ? (
+    <>
+      {errorAlert}
+      <Form
+        form={resetForm}
+        layout="vertical"
+        onFinish={(v) => void submitReset(v)}
+      >
+        <Form.Item
+          label="注册邮箱"
+          name="email"
+          rules={[{ required: true, message: "请输入注册邮箱" }]}
+        >
+          <Input autoComplete="email" placeholder="注册时使用的邮箱" />
+        </Form.Item>
+        <CaptchaRow
+          captcha={resetCaptcha.captcha}
+          onRefresh={() => void resetCaptcha.refresh()}
+        />
+        <EmailCodeRow
+          onSend={() => void sendResetEmailCode()}
+          sendDisabled={busy || resetMailOff || resetCountdown.seconds > 0}
+          sendText={
+            resetCountdown.seconds > 0
+              ? `${resetCountdown.seconds} 秒后重发`
+              : "发送验证码"
+          }
+        />
+        <CodeHint
+          text={resetMailOff ? "邮件服务尚未配置，暂无法找回密码" : null}
+          tone="secondary"
+        />
+        <CodeHint
+          text={resetMailOff ? null : resetSentHint}
+          tone="success"
+        />
+        <Form.Item
+          label="新密码"
+          name="newPassword"
+          rules={[
+            { required: true, message: "请输入新密码" },
+            { min: 8, message: "密码至少 8 位" },
+          ]}
+        >
+          <Input.Password autoComplete="new-password" />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" block loading={busy}>
+          确认重置
+        </Button>
+        <Button
+          type="link"
+          block
+          style={{ marginTop: 8 }}
+          onClick={backToLogin}
+        >
+          返回登录
+        </Button>
+      </Form>
+    </>
+  ) : (
+    <Tabs
+      activeKey={tab}
+      onChange={(k) => {
+        setTab(k as "login" | "register");
+        setError(null);
+      }}
+      items={[
+        {
+          key: "login",
+          label: "会员登录",
+          children: (
+            <>
+              {notice && (
+                <Alert
+                  type="success"
+                  message={notice}
+                  style={{ marginBottom: 16 }}
+                />
+              )}
+              {errorAlert}
+              <Form
+                form={loginForm}
+                layout="vertical"
+                onFinish={(v) => void submitLogin(v)}
+              >
+                {identifierField}
+                <Form.Item
+                  label="密码"
+                  name="password"
+                  rules={[{ required: true, message: "请输入密码" }]}
+                >
+                  <Input.Password autoComplete="current-password" />
+                </Form.Item>
+                {loginNeedCaptcha && (
+                  <CaptchaRow
+                    captcha={loginCaptcha.captcha}
+                    onRefresh={() => void loginCaptcha.refresh()}
+                  />
+                )}
+                <Button type="primary" htmlType="submit" block loading={busy}>
+                  登录
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, marginTop: 8 }}
+                  onClick={() => {
+                    switchView("reset");
+                    setError(null);
+                  }}
+                >
+                  忘记密码？
+                </Button>
+              </Form>
+            </>
+          ),
+        },
+        {
+          key: "register",
+          label: "注册",
+          children: (
+            <>
+              {errorAlert}
+              <Form
+                form={registerForm}
+                layout="vertical"
+                onFinish={(v) => void submitRegister(v)}
+              >
+                {identifierField}
+                <Form.Item label="昵称（选填）" name="displayName">
+                  <Input placeholder="站内显示名，缺省用标识" />
+                </Form.Item>
+                <Form.Item
+                  label="密码"
+                  name="password"
+                  rules={[
+                    { required: true, message: "请输入密码" },
+                    { min: 8, message: "密码至少 8 位" },
+                  ]}
+                >
+                  <Input.Password autoComplete="new-password" />
+                </Form.Item>
+                <CaptchaRow
+                  captcha={registerCaptcha.captcha}
+                  onRefresh={() => void registerCaptcha.refresh()}
+                />
+                <EmailCodeRow
+                  onSend={() => void sendRegisterEmailCode()}
+                  sendDisabled={busy || registerCountdown.seconds > 0}
+                  sendText={
+                    registerCountdown.seconds > 0
+                      ? `${registerCountdown.seconds} 秒后重发`
+                      : "发送验证码"
+                  }
+                />
+                <CodeHint text={registerMailHint} tone="secondary" />
+                <CodeHint
+                  text={registerMailHint ? null : registerSentHint}
+                  tone="success"
+                />
+                <Button type="primary" htmlType="submit" block loading={busy}>
+                  注册并登录
+                </Button>
+              </Form>
+            </>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+/**
+ * 会员登录/注册弹窗（验证码与邮箱验证）：Tabs 两页签（会员登录 / 注册）+ 找回密码视图。
+ * 成功后服务端返回令牌 + 简档 + 策略，调用方落 localStorage 会话并切换会员态。
+ */
+function MemberAuthModal({
+  appId,
+  open,
+  initialTab,
+  onClose,
+  onAuthed,
+}: {
+  appId: string;
+  open: boolean;
+  initialTab: "login" | "register";
+  onClose: () => void;
+  onAuthed: (session: MemberSession) => void;
+}) {
+  const [view, setView] = useState<"auth" | "reset">("auth");
+  useEffect(() => {
+    if (open) setView("auth");
+  }, [open]);
 
   return (
     <Modal
@@ -2510,176 +2917,13 @@ function MemberAuthModal({
       title={view === "reset" ? "找回密码" : "会员中心"}
       destroyOnClose
     >
-      {view === "reset" ? (
-        <>
-          {errorAlert}
-          <Form
-            form={resetForm}
-            layout="vertical"
-            onFinish={(v) => void submitReset(v)}
-          >
-            <Form.Item
-              label="注册邮箱"
-              name="email"
-              rules={[{ required: true, message: "请输入注册邮箱" }]}
-            >
-              <Input autoComplete="email" placeholder="注册时使用的邮箱" />
-            </Form.Item>
-            <CaptchaRow
-              captcha={resetCaptcha.captcha}
-              onRefresh={() => void resetCaptcha.refresh()}
-            />
-            <EmailCodeRow
-              onSend={() => void sendResetEmailCode()}
-              sendDisabled={busy || resetMailOff || resetCountdown.seconds > 0}
-              sendText={
-                resetCountdown.seconds > 0
-                  ? `${resetCountdown.seconds} 秒后重发`
-                  : "发送验证码"
-              }
-            />
-            <CodeHint
-              text={resetMailOff ? "邮件服务尚未配置，暂无法找回密码" : null}
-              tone="secondary"
-            />
-            <CodeHint
-              text={resetMailOff ? null : resetSentHint}
-              tone="success"
-            />
-            <Form.Item
-              label="新密码"
-              name="newPassword"
-              rules={[
-                { required: true, message: "请输入新密码" },
-                { min: 8, message: "密码至少 8 位" },
-              ]}
-            >
-              <Input.Password autoComplete="new-password" />
-            </Form.Item>
-            <Button type="primary" htmlType="submit" block loading={busy}>
-              确认重置
-            </Button>
-            <Button
-              type="link"
-              block
-              style={{ marginTop: 8 }}
-              onClick={backToLogin}
-            >
-              返回登录
-            </Button>
-          </Form>
-        </>
-      ) : (
-      <Tabs
-        activeKey={tab}
-        onChange={(k) => {
-          setTab(k as "login" | "register");
-          setError(null);
-        }}
-        items={[
-          {
-            key: "login",
-            label: "会员登录",
-            children: (
-              <>
-                {notice && (
-                  <Alert
-                    type="success"
-                    message={notice}
-                    style={{ marginBottom: 16 }}
-                  />
-                )}
-                {errorAlert}
-                <Form
-                  form={loginForm}
-                  layout="vertical"
-                  onFinish={(v) => void submitLogin(v)}
-                >
-                  {identifierField}
-                  <Form.Item
-                    label="密码"
-                    name="password"
-                    rules={[{ required: true, message: "请输入密码" }]}
-                  >
-                    <Input.Password autoComplete="current-password" />
-                  </Form.Item>
-                  {loginNeedCaptcha && (
-                    <CaptchaRow
-                      captcha={loginCaptcha.captcha}
-                      onRefresh={() => void loginCaptcha.refresh()}
-                    />
-                  )}
-                  <Button type="primary" htmlType="submit" block loading={busy}>
-                    登录
-                  </Button>
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0, marginTop: 8 }}
-                    onClick={() => {
-                      setView("reset");
-                      setError(null);
-                    }}
-                  >
-                    忘记密码？
-                  </Button>
-                </Form>
-              </>
-            ),
-          },
-          {
-            key: "register",
-            label: "注册",
-            children: (
-              <>
-                {errorAlert}
-                <Form
-                  form={registerForm}
-                  layout="vertical"
-                  onFinish={(v) => void submitRegister(v)}
-                >
-                  {identifierField}
-                  <Form.Item label="昵称（选填）" name="displayName">
-                    <Input placeholder="站内显示名，缺省用标识" />
-                  </Form.Item>
-                  <Form.Item
-                    label="密码"
-                    name="password"
-                    rules={[
-                      { required: true, message: "请输入密码" },
-                      { min: 8, message: "密码至少 8 位" },
-                    ]}
-                  >
-                    <Input.Password autoComplete="new-password" />
-                  </Form.Item>
-                  <CaptchaRow
-                    captcha={registerCaptcha.captcha}
-                    onRefresh={() => void registerCaptcha.refresh()}
-                  />
-                  <EmailCodeRow
-                    onSend={() => void sendRegisterEmailCode()}
-                    sendDisabled={busy || registerCountdown.seconds > 0}
-                    sendText={
-                      registerCountdown.seconds > 0
-                        ? `${registerCountdown.seconds} 秒后重发`
-                        : "发送验证码"
-                    }
-                  />
-                  <CodeHint text={registerMailHint} tone="secondary" />
-                  <CodeHint
-                    text={registerMailHint ? null : registerSentHint}
-                    tone="success"
-                  />
-                  <Button type="primary" htmlType="submit" block loading={busy}>
-                    注册并登录
-                  </Button>
-                </Form>
-              </>
-            ),
-          },
-        ]}
+      <MemberAuthPanel
+        appId={appId}
+        active={open}
+        initialTab={initialTab}
+        onViewChange={setView}
+        onAuthed={onAuthed}
       />
-      )}
     </Modal>
   );
 }
@@ -2707,11 +2951,13 @@ function MemberArea({
   const { token } = theme.useToken();
   if (links) {
     const linkStyle: CSSProperties = {
-      color: token.colorPrimary,
-      fontSize: 16,
+      fontSize: 15,
+      padding: "6px 10px",
+      borderRadius: 6,
       textDecoration: "none",
       cursor: "pointer",
       whiteSpace: "nowrap",
+      transition: "background .15s,color .15s",
     };
     const go = (fn: () => void) => (e: MouseEvent) => {
       e.preventDefault();
@@ -2719,29 +2965,36 @@ function MemberArea({
     };
     if (session) {
       return (
-        <Space size={16}>
-          <Typography.Text
-            style={{ fontSize: 16, maxWidth: 140, color: token.colorText }}
-            ellipsis
-            title={session.member.identifier}
-          >
-            {session.member.displayName || session.member.identifier}
-          </Typography.Text>
-          <a href="#" onClick={go(onLogout)} style={linkStyle}>
-            退出
-          </a>
-        </Space>
+        <>
+          <style>{`:where(.site-member-link){color:${token.colorPrimary};}:where(.site-member-name){color:${token.colorText};}`}</style>
+          <Space size={12}>
+            <Typography.Text
+              className="site-member-name"
+              style={{ fontSize: 15, maxWidth: 140 }}
+              ellipsis
+              title={session.member.identifier}
+            >
+              {session.member.displayName || session.member.identifier}
+            </Typography.Text>
+            <a href="#" className="site-member-link" onClick={go(onLogout)} style={linkStyle}>
+              退出
+            </a>
+          </Space>
+        </>
       );
     }
     return (
-      <Space size={16}>
-        <a href="#" onClick={go(onLogin)} style={linkStyle}>
-          会员登录
-        </a>
-        <a href="#" onClick={go(onRegister)} style={linkStyle}>
-          注册
-        </a>
-      </Space>
+      <>
+        <style>{`:where(.site-member-link){color:${token.colorPrimary};}`}</style>
+        <Space size={8}>
+          <a href="#" className="site-member-link" onClick={go(onLogin)} style={linkStyle}>
+            会员登录
+          </a>
+          <a href="#" className="site-member-link" onClick={go(onRegister)} style={linkStyle}>
+            注册
+          </a>
+        </Space>
+      </>
     );
   }
   if (session) {
@@ -3125,7 +3378,7 @@ function PublicShell({
 }) {
   const goPage = useCallback(
     (to: string) => {
-      navigateTo(`${basePrefix}${to}`);
+      navigateTo(`${basePrefix}${to}`, basePrefix);
     },
     [basePrefix],
   );
@@ -3288,7 +3541,7 @@ function PublicShell({
 
   const menu = assembleMenu(primary.pages, primary.data.entities);
   const current = resolveCurrentPage(primary.pages, menu, inPath);
-  const token = themeTokenOf(primary.appConfig, "c-end");
+  const antdTheme = siteAntdThemeOf(primary.appConfig, "c-end");
 
   const isPlatformUserApp =
     primary.userSystem !== "member" && primary.userSystem !== "none";
@@ -3365,9 +3618,7 @@ function PublicShell({
       />
     </div>
   ) : (
-    <div style={{ padding: 80, textAlign: "center" }}>
-      <Spin size="large" tip="正在前往登录页…" />
-    </div>
+    <LoadingState size="large" tip="正在前往登录页…" block style={{ padding: 80 }} />
   );
 
   /** 当前页是否会员页：会员页登录后以会员适配器渲染，未登录呈占位引导（不跳员工登录页） */
@@ -3395,22 +3646,36 @@ function PublicShell({
           theme={primary.appConfig?.theme}
         />
       ) : (
-        <div style={{ maxWidth: 520, margin: "48px auto", textAlign: "center" }}>
-          <Alert
-            type="info"
-            showIcon
-            message="请先登录会员账号"
-            description="本页面仅对已登录会员开放。登录后即可继续访问；还没有账号可先注册。"
-            style={{ marginBottom: 16, textAlign: "left" }}
-          />
-          <Space size={8}>
-            <Button type="primary" size="large" onClick={() => openAuth("login")}>
-              会员登录
-            </Button>
-            <Button size="large" onClick={() => openAuth("register")}>
-              注册
-            </Button>
-          </Space>
+        <div style={{ maxWidth: 480, margin: "48px auto", textAlign: "center" }}>
+          <style>{`:where(.lcdp-auth-gate){border-top:4px solid var(--lcdp-primary,#1677ff);box-shadow:0 12px 32px rgba(15,23,42,.08);}:where(.lcdp-auth-gate-badge){background:var(--lcdp-surface,#fff);color:var(--lcdp-primary,#1677ff);border:1px solid var(--lcdp-border,#e5e7eb);border-radius:6px;}`}</style>
+          <Card className="lcdp-auth-gate" styles={{ body: { padding: "32px 28px" } }}>
+            <div
+              className="lcdp-auth-gate-badge"
+              style={{
+                display: "inline-block",
+                padding: "4px 12px",
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 14,
+              }}
+            >
+              会员专属功能
+            </div>
+            <Typography.Title level={4} style={{ margin: "0 0 8px" }}>
+              请先登录会员账号
+            </Typography.Title>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 24 }}>
+              本页面仅对已登录会员开放。登录后即可继续访问；还没有账号可先注册。
+            </Typography.Paragraph>
+            <Space size={12} wrap style={{ justifyContent: "center" }}>
+              <Button type="primary" size="large" onClick={() => openAuth("login")}>
+                会员登录
+              </Button>
+              <Button size="large" onClick={() => openAuth("register")}>
+                注册
+              </Button>
+            </Space>
+          </Card>
         </div>
       )
     ) : (
@@ -3480,11 +3745,30 @@ function PublicShell({
   ) : null;
 
   const cfg = configOf(primary.appConfig);
-  if (isSiteShell(cfg)) {
+  const hasSiteTheme = siteThemeTokensOf() !== null || siteThemeRoutesOf().length > 0;
+  if (isSiteShell(cfg) || hasSiteTheme) {
     const brand = brandTextOf(cfg, primary.name);
+    const showingAuthGate =
+      isMemberPage && !!current && !(memberSession && memberAdapter) && !hasAnonGate(current);
+    const wrappedPage = showingAuthGate ? (
+      pageContent
+    ) : (
+      <div
+        className="site-main-surface"
+        style={{ padding: device === "mobile" ? "16px 14px" : "24px 28px" }}
+      >
+        {pageContent}
+      </div>
+    );
     return (
-      <ConfigProvider locale={zhCN} theme={{ token }} button={{ autoInsertSpace: false }}>
-        <Layout style={{ minHeight: "100vh", background: "#fff" }}>
+      <ConfigProvider locale={zhCN} theme={antdTheme} button={{ autoInsertSpace: false }}>
+        <Layout
+          className="site-shell"
+          style={{
+            minHeight: "100vh",
+            background: "var(--lcdp-background, #ffffff)",
+          }}
+        >
           <SiteHeader
             brand={brand}
             navItems={flatNavItems(menu.items)}
@@ -3501,15 +3785,16 @@ function PublicShell({
             }
           />
           <Layout.Content
+            className="site-main-wrap"
             style={{
               padding: device === "mobile" ? "16px 12px" : "28px 20px",
-              background: "#fff",
+              background: "transparent",
               width: "100%",
-              maxWidth: 1080,
+              maxWidth: 1200,
               margin: "0 auto",
             }}
           >
-            {pageContent}
+            {wrappedPage}
           </Layout.Content>
           <SiteFooter text={siteFooterText(cfg, brand)} themeFooter />
         </Layout>
@@ -3522,7 +3807,7 @@ function PublicShell({
      站点型公开面不套用底部导航（上方 site 分支仅调整窄屏内边距） */
   if (device === "mobile") {
     return (
-      <ConfigProvider locale={zhCN} theme={{ token }} button={{ autoInsertSpace: false }}>
+      <ConfigProvider locale={zhCN} theme={antdTheme} button={{ autoInsertSpace: false }}>
         <MobileShell
           title={primary.name}
           entries={flattenMenuEntries(menu.items)}
@@ -3540,7 +3825,7 @@ function PublicShell({
   }
 
   return (
-    <ConfigProvider locale={zhCN} theme={{ token }} button={{ autoInsertSpace: false }}>
+    <ConfigProvider locale={zhCN} theme={antdTheme} button={{ autoInsertSpace: false }}>
       <Layout style={{ minHeight: "100vh" }}>
         <Layout.Header
           style={{
@@ -3634,9 +3919,12 @@ function EntryView({
   if (error) {
     if (error.status === 401) {
       return (
-        <div style={{ padding: 80, textAlign: "center" }}>
-          <Spin size="large" tip="登录已失效，正在前往登录页…" />
-        </div>
+        <LoadingState
+          size="large"
+          tip="登录已失效，正在前往登录页…"
+          block
+          style={{ padding: 80 }}
+        />
       );
     }
     return (
@@ -3650,11 +3938,7 @@ function EntryView({
     );
   }
   if (!site || site.mode === "redirect") {
-    return (
-      <div style={{ padding: 80, textAlign: "center" }}>
-        <Spin size="large" tip="正在解析站点…" />
-      </div>
-    );
+    return <LoadingState size="large" tip="正在解析站点…" block style={{ padding: 80 }} />;
   }
   if (site.mode === "member-center") {
     return <MemberCenterApp route={{ path: inPath, params }} />;
@@ -4012,6 +4296,9 @@ function themeTokenOf(appConfig: {
   colorBgContainer?: string;
   colorText?: string;
   colorTextSecondary?: string;
+  colorLink?: string;
+  colorLinkHover?: string;
+  colorLinkActive?: string;
   fontFamily?: string;
   fontSize?: number;
 } {
@@ -4029,11 +4316,14 @@ function themeTokenOf(appConfig: {
     colorBgContainer?: string;
     colorText?: string;
     colorTextSecondary?: string;
+    colorLink?: string;
+    colorLinkHover?: string;
+    colorLinkActive?: string;
     fontFamily?: string;
     fontSize?: number;
   } = {
     colorPrimary: runtimeTokens.colorPrimary,
-    borderRadius: baseline === "c-end" ? 10 : tokens.borderRadius,
+    borderRadius: baseline === "c-end" ? 6 : tokens.borderRadius,
     colorBorder: runtimeTokens.colorBorder,
   };
   if (baseline === "c-end") {
@@ -4054,16 +4344,64 @@ function themeTokenOf(appConfig: {
   // 不在此映射。
   const site = siteThemeTokensOf();
   if (site) {
-    if (site.primary) token.colorPrimary = site.primary;
+    if (site.primary) {
+      token.colorPrimary = site.primary;
+      token.colorLink = site.primary;
+    }
+    if (site.accent) {
+      token.colorLinkHover = site.accent;
+      token.colorLinkActive = site.accent;
+    }
     if (site.background) token.colorBgLayout = site.background;
     if (site.surface) token.colorBgContainer = site.surface;
     if (site.text) token.colorText = site.text;
     if (site.textSecondary) token.colorTextSecondary = site.textSecondary;
     if (site.border) token.colorBorder = site.border;
-    if (site.radius !== undefined) token.borderRadius = site.radius;
+    if (site.radius !== undefined) {
+      token.borderRadius = site.radius <= 4
+        ? Math.max(0, Math.round(site.radius))
+        : Math.min(8, Math.max(4, Math.round(site.radius * 0.6)));
+      token.borderRadiusLG = Math.min(14, Math.max(6, site.radius));
+    }
     if (site.fontFamily) token.fontFamily = site.fontFamily;
   }
   return token;
+}
+
+function isDarkHexColor(hex?: string): boolean {
+  if (!hex) return false;
+  const clean = hex.trim().replace(/^#/, "");
+  let full = clean;
+  if (/^[0-9a-f]{3}$/i.test(clean)) {
+    full = clean[0]! + clean[0]! + clean[1]! + clean[1]! + clean[2]! + clean[2]!;
+  }
+  if (!/^[0-9a-f]{6}$/i.test(full)) return false;
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return lum < 0.36;
+}
+
+function siteAntdThemeOf(
+  appConfig: { theme: Record<string, unknown> } | null,
+  baseline: "b-end" | "c-end" = "b-end",
+) {
+  const token = themeTokenOf(appConfig, baseline) as Record<string, unknown>;
+  const site = siteThemeTokensOf();
+  if (site && isDarkHexColor(site.background)) {
+    if (site.surface) {
+      token.colorBgElevated = site.surface;
+      token.colorBgBase = site.background;
+    }
+    if (site.text) token.colorTextBase = site.text;
+    return {
+      algorithm: theme.darkAlgorithm,
+      token,
+    };
+  }
+  return { token };
 }
 
 function AppView({
@@ -4235,9 +4573,12 @@ function AppView({
   if (error) {
     if (error.status === 401) {
       return (
-        <div style={{ padding: 80, textAlign: "center" }}>
-          <Spin size="large" tip="登录已失效，正在前往登录页…" />
-        </div>
+        <LoadingState
+          size="large"
+          tip="登录已失效，正在前往登录页…"
+          block
+          style={{ padding: 80 }}
+        />
       );
     }
     return (
@@ -4253,11 +4594,7 @@ function AppView({
     );
   }
   if (!loaded || !union || !mergedMenu) {
-    return (
-      <div style={{ padding: 80, textAlign: "center" }}>
-        <Spin size="large" tip="正在加载应用…" />
-      </div>
-    );
+    return <LoadingState size="large" tip="正在加载应用…" block style={{ padding: 80 }} />;
   }
 
   const primary = loaded[0]!;

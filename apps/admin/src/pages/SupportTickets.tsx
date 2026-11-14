@@ -12,12 +12,11 @@ import {
   Segmented,
   Select,
   Space,
-  Spin,
   Tag,
   Typography,
   message,
 } from "antd";
-import { PageTable, StatusTag, showError, type StatusTone } from "@lcdp/ui";
+import { LoadingState, PageTable, StatusTag, showError, type StatusTone } from "@lcdp/ui";
 import type { ColumnsType } from "antd/es/table";
 import {
   api,
@@ -317,7 +316,9 @@ export default function SupportTickets({
             <Typography.Title level={5} style={{ margin: 0 }}>
               会话记录
             </Typography.Title>
-            {transcriptState === "loading" && <Spin tip="加载会话记录…" />}
+            {transcriptState === "loading" && (
+              <LoadingState tip="加载会话记录…" block style={{ padding: "12px 0" }} />
+            )}
             {transcriptState === "none" && (
               <Empty description="无关联会话记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}

@@ -9,7 +9,6 @@ import {
   Row as AntRow,
   Select,
   Space,
-  Spin,
   Typography,
   Upload,
   message,
@@ -24,7 +23,7 @@ import {
 import type { PageKey } from "../registry";
 import { asText, fmtTime } from "../helpers";
 import RichTextField from "../components/RichTextField";
-import { tokens } from "@lcdp/ui";
+import { LoadingState, tokens } from "@lcdp/ui";
 import { consumeArticleEditorIntent } from "../templates/articleEditorIntent";
 
 /**
@@ -259,7 +258,7 @@ export default function ArticleEditor({
   if (loading) {
     return (
       <Card>
-        <Spin tip="加载中…" />
+        <LoadingState tip="加载中…" block style={{ padding: 16 }} />
       </Card>
     );
   }

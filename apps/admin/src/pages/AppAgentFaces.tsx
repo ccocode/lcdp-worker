@@ -14,7 +14,6 @@ import {
   Drawer,
   Input,
   Space,
-  Spin,
   Switch,
   Table,
   Tag,
@@ -29,6 +28,7 @@ import {
   type AgentOverrideRow,
 } from "../api";
 import { fmtTime } from "../helpers";
+import { LoadingState } from "@lcdp/ui";
 
 const FACES: { key: AgentFaceKey; label: string; hint: string }[] = [
   { key: "staff", label: "员工助手", hint: "应用内员工日常使用的助手" },
@@ -225,11 +225,7 @@ export default function AppAgentFaces({ appId }: { appId: string }) {
   ];
 
   if (loading) {
-    return (
-      <div style={{ padding: 48, textAlign: "center" }}>
-        <Spin tip="加载中…" />
-      </div>
-    );
+    return <LoadingState tip="加载中…" block style={{ padding: 48 }} />;
   }
   if (loadError) {
     return <Alert type="error" showIcon message={loadError} />;

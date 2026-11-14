@@ -14,6 +14,8 @@ import {
   message,
 } from "antd";
 import {
+  EmptyState,
+  LoadingState,
   auditActionText,
   statCardGradients,
   statCardText,
@@ -422,9 +424,19 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
                   style={{
                     background: `linear-gradient(135deg, ${g[0]}, ${g[1]})`,
                     border: "none",
+                    height: "100%",
                   }}
                 >
-                  <div style={{ color: statCardTextSecondary, fontSize: 13 }}>
+                  <div
+                    title={card.title}
+                    style={{
+                      color: statCardTextSecondary,
+                      fontSize: 13,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
                     {card.title}
                   </div>
                   <div
@@ -462,61 +474,64 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
             </Typography.Text>
           }
         >
-          <div style={{ display: "flex", gap: 8 }}>
-            {bars.map((b) => (
-              <Tooltip
-                key={b.label}
-                title={`${b.label} · Token ${b.tokens.toLocaleString("en-US")} · 调用 ${b.calls} 次`}
-              >
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
+          {hourly === null ? (
+            <LoadingState tip="正在加载用量…" block style={{ padding: "36px 0" }} />
+          ) : totalTokens === 0 && totalCalls === 0 ? (
+            <EmptyState description="近 12 小时暂无 AI 调用用量" />
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}>
+              {bars.map((b) => (
+                <Tooltip
+                  key={b.label}
+                  title={`${b.label} · Token ${b.tokens.toLocaleString("en-US")} · 调用 ${b.calls} 次`}
                 >
-                  <Typography.Text
-                    type="secondary"
-                    style={{ fontSize: 11, height: 16 }}
-                  >
-                    {b.tokens >= 1000
-                      ? `${(b.tokens / 1000).toFixed(1)}k`
-                      : b.tokens > 0
-                        ? b.tokens
-                        : ""}
-                  </Typography.Text>
                   <div
                     style={{
-                      height: 168,
+                      flex: 1,
                       display: "flex",
-                      alignItems: "flex-end",
-                      justifyContent: "center",
-                      width: "100%",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 6,
                     }}
                   >
+                    <Typography.Text
+                      type="secondary"
+                      style={{ fontSize: 11, height: 16 }}
+                    >
+                      {b.tokens >= 1000
+                        ? `${(b.tokens / 1000).toFixed(1)}k`
+                        : b.tokens > 0
+                          ? b.tokens
+                          : ""}
+                    </Typography.Text>
                     <div
                       style={{
-                        width: "70%",
-                        maxWidth: 36,
-                        height: `${Math.max((b.tokens / max) * 100, b.tokens > 0 ? 6 : 0)}%`,
-                        minHeight: b.tokens > 0 ? 5 : 3,
-                        background: `linear-gradient(180deg, ${statCardGradients[0][1]}, ${statCardGradients[0][0]})`,
-                        borderRadius: 4,
-                        opacity: b.tokens > 0 ? 1 : 0.25,
+                        height: 168,
+                        display: "flex",
+                        alignItems: "flex-end",
+                        justifyContent: "center",
+                        width: "100%",
                       }}
-                    />
+                    >
+                      <div
+                        style={{
+                          width: "70%",
+                          maxWidth: 36,
+                          height: `${Math.max((b.tokens / max) * 100, b.tokens > 0 ? 6 : 0)}%`,
+                          minHeight: b.tokens > 0 ? 5 : 3,
+                          background: `linear-gradient(180deg, ${statCardGradients[0][1]}, ${statCardGradients[0][0]})`,
+                          borderRadius: 4,
+                          opacity: b.tokens > 0 ? 1 : 0.25,
+                        }}
+                      />
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      {b.label}
+                    </Typography.Text>
                   </div>
-                  <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    {b.label}
-                  </Typography.Text>
-                </div>
-              </Tooltip>
-            ))}
-          </div>
-          {hourly === null && (
-            <Typography.Text type="secondary">加载中…</Typography.Text>
+                </Tooltip>
+              ))}
+            </div>
           )}
         </Card>
       );
@@ -638,24 +653,24 @@ export default function Workbench({ ctx }: { ctx: PageContext }) {
     "task-metrics": () => (
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
-          <Card hoverable onClick={() => go("tasks")}>
+          <Card hoverable onClick={() => go("tasks")} style={{ height: "100%" }}>
             <Statistic title="待我办理" value={v(tasks ? mineTasks.length : null)} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card hoverable onClick={() => go("tasks")}>
+          <Card hoverable onClick={() => go("tasks")} style={{ height: "100%" }}>
             <Statistic title="待办积压（全部）" value={v(tasksTotal)} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>
-          <Card hoverable onClick={() => go("submissions")}>
+          <Card hoverable onClick={() => go("submissions")} style={{ height: "100%" }}>
             {/* 口径：submissions 端点无 total，计数为返回数组长度 */}
             <Statistic title="待审提交" value={v(pendingSubs?.length)} />
           </Card>
         </Col>
         {metricDecls.map((m) => (
           <Col xs={24} sm={12} lg={6} key={m.key}>
-            <Card hoverable onClick={() => go(m.page)}>
+            <Card hoverable onClick={() => go(m.page)} style={{ height: "100%" }}>
               <Statistic title={m.label} value={v(metricValues[m.key])} />
             </Card>
           </Col>

@@ -21,7 +21,7 @@ import {
   type AdminAssistantTask,
   type AdminAssistantToolCall,
 } from "../../api";
-import { fmtTime } from "../../helpers";
+import { fmtTime, resolveLocalPreviewHref } from "../../helpers";
 import {
   fmtElapsed,
   stepDurationMs,
@@ -35,6 +35,12 @@ import {
   type DelegationViewTarget,
 } from "./MessageTaskCards";
 import { hasRunningAssistantTask } from "./assistantRunning";
+import {
+  humanizeOpsCopy,
+  humanizeTaskTitle,
+  humanizeToolName,
+  humanizeToolSummary,
+} from "./semanticLabels";
 
 /**
  * 管理台助手对话面（第 83 步片四起，第 90 步线 A 升级，第 91 步线 A
@@ -91,6 +97,8 @@ export interface ChatPaneProps {
   onOpenDelegation?: (target: DelegationViewTarget) => void;
   /** 工作台：消息内计划卡片的“查看详情”（右侧打开该任务详情）；平台面不传 */
   onOpenTask?: (taskId: string) => void;
+  /** 工作台：后台任务进展变化时通知父容器刷新右侧详情 */
+  onTasksSync?: () => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -197,27 +205,23 @@ function navigateRoute(route: string, onClose?: () => void) {
 function themeCreatedSummary(data: Record<string, unknown>): string[] {
   const str = (v: unknown): string | null =>
     typeof v === "string" && v ? v : null;
-  const num = (v: unknown): string | null =>
-    typeof v === "number" && Number.isFinite(v) ? String(v) : null;
   const rows: string[] = [];
   const name = str(data.name);
-  const id = str(data.themeId) ?? str(data.id);
   const version = str(data.version);
-  if (name) rows.push(`主题：${name}`);
-  if (id) rows.push(`标识：${id}${version ? `@${version}` : ""}`);
-  else if (version) rows.push(`版本：${version}`);
+  if (name) rows.push(`主题名称：${name}`);
+  if (version) rows.push(`版本：v${version}`);
   const target = str(data.target);
-  if (target) rows.push(`槽位：${target === "mobile" ? "移动端" : target === "desktop" ? "桌面端" : target}`);
-  const files = num(data.fileCount) ?? num(data.files);
-  if (files) rows.push(`文件数：${files}`);
+  if (target) rows.push(`适用终端：${target === "mobile" ? "移动端" : target === "desktop" ? "桌面端" : target}`);
   return rows;
 }
 
 function PayloadCard({
   payload,
+  appId,
   onClose,
 }: {
   payload: AdminAssistantPayload;
+  appId?: string | null;
   onClose?: () => void;
 }) {
   const isTheme = payload.kind === "themeCreated";
@@ -228,6 +232,21 @@ function PayloadCard({
   const actions = (payload.actions ?? []).filter(
     (a) => a && typeof a.label === "string" && (a.href || a.route),
   );
+  const dataAppId =
+    typeof payload.data?.appId === "string" && payload.data.appId
+      ? payload.data.appId
+      : typeof payload.data?.targetAppId === "string" && payload.data.targetAppId
+        ? payload.data.targetAppId
+        : null;
+  const routeAppId = (() => {
+    for (const a of actions) {
+      if (!a.route) continue;
+      const m = a.route.match(/[?&]app=([^&#]+)/);
+      if (m?.[1]) return decodeURIComponent(m[1]);
+    }
+    return null;
+  })();
+  const resolvedAppId = routeAppId ?? dataAppId ?? appId ?? null;
   return (
     <Card
       size="small"
@@ -254,7 +273,7 @@ function PayloadCard({
                 key={i}
                 size="small"
                 type={a.primary ? "primary" : "default"}
-                href={a.href}
+                href={resolveLocalPreviewHref(a.href, resolvedAppId)}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -283,6 +302,8 @@ function PayloadCard({
 
 function StepRow({ step }: { step: TurnStep }) {
   const dur = stepDurationMs(step);
+  const friendlyTool = humanizeToolName(step.tool);
+  const friendlySummary = humanizeToolSummary(step.tool, step.summary);
   return (
     <div
       style={{
@@ -305,18 +326,18 @@ function StepRow({ step }: { step: TurnStep }) {
       )}
       <Typography.Text
         style={{ fontSize: 12, flexShrink: 0 }}
-        title={step.tool}
+        title={friendlyTool}
       >
-        {step.tool}
+        {friendlyTool}
       </Typography.Text>
-      {step.summary && (
+      {friendlySummary && (
         <Typography.Text
           type="secondary"
           ellipsis
           style={{ fontSize: 12, minWidth: 0 }}
-          title={step.summary}
+          title={friendlySummary}
         >
-          {step.summary}
+          {friendlySummary}
         </Typography.Text>
       )}
       {dur !== null && (
@@ -328,9 +349,37 @@ function StepRow({ step }: { step: TurnStep }) {
   );
 }
 
+function totalStepsDurationMs(steps: TurnStep[]): number | null {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let sum = 0;
+  let hasSingle = false;
+  for (const s of steps) {
+    if (s.startedAt) {
+      const ms = Date.parse(s.startedAt);
+      if (!Number.isNaN(ms)) starts.push(ms);
+    }
+    if (s.endedAt) {
+      const ms = Date.parse(s.endedAt);
+      if (!Number.isNaN(ms)) ends.push(ms);
+    }
+    const d = stepDurationMs(s);
+    if (d !== null) {
+      sum += d;
+      hasSingle = true;
+    }
+  }
+  if (starts.length > 0 && ends.length > 0) {
+    return Math.max(0, Math.max(...ends) - Math.min(...starts));
+  }
+  return hasSingle ? sum : null;
+}
+
 function TurnProcess({
   steps,
   elapsedMs,
+  completed = false,
+  defaultCollapsed = false,
   onCancel,
   cancelling,
   cancelDisabled,
@@ -338,11 +387,29 @@ function TurnProcess({
   steps: TurnStep[];
   /** 本回合已耗时（毫秒） */
   elapsedMs: number;
+  /** true = 回合已结束，呈现可折叠的过程汇总 */
+  completed?: boolean;
+  /** completed 时默认是否折叠（历史回合折叠、最新回合展开） */
+  defaultCollapsed?: boolean;
   onCancel?: () => void;
   cancelling: boolean;
   /** 取消端点调用失败过：本回合不再让点（静默降级） */
   cancelDisabled: boolean;
 }) {
+  const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
+  const expanded = !completed
+    ? true
+    : userExpanded !== null
+      ? userExpanded
+      : !defaultCollapsed;
+  const totalMs = completed ? totalStepsDurationMs(steps) : elapsedMs;
+  const hasFailed = steps.some((s) => s.status === "failed");
+  const headerText = completed
+    ? `${hasFailed ? "执行过程（含异常）" : "执行过程"} · 共 ${steps.length} 个步骤${
+        totalMs !== null ? ` · 耗时 ${fmtElapsed(totalMs)}` : ""
+      }`
+    : `执行中 · 已耗时 ${fmtElapsed(elapsedMs)}`;
+
   return (
     <div
       style={{
@@ -356,10 +423,32 @@ function TurnProcess({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
-          执行中 · 已耗时 {fmtElapsed(elapsedMs)}
-        </Typography.Text>
-        {onCancel && (
+        {completed ? (
+          <Button
+            type="text"
+            size="small"
+            onClick={() => setUserExpanded(!expanded)}
+            style={{
+              height: "auto",
+              padding: 0,
+              fontSize: 12,
+              color: tokens.colorTextSecondary,
+              flex: 1,
+              textAlign: "left",
+              justifyContent: "flex-start",
+            }}
+          >
+            <span>{headerText}</span>
+            <span style={{ marginLeft: 8, color: tokens.colorPrimary }}>
+              {expanded ? "收起" : "展开"}
+            </span>
+          </Button>
+        ) : (
+          <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
+            {headerText}
+          </Typography.Text>
+        )}
+        {!completed && onCancel && (
           <Button
             size="small"
             danger
@@ -373,9 +462,7 @@ function TurnProcess({
           </Button>
         )}
       </div>
-      {steps.map((s) => (
-        <StepRow key={s.id} step={s} />
-      ))}
+      {expanded && steps.map((s) => <StepRow key={s.id} step={s} />)}
     </div>
   );
 }
@@ -425,6 +512,7 @@ export default function ChatPane({
   hideTaskBar,
   onOpenDelegation,
   onOpenTask,
+  onTasksSync,
 }: ChatPaneProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
@@ -452,6 +540,7 @@ export default function ChatPane({
   const turnStartRef = useRef<number | null>(null);
   const knownCidRef = useRef<string | null>(null);
   const lastDraftNonceRef = useRef<number | null>(null);
+  const triggerBgCheckRef = useRef<(() => void) | null>(null);
 
   const chat = (body: { conversationId?: string; text: string; context?: unknown }) =>
     appId
@@ -575,13 +664,17 @@ export default function ChatPane({
     inputRef.current?.focus();
   }, [draftSignal]);
 
-  // 已耗时秒表：回合进行中每秒跳动
+  const hasGenerating = messages.some(
+    (m) => m.role === "assistant" && m.status === "generating",
+  );
+
+  // 已耗时秒表：回合发送中或后台任务/生成消息进行中每秒跳动
   useEffect(() => {
-    if (!sending) return;
+    if (!sending && !bgRunning && !hasGenerating) return;
     setNowMs(Date.now());
     const t = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(t);
-  }, [sending]);
+  }, [sending, bgRunning, hasGenerating]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -604,7 +697,16 @@ export default function ChatPane({
     if (sending) return;
     let alive = true;
     let prevRunning = false;
-    const checkBg = async () => {
+    let timerId: number | null = null;
+    const scheduleNext = (running: boolean) => {
+      if (!alive) return;
+      if (timerId !== null) window.clearTimeout(timerId);
+      timerId = window.setTimeout(
+        () => void checkBg(false),
+        running ? 1200 : 3000,
+      );
+    };
+    const checkBg = async (force = false) => {
       try {
         const tasks = appId
           ? await api.assistant.app.tasks(appId, { status: "active" })
@@ -613,23 +715,27 @@ export default function ChatPane({
         const mine = tasks.filter((t) => t.conversationId === conversationId);
         const nowRunning = hasRunningAssistantTask(mine);
         setBgRunning(nowRunning);
-        // 在跑中或刚刚从在跑切停时都拉取最新消息，确保收尾/暂停文案立即到达、底部状态同步消除
-        if (nowRunning || prevRunning) {
+        // 在跑中或刚刚从在跑切停时，或卡片刚触发动作（force）时都拉取最新消息，确保过程步骤与收尾文案立即到达
+        if (force || nowRunning || prevRunning) {
+          onTasksSync?.();
           const detail = await fetchConversation(conversationId);
           if (!alive) return;
           setMessages(detail.messages ?? []);
           setDetailToolCalls(detail.toolCalls ?? []);
         }
         prevRunning = nowRunning;
+        scheduleNext(nowRunning);
       } catch {
         // 静默失败，下个周期重试
+        scheduleNext(prevRunning);
       }
     };
-    void checkBg();
-    const id = window.setInterval(() => void checkBg(), 3000);
+    triggerBgCheckRef.current = () => void checkBg(true);
+    void checkBg(false);
     return () => {
       alive = false;
-      window.clearInterval(id);
+      triggerBgCheckRef.current = null;
+      if (timerId !== null) window.clearTimeout(timerId);
     };
   }, [conversationId, sending, appId]);
 
@@ -669,19 +775,45 @@ export default function ChatPane({
       onDone: (data) => {
         if (pollGenRef.current !== gen) return;
         setSending(false);
-        if (data.message) {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === data.message.id ? data.message : m)),
-          );
-          if (data.message.status === "failed") {
-            setTurnError(data.message.text || "助手生成失败，请重试");
-          }
-        } else if (data.messages) {
+        if (data.messages && data.messages.length > 0) {
           setMessages(data.messages);
+          const failed =
+            data.message?.status === "failed"
+              ? data.message
+              : data.messages.find(
+                  (m) => m.status === "failed" && !knownAssistantIds.has(m.id),
+                );
+          if (failed) {
+            setTurnError(
+              failed.text ? humanizeOpsCopy(failed.text) : "助手生成失败，请重试",
+            );
+          }
+        } else {
+          if (data.message) {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === data.message.id ? data.message : m)),
+            );
+            if (data.message.status === "failed") {
+              setTurnError(
+                data.message.text
+                  ? humanizeOpsCopy(data.message.text)
+                  : "助手生成失败，请重试",
+              );
+            }
+          }
+          // 旧载荷若未携带完整 messages，补拉一次会话详情，防直执追加的回执消息漏显
+          void fetchConversation(cid)
+            .then((detail) => {
+              if (pollGenRef.current !== gen) return;
+              if (detail.messages) setMessages(detail.messages);
+              if (detail.toolCalls) setDetailToolCalls(detail.toolCalls);
+            })
+            .catch(() => {});
         }
         if (data.toolCalls) {
           setDetailToolCalls(data.toolCalls);
         }
+        onTasksSync?.();
       },
       onError: () => {
         if (pollGenRef.current === gen) {
@@ -739,7 +871,9 @@ export default function ChatPane({
             setSending(false);
             const failed = freshMsgs.find((m) => m.status === "failed");
             if (failed) {
-              setTurnError(failed.text || "助手生成失败，请重试");
+              setTurnError(
+                failed.text ? humanizeOpsCopy(failed.text) : "助手生成失败，请重试",
+              );
             }
             return;
           }
@@ -895,6 +1029,12 @@ export default function ChatPane({
     }
   };
 
+  const latestStepMsgIndex = messages.reduce(
+    (last, m, i) =>
+      m.role !== "user" && turnStepsOf(m, detailToolCalls).length > 0 ? i : last,
+    -1,
+  );
+
   const renderMessage = (msg: AdminAssistantMessage, index: number) => {
     if (msg.role === "system") {
       return (
@@ -915,13 +1055,13 @@ export default function ChatPane({
     const isUser = msg.role === "user";
     const generating = !isUser && msg.status === "generating";
     const failed = !isUser && msg.status === "failed";
-    const steps = generating ? turnStepsOf(msg, detailToolCalls) : [];
+    const steps = !isUser ? turnStepsOf(msg, detailToolCalls) : [];
     const startedAtMs = msg.createdAt
       ? Date.parse(msg.createdAt)
       : turnStartRef.current;
     const elapsedMs =
       generating && startedAtMs && !Number.isNaN(startedAtMs)
-        ? nowMs - startedAtMs
+        ? Math.max(0, nowMs - startedAtMs)
         : 0;
     return (
       <div
@@ -951,15 +1091,19 @@ export default function ChatPane({
           {isUser ? (
             renderRichText(msg.text)
           ) : (
-            <MarkdownView content={msg.text} />
+            <MarkdownView content={humanizeOpsCopy(msg.text)} />
           )}
           {generating && <Spin size="small" style={{ marginLeft: 8 }} />}
         </div>
-        {generating && (
+        {(generating || steps.length > 0) && (
           <TurnProcess
             steps={steps}
             elapsedMs={elapsedMs}
-            onCancel={conversationId ? () => void handleCancel() : undefined}
+            completed={!generating}
+            defaultCollapsed={!generating && index !== latestStepMsgIndex}
+            onCancel={
+              generating && conversationId ? () => void handleCancel() : undefined
+            }
             cancelling={cancelling}
             cancelDisabled={cancelUnavailable}
           />
@@ -994,13 +1138,17 @@ export default function ChatPane({
           (msg.payload.kind === "themeCreated" ||
             (msg.payload.actions ?? []).length > 0 ||
             !!msg.payload.title) && (
-            <PayloadCard payload={msg.payload} onClose={onClose} />
+            <PayloadCard payload={msg.payload} appId={appId ?? pageContext?.appId} onClose={onClose} />
           )}
         {!isUser && msg.payload?.planCard && (
           <PlanMessageCard
             appId={appId}
             taskId={msg.payload.planCard.taskId}
             onOpenTask={onOpenTask}
+            onTaskUpdated={() => {
+              triggerBgCheckRef.current?.();
+              onTasksSync?.();
+            }}
             // 执行中自动打开详情：只对本会话最新一张计划卡生效，
             // 历史卡不抢详情（2026-10-29 用户定）。
             autoOpen={messages.reduce(
@@ -1043,9 +1191,6 @@ export default function ChatPane({
   const taskPassed = activeTask
     ? activeTask.checklist.filter((it) => PASSED_STATUS.has(it.status)).length
     : 0;
-  const hasGenerating = messages.some(
-    (m) => m.role === "assistant" && m.status === "generating",
-  );
 
   return (
     <>
@@ -1064,9 +1209,9 @@ export default function ChatPane({
           <Typography.Text
             ellipsis
             style={{ fontSize: 12, flex: 1, minWidth: 0 }}
-            title={activeTask.title}
+            title={humanizeTaskTitle(activeTask.title)}
           >
-            进行中任务：{activeTask.title}
+            进行中任务：{humanizeTaskTitle(activeTask.title)}
           </Typography.Text>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             清单 {taskPassed}/{activeTask.checklist.length} · 更新于{" "}

@@ -1,4 +1,5 @@
 import {
+  humanizeOpsCopy,
   humanizeStepLabel,
   humanizeTechnicalDetail,
   HUMAN_PAUSE_REASONS,
@@ -299,12 +300,15 @@ export function PlanMessageCard({
   appId,
   taskId,
   onOpenTask,
+  onTaskUpdated,
   autoOpen,
 }: {
   appId: string | null;
   taskId: string;
   /** 工作台：卡片“查看详情”（右侧打开该任务详情）；不传则不渲染 */
   onOpenTask?: (taskId: string) => void;
+  /** 卡片动作触发了服务端状态变更，通知对话区立即同步最新消息与任务 */
+  onTaskUpdated?: () => void;
   /**
    * 执行中自动打开详情（2026-10-29 用户定）：最新一张计划卡、
    * 任务进行中时挂载即打开右侧详情一次，不等用户点“查看详情”；
@@ -326,7 +330,9 @@ export function PlanMessageCard({
   const showChecklist =
     userToggled !== null
       ? userToggled
-      : needsApproval;
+      : needsApproval ||
+        task?.runStatus === "running" ||
+        task?.runStatus === "pending";
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (!autoOpen || autoOpenedRef.current || !onOpenTask) return;
@@ -390,6 +396,11 @@ export function PlanMessageCard({
   const [acting, setActing] = useState<string | null>(null);
   const [actError, setActError] = useState<string | null>(null);
   const autoReissuedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (runStatus !== "running" && runStatus !== "pending") return;
+    const id = window.setInterval(() => setRefreshKey((k) => k + 1), 1500);
+    return () => window.clearInterval(id);
+  }, [runStatus]);
   useEffect(() => {
     const activePending = awaitingHome
       ? homePending
@@ -480,6 +491,7 @@ export function PlanMessageCard({
       // （验收通过 → 绑定审批卡或已完成；暂不验收 → 仍停在
       // 预览卡，等用户在输入框发整改需求再循环）。
       setRefreshKey((k) => k + 1);
+      onTaskUpdated?.();
     } catch {
       setActError("操作失败，请稍后重试");
     } finally {
@@ -506,8 +518,22 @@ export function PlanMessageCard({
   }
   const list = task.checklist ?? [];
   const passed = list.filter((it) => CHECK_PASSED_CARD.has(it.status)).length;
-  const preview = previewPending ? readDialogPreview(previewPending) : null;
-  const home = homePending ? readDialogPreview(homePending) : null;
+  // 平台上下文中对话框 appId 为 null，本地预览重写必须取任务本身归属的应用 ID（否则非主应用预览链接会丢失 /<appId>/ 前缀）。
+  const effectiveAppId =
+    (typeof runDetail?.task?.appId === "string" &&
+    runDetail.task.appId.trim().length > 0
+      ? runDetail.task.appId.trim()
+      : null) ??
+    (typeof task.appId === "string" && task.appId.trim().length > 0
+      ? task.appId.trim()
+      : null) ??
+    appId;
+  const preview = previewPending
+    ? readDialogPreview(previewPending, effectiveAppId)
+    : null;
+  const home = homePending
+    ? readDialogPreview(homePending, effectiveAppId)
+    : null;
   const bindThemeName = bindPending
     ? readDialogPreview(bindPending).themeName
     : null;
@@ -558,7 +584,7 @@ export function PlanMessageCard({
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {task.goal && (
           <Typography.Text style={{ fontSize: 13, color: tokens.colorTextSecondary }}>
-            目标：{task.goal}
+            目标：{humanizeOpsCopy(task.goal)}
           </Typography.Text>
         )}
         {list.length > 0 && (
@@ -1021,11 +1047,11 @@ export function DelegationMessageCard({
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <Typography.Text strong style={{ fontSize: 13 }}>
-          {dep.stepLabel ?? `第 ${index + 1} 步`}
+          {humanizeStepLabel(dep.stepLabel ?? `第 ${index + 1} 步`)}
         </Typography.Text>
         {dep.goal && (
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            目标：{dep.goal}
+            目标：{humanizeOpsCopy(dep.goal)}
           </Typography.Text>
         )}
         {roundLabel && (
