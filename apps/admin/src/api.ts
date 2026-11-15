@@ -1964,6 +1964,23 @@ export const api = {
       });
     },
     /**
+     * 软删除单个会话（2026-11-16 对话框改动）：只置 deleted_at，不物理删。
+     */
+    async deleteConversation(cid: string): Promise<{ ok: boolean }> {
+      return apiFetch(`/admin/assistant/conversations/${encodeURIComponent(cid)}`, {
+        method: "DELETE",
+      });
+    },
+    /** 批量清空会话：只清所传 id 中本人的会话（软删除） */
+    async clearConversations(
+      conversationIds: string[],
+    ): Promise<{ ok: boolean; cleared: number }> {
+      return apiFetch("/admin/assistant/conversations/clear", {
+        method: "POST",
+        body: JSON.stringify({ conversationIds }),
+      });
+    },
+    /**
      * 平台任务卡列表（壳统一：平台弹窗与应用弹窗同一套三栏壳，
      * 平台任务即 app_id 为空串的计划卡；口径同应用组 tasks）。
      */
@@ -2326,6 +2343,23 @@ export const api = {
         return apiFetch(
           `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations/${encodeURIComponent(cid)}/cancel`,
           { method: "POST", body: JSON.stringify({}) },
+        );
+      },
+      /** 应用组软删除单个会话（口径同平台组 deleteConversation） */
+      async deleteConversation(appId: string, cid: string): Promise<{ ok: boolean }> {
+        return apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations/${encodeURIComponent(cid)}`,
+          { method: "DELETE" },
+        );
+      },
+      /** 应用组批量清空会话（口径同平台组 clearConversations） */
+      async clearConversations(
+        appId: string,
+        conversationIds: string[],
+      ): Promise<{ ok: boolean; cleared: number }> {
+        return apiFetch(
+          `/admin/apps/${encodeURIComponent(appId)}/assistant/conversations/clear`,
+          { method: "POST", body: JSON.stringify({ conversationIds }) },
         );
       },
       /**

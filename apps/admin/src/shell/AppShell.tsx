@@ -653,6 +653,11 @@ export default function AppShell() {
         ? currentApp.name
         : null))
     : null;
+  // 顶栏选择器当前应用名（左栏标题与按应用过滤用；平台上下文时
+  // 对话框应用为空，但左栏仍按选择器当前应用过滤并以其命名）。
+  const selectorAppName =
+    operableApps.find((a) => a.id === appId)?.name ??
+    (currentApp && typeof currentApp.name === "string" ? currentApp.name : null);
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
@@ -824,6 +829,7 @@ export default function AppShell() {
         focusTask={modalFocusTask}
         appId={dialogAppId}
         appName={dialogAppName}
+        selectorAppName={selectorAppName}
         context={{
           // 第 90 步线 A4：页面上下文带入——appId 恒为顶栏选择器
           // 当前应用（默认目标），实体只在数据页且已定位时带、不硬造

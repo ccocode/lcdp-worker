@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Button, Modal, Segmented } from "antd";
 import {
+  CloseOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   MinusOutlined,
+  ProfileOutlined,
   RobotOutlined,
 } from "@ant-design/icons";
 import type { AssistantPageContext } from "./assistant/ChatPane";
@@ -36,6 +38,7 @@ export default function AssistantModal({
   onClose,
   appId,
   appName,
+  selectorAppName,
   context,
   focusTask,
 }: {
@@ -43,6 +46,8 @@ export default function AssistantModal({
   onClose: () => void;
   appId: string | null;
   appName: string | null;
+  /** 顶栏选择器当前应用名（平台上下文时左栏标题用，透传工作台） */
+  selectorAppName?: string | null;
   context?: AssistantPageContext;
   /** 页内入口带来的任务定位信号（透传工作台选中对应任务卡） */
   focusTask?: { taskId: string; nonce: number } | null;
@@ -198,13 +203,9 @@ export default function AssistantModal({
   }
 
   // 操作按钮放标题栏右上角（用户修订：不独占一行高度）。
-  // 关闭 X 的几何（antd 5.29 实测 token：高 56、按钮 32、距右缘
-  // 12px；内容横向内边距 24px，故 X 左缘在内容右缘内 20px 处）。
-  // 2026-10-31 实测教训：标题 div 的 paddingRight（56→96）根本
-  // 没推动按钮组——96 下按钮右缘仍贴内容右缘，与 X 重叠 20px
-  //（最小化 1252–1276、X 1256–1288）；故 clearance 不放标题
-  // 留白，改放按钮组自身的 marginRight: 40，间隙恒为 20px，
-  // 与盒模型无关。标题 paddingRight 归零，避免无效外溢条。
+  // 2026-11-16：去掉 Modal 默认关闭 X（closable={false}），关闭
+  // 改为与最小化同款的图标按钮（X），与按钮组放一起；默认 X
+  // 既已不在，按钮组不再需要为它留 marginRight。
   const titleNode = (
     <div
       onMouseDown={onTitleMouseDown}
@@ -233,7 +234,7 @@ export default function AssistantModal({
       )}
       <span style={{ flex: 1 }} />
       <span
-        style={{ display: "flex", gap: 8, flexShrink: 0, marginRight: 40 }}
+        style={{ display: "flex", gap: 8, flexShrink: 0 }}
         // 按钮组内的按下不触发标题拖拽
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -249,16 +250,14 @@ export default function AssistantModal({
             >
               会话
             </Button>
+            {/* 2026-11-16：记忆与详情合一个图标（其他按钮功能不变），
+                点按展开/收起右侧详情与记忆面板 */}
             <Button
               size="small"
-              icon={
-                rightCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
-              }
-              title={rightCollapsed ? "展开详情栏" : "收起详情栏"}
+              icon={<ProfileOutlined />}
+              title={rightCollapsed ? "展开详情与记忆" : "收起详情与记忆"}
               onClick={() => setRightCollapsed((v) => !v)}
-            >
-              详情
-            </Button>
+            />
             <Button size="small" onClick={() => setSeed((s) => s + 1)}>
               新对话
             </Button>
@@ -269,6 +268,12 @@ export default function AssistantModal({
           icon={<MinusOutlined />}
           title="最小化"
           onClick={() => setMinimized(true)}
+        />
+        <Button
+          size="small"
+          icon={<CloseOutlined />}
+          title="关闭"
+          onClick={() => void requestClose()}
         />
       </span>
     </div>
@@ -301,6 +306,7 @@ export default function AssistantModal({
     <Modal
       title={titleNode}
       open
+      closable={false}
       onCancel={() => void requestClose()}
       footer={null}
       width={`min(${modalWidth}px, 96vw)`}
@@ -352,7 +358,7 @@ export default function AssistantModal({
             options={[
               { label: "会话", value: "left" },
               { label: "对话", value: "chat" },
-              { label: "详情", value: "right" },
+              { label: "详情与记忆", value: "right" },
             ]}
           />
         </div>
@@ -362,6 +368,7 @@ export default function AssistantModal({
           key={appId ?? "platform"}
           appId={appId}
           appName={appName}
+          selectorAppName={selectorAppName}
           focusTask={focusTask}
           leftCollapsed={leftCollapsed}
           rightCollapsed={rightCollapsed}

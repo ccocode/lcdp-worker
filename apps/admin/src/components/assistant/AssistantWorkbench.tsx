@@ -2,9 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Empty,
+  Popconfirm,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
+import { DeleteOutlined } from "@ant-design/icons";
 import { tokens } from "@lcdp/ui";
 import {
   api,
@@ -24,15 +27,17 @@ import { humanizeOpsCopy, humanizeStepLabel } from "./semanticLabels";
 /**
  * 助手全页工作台（第 91 步线 A · A1，设计 8.4 双形态的主场）：
  * 挂应用「智能服务」页内（Q2 定案，不新增一级菜单）。三栏——
- * 左：本人会话列表（子代理会话已滤掉）；中：对话（与弹窗同一
- * ChatPane 共用组件，上下文 = 当前应用）；右：任务详情（消息
- * 内任务卡 / 建议深链 / 任务记录页定位进入，按计划、主题、
- * 子代理三类分体）与长期记忆速览（无任务打开时显示）。
+ * 左：本人会话列表（子代理会话已滤掉；2026-11-16 按当前应用
+ * 过滤，只显当前应用的数据，标题为应用名）；中：对话（与弹窗
+ * 同一 ChatPane 共用组件，上下文 = 当前应用）；右：详情与记忆
+ * （选项卡分开展示：详情 = 消息内任务卡 / 建议深链 / 任务记录
+ * 页定位进入的任务或子代理详情，记忆 = 长期记忆速览）。
  * 展开逻辑严格从左到右：左列选会话 → 中栏展开对话记录 →
  * 右栏展开卡片详情；右栏只放当前展开那一个实体的数据，不跨
  * 实体取数、不设回链（切会话重置右栏，返回靠中栏重选卡片）。
  * 任务列表不再放左栏：总览改走智能服务「任务记录」页，左栏
  * 只留会话。弹窗与全页工作台双形态复用同一 ChatPane，状态不互串。
+ * 清除与删除只标记（服务端置 deleted_at，不物理删）。
  *
  * 数据全部来自既有一期/线 B 端点（会话、任务、记忆），任一读取
  * 失败静默呈空态，不拖垮整页。
@@ -124,6 +129,7 @@ function DelegationDetail({
 export default function AssistantWorkbench({
   appId,
   appName,
+  selectorAppName,
   onManageMemories,
   onExpandRight,
   focusTask,
@@ -136,6 +142,8 @@ export default function AssistantWorkbench({
 }: {
   appId: string | null;
   appName?: string | null;
+  /** 顶栏选择器当前应用名（平台上下文时左栏标题用；应用上下文时与 appName 同值） */
+  selectorAppName?: string | null;
   /** 弹窗标题栏“新对话”信号：代次变化时开一个全新会话（两边同壳后平台与应用共用此入口） */
   freshNonce?: number;
   /** 页内入口带来的页面上下文（弹窗平台侧沿用 AppShell 的当前页上下文；不传则工作台自造） */
@@ -177,6 +185,15 @@ export default function AssistantWorkbench({
   /** 右侧正在查看的子代理详情（null = 任务详情 + 记忆速览） */
   const [delegationView, setDelegationView] =
     useState<DelegationViewTarget | null>(null);
+  /** 右栏选项卡：详情 / 记忆（2026-11-16 记忆与详情合一图标后按类型分开展示） */
+  const [rightTab, setRightTab] = useState<"detail" | "memory">("memory");
+  /** 左栏悬停的会话 id（悬停时右侧显删除图标） */
+  const [hoverCid, setHoverCid] = useState<string | null>(null);
+  /**
+   * 顶栏选择器当前应用（左栏按应用过滤的基准）：页面上下文的
+   * appId 恒为选择器当前应用；无上下文时回落对话框应用。
+   */
+  const selectorAppId = pageContext?.appId ?? appId ?? null;
   /**
    * 子会话 id 集：左栏会话列表据此滤掉子代理会话。来源 = 全部任务行
    * artifacts.delegations 的 childConversationId（任务行本身不删除，
@@ -295,13 +312,14 @@ export default function AssistantWorkbench({
 
   /**
    * 左栏选会话（左到右展开的起点）：中栏切到该会话，右栏重置
-   * （详情属于旧会话的卡片，不跟到新会话）。
+   * （详情属于旧会话的卡片，不跟到新会话）；右栏回到记忆页签。
    */
   const openConversation = (cid: string) => {
     setCurrentCid(cid);
     setSession({ key: `conv:${cid}`, cid, fresh: false });
     setDelegationView(null);
     setSelectedTaskId(null);
+    setRightTab("memory");
   };
 
   /** 派发卡片“查看详情”：右侧切到子代理详情（并把右侧展开；
@@ -310,6 +328,7 @@ export default function AssistantWorkbench({
     setSelectedTaskId(target.taskId);
     if (!tasks.some((t) => t.id === target.taskId)) void loadAllTasks();
     setDelegationView(target);
+    setRightTab("detail");
     onExpandRight?.();
   };
 
@@ -318,22 +337,91 @@ export default function AssistantWorkbench({
   const openTask = (taskId: string) => {
     setSelectedTaskId(taskId);
     setDelegationView(null);
+    setRightTab("detail");
     void loadAllTasks();
     onExpandRight?.();
   };
 
-  /** 左栏会话列表：滤掉子代理会话（子会话只在右侧详情里看） */
+  /**
+   * 会话 → 应用归属（左栏按应用过滤用）：会话本身不带应用，
+   * 以其任务行的目标应用为准（任务行 appId 即目标应用；平台级
+   * 任务 appId 为空串，不归属任何应用）。无任务的会话不归属
+   * 任何应用，在按应用过滤时不显示。
+   */
+  const convAppIds = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const t of tasks) {
+      if (!t.conversationId || !t.appId) continue;
+      let set = map.get(t.conversationId);
+      if (!set) {
+        set = new Set();
+        map.set(t.conversationId, set);
+      }
+      set.add(t.appId);
+    }
+    return map;
+  }, [tasks]);
+
+  /** 左栏会话列表：滤掉子代理会话（子会话只在右侧详情里看）；
+   * 平台上下文再按选择器当前应用过滤（应用上下文服务端已按应用取数）。 */
   const visibleConversations = useMemo(
-    () => conversations.filter((c) => !childCids.has(c.id)),
-    [conversations, childCids],
+    () =>
+      conversations.filter(
+        (c) =>
+          !childCids.has(c.id) &&
+          (appId !== null ||
+            !selectorAppId ||
+            convAppIds.get(c.id)?.has(selectorAppId)),
+      ),
+    [conversations, childCids, appId, selectorAppId, convAppIds],
   );
 
-  const startNew = () => {
+  /** 开全新会话（中栏回到空白输入；左栏标题栏“新对话”与删/清空当前会话后共用） */
+  const startNew = useCallback(() => {
     setCurrentCid(null);
     setSession({ key: `new:${Date.now()}`, cid: null, fresh: true });
     setDelegationView(null);
     setSelectedTaskId(null);
-  };
+  }, []);
+
+  /** 软删除单条会话（只标记）：删的是当前会话时中栏回到全新会话 */
+  const deleteConversation = useCallback(
+    async (cid: string) => {
+      try {
+        if (appId) {
+          await api.assistant.app.deleteConversation(appId, cid);
+        } else {
+          await api.assistant.deleteConversation(cid);
+        }
+        if (currentCid === cid) {
+          startNew();
+        }
+        await loadConversations();
+      } catch {
+        // 静默：列表保持原样
+      }
+    },
+    [appId, currentCid, loadConversations, startNew],
+  );
+
+  /** 清空列表（只清当前可见的会话，软删除）：清掉当前会话时中栏回到全新会话 */
+  const clearConversations = useCallback(async () => {
+    const ids = visibleConversations.map((c) => c.id);
+    if (ids.length === 0) return;
+    try {
+      if (appId) {
+        await api.assistant.app.clearConversations(appId, ids);
+      } else {
+        await api.assistant.clearConversations(ids);
+      }
+      if (currentCid && ids.includes(currentCid)) {
+        startNew();
+      }
+      await loadConversations();
+    } catch {
+      // 静默：列表保持原样
+    }
+  }, [appId, currentCid, visibleConversations, loadConversations, startNew]);
 
   // 弹窗标题栏“新对话”：代次变化即开全新会话；首挂载跳过（上下文
   // 切换重挂载时只显最新会话，不因沿用代次误开新会话）
@@ -401,12 +489,25 @@ export default function AssistantWorkbench({
             borderBottom: `1px solid ${tokens.colorDivider}`,
           }}
         >
-          <Typography.Text strong style={{ fontSize: 13, flex: 1 }}>
-            会话
+          <Typography.Text
+            strong
+            ellipsis
+            style={{ fontSize: 13, flex: 1, minWidth: 0 }}
+            title={selectorAppName ?? appName ?? undefined}
+          >
+            {selectorAppName ?? appName ?? "会话"}
           </Typography.Text>
-          <Button size="small" onClick={startNew}>
-            新对话
-          </Button>
+          <Popconfirm
+            title="清空当前应用的全部对话？"
+            description="列表里的对话将全部清除（只标记，不删除任务数据）。"
+            okText="清空"
+            cancelText="取消"
+            onConfirm={() => void clearConversations()}
+          >
+            <Button size="small" disabled={visibleConversations.length === 0}>
+              清除对话
+            </Button>
+          </Popconfirm>
         </div>
         <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
           {visibleConversations.length === 0 ? (
@@ -418,24 +519,44 @@ export default function AssistantWorkbench({
               <div
                 key={c.id}
                 onClick={() => openConversation(c.id)}
+                onMouseEnter={() => setHoverCid(c.id)}
+                onMouseLeave={() => setHoverCid((v) => (v === c.id ? null : v))}
                 style={{
                   padding: "8px 12px",
                   cursor: "pointer",
                   background:
                     highlightCid === c.id ? tokens.colorPrimaryBg : undefined,
                   borderBottom: `1px solid ${tokens.colorDivider}`,
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 4,
                 }}
               >
-                <Typography.Text
-                  ellipsis
-                  style={{ fontSize: 13, display: "block" }}
-                  title={c.title ? humanizeOpsCopy(c.title) : undefined}
-                >
-                  {c.title ? humanizeOpsCopy(c.title) : "（无标题）"}
-                </Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {fmtTime(c.updatedAt)}
-                </Typography.Text>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Typography.Text
+                    ellipsis
+                    style={{ fontSize: 13, display: "block" }}
+                    title={c.title ? humanizeOpsCopy(c.title) : undefined}
+                  >
+                    {c.title ? humanizeOpsCopy(c.title) : "（无标题）"}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {fmtTime(c.updatedAt)}
+                  </Typography.Text>
+                </div>
+                {hoverCid === c.id && (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    title="删除该对话"
+                    style={{ flexShrink: 0, padding: 0, width: 20, height: 20, minWidth: 20 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteConversation(c.id);
+                    }}
+                  />
+                )}
               </div>
             ))
           )}
@@ -480,7 +601,7 @@ export default function AssistantWorkbench({
         />
       </div>
 
-      {/* 右栏：任务详情（三类分体）+ 记忆速览（无任务打开时） */}
+      {/* 右栏：详情与记忆（选项卡按类型分开展示；入口为标题栏合一图标） */}
       <div
         style={{
           width: 300,
@@ -494,72 +615,84 @@ export default function AssistantWorkbench({
           gap: 16,
         }}
       >
-        {delegationView ? (
-          <DelegationDetail
-            appId={appId}
-            target={delegationView}
-          />
-        ) : selectedTask ? (
-          <TaskDetail
-            task={selectedTask}
-            appId={appId}
-            onHandlePending={
-              selectedTask.conversationId
-                ? () => openConversation(selectedTask.conversationId as string)
-                : undefined
-            }
-          />
-        ) : (
-          <>
-            <Empty
-              description="点消息内的任务卡查看详情"
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
-            <div>
-              <div style={{ display: "flex", alignItems: "center" }}>
-                <Typography.Text strong style={{ fontSize: 13, flex: 1 }}>
-                  助手记忆
-                </Typography.Text>
-                {onManageMemories && (
-                  <Button
-                    size="small"
-                    type="link"
-                    style={{ padding: 0, height: "auto", fontSize: 12 }}
-                    onClick={onManageMemories}
-                  >
-                    管理记忆
-                  </Button>
-                )}
-              </div>
-              {!memoriesOk ? (
-                <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 8 }}>
-                  记忆服务暂不可用
-                </Typography.Text>
-              ) : memories.length === 0 ? (
-                <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 8 }}>
-                  暂无长期记忆
-                </Typography.Text>
+        <Tabs
+          size="small"
+          activeKey={rightTab}
+          onChange={(k) => setRightTab(k as "detail" | "memory")}
+          items={[
+            {
+              key: "detail",
+              label: "详情",
+              children: delegationView ? (
+                <DelegationDetail
+                  appId={appId}
+                  target={delegationView}
+                />
+              ) : selectedTask ? (
+                <TaskDetail
+                  task={selectedTask}
+                  appId={appId}
+                  onHandlePending={
+                    selectedTask.conversationId
+                      ? () => openConversation(selectedTask.conversationId as string)
+                      : undefined
+                  }
+                />
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
-                  {memories.map((m) => (
-                    <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-                      <Tag style={{ marginInlineEnd: 0, flexShrink: 0 }}>
-                        {MEMORY_CATEGORY_LABELS[m.category] ?? m.category}
-                      </Tag>
-                      <Typography.Text
-                        ellipsis
-                        style={{ fontSize: 12, minWidth: 0 }}
-                        title={m.content}
+                <Empty
+                  description="点消息内的任务卡查看详情"
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                />
+              ),
+            },
+            {
+              key: "memory",
+              label: "记忆",
+              children: (
+                <div>
+                  {onManageMemories && (
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <Button
+                        size="small"
+                        type="link"
+                        style={{ padding: 0, height: "auto", fontSize: 12 }}
+                        onClick={onManageMemories}
                       >
-                        {m.content}
-                      </Typography.Text>
+                        管理记忆
+                      </Button>
                     </div>
-                  ))}
+                  )}
+                  {!memoriesOk ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 8 }}>
+                      记忆服务暂不可用
+                    </Typography.Text>
+                  ) : memories.length === 0 ? (
+                    <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 8 }}>
+                      暂无长期记忆
+                    </Typography.Text>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+                      {memories.map((m) => (
+                        <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                          <Tag style={{ marginInlineEnd: 0, flexShrink: 0 }}>
+                            {MEMORY_CATEGORY_LABELS[m.category] ?? m.category}
+                          </Tag>
+                          <Typography.Text
+                            ellipsis
+                            style={{ fontSize: 12, minWidth: 0 }}
+                            title={m.content}
+                          >
+                            {m.content}
+                          </Typography.Text>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </>
-        )}
+              ),
+            },
+          ]}
+        />
       </div>
     </div>
   );
