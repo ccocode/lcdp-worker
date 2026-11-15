@@ -73,6 +73,12 @@ function isTerminalRun(t: AdminAssistantTask): boolean {
   );
 }
 
+/** 在跑的 run（C 批：默认展开只针对真正在跑的任务；审批前 run_status
+ * 为 null、等验收／等绑定都不算在跑，不自动展开）。 */
+function isLiveRun(t: AdminAssistantTask): boolean {
+  return t.runStatus === "pending" || t.runStatus === "running";
+}
+
 /** 展开行节点清单（D6 首批：展开时才取本任务 run 详情，单实体） */
 function TaskRunNodes({
   appId,
@@ -229,9 +235,9 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
       next[t.id] = t.status;
       const was = prev[t.id];
       if (was === undefined) {
-        if (t.status === "active") keys.add(t.id);
+        if (isLiveRun(t)) keys.add(t.id);
       } else if (was !== t.status) {
-        if (t.status === "active") keys.add(t.id);
+        if (isLiveRun(t)) keys.add(t.id);
         else if (
           t.status === "done" ||
           t.status === "closed" ||
@@ -311,9 +317,23 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
     {
       title: "状态",
       width: 110,
+      // C 批（状态口径统一）：状态列读 run_status，审批前（run_status 为 null）
+      // 显示“待审批”，与计划卡同口径；其余回落任务行状态（已完成／已收尾等）。
       render: (_, t) => (
         <Tag style={{ marginInlineEnd: 0 }}>
-          {TASK_STATUS_LABELS[t.status] ?? t.status}
+          {t.runStatus == null
+            ? "待审批"
+            : t.runStatus === "failed"
+              ? "已失败"
+              : t.runStatus === "paused"
+                ? "已暂停"
+                : t.runStatus === "awaiting_preview"
+                  ? "等你验收预览"
+                  : t.runStatus === "awaiting_bind"
+                    ? "等你确认绑定"
+                    : t.runStatus === "awaiting_home"
+                      ? "等你确认首页"
+                      : (TASK_STATUS_LABELS[t.status] ?? t.status)}
         </Tag>
       ),
     },

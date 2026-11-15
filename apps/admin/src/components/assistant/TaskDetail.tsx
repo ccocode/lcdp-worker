@@ -299,18 +299,22 @@ export default function TaskDetail({
   const runStatus = runDetail?.run?.runStatus ?? null;
   /** 详情头状态跟 runStatus（收尾1）：等验收/等确认首页等态不再只显示“进行中”，与对话框卡角标同口径；run 详情未到时回落任务行 runStatus。 */
   const headerRunStatus = runStatus ?? activeTask.runStatus ?? null;
+  /** C 批（状态口径统一）：审批前 run_status 为 null 时详情栏显示“待审批”，
+   * 不许回落到 task.status 的“进行中”（与计划卡同口径，见 MessageTaskCards）。 */
   const headerStatusLabel =
-    headerRunStatus === "failed"
-      ? "已失败"
-      : headerRunStatus === "paused"
-        ? "已暂停"
-        : headerRunStatus === "awaiting_preview"
-          ? "等你验收预览"
-          : headerRunStatus === "awaiting_bind"
-            ? "等你确认绑定"
-            : headerRunStatus === "awaiting_home"
-              ? "等你确认首页"
-              : (TASK_STATUS_LABELS[activeTask.status] ?? activeTask.status);
+    headerRunStatus === null
+      ? "待审批"
+      : headerRunStatus === "failed"
+        ? "已失败"
+        : headerRunStatus === "paused"
+          ? "已暂停"
+          : headerRunStatus === "awaiting_preview"
+            ? "等你验收预览"
+            : headerRunStatus === "awaiting_bind"
+              ? "等你确认绑定"
+              : headerRunStatus === "awaiting_home"
+                ? "等你确认首页"
+                : (TASK_STATUS_LABELS[activeTask.status] ?? activeTask.status);
   const headerStatusColor =
     headerRunStatus === "failed"
       ? "red"
@@ -323,15 +327,12 @@ export default function TaskDetail({
             : headerRunStatus === "awaiting_home"
               ? "cyan"
               : undefined;
+  /** C 批（状态口径统一）：在跑必须由 run_status 正面确立（pending/running）。
+   * 旧口径以 task.status === "active" 为主、runStatus 只做排除，run_status 为
+   * null（审批前、run 未创建）时会漏网成“在跑”，首步误显“正在执行…”。
+   * 用 headerRunStatus（含任务行 runStatus 回落），run 详情未到时也有口径。 */
   const isRunning =
-    activeTask.status === "active" &&
-    runStatus !== "failed" &&
-    runStatus !== "paused" &&
-    runStatus !== "completed" &&
-    runStatus !== "cancelled" &&
-    runStatus !== "awaiting_preview" &&
-    runStatus !== "awaiting_bind" &&
-    runStatus !== "awaiting_home";
+    headerRunStatus === "pending" || headerRunStatus === "running";
   const failedStepIndex = checklist.findIndex(
     (it) => stepState(it.status) === "failed",
   );
