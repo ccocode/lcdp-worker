@@ -257,7 +257,9 @@ export default function AssistantModal({
               icon={<ProfileOutlined />}
               title={rightCollapsed ? "展开详情与记忆" : "收起详情与记忆"}
               onClick={() => setRightCollapsed((v) => !v)}
-            />
+            >
+              详情
+            </Button>
             <Button size="small" onClick={() => setSeed((s) => s + 1)}>
               新对话
             </Button>
@@ -358,7 +360,7 @@ export default function AssistantModal({
             options={[
               { label: "会话", value: "left" },
               { label: "对话", value: "chat" },
-              { label: "详情与记忆", value: "right" },
+              { label: "任务与记忆", value: "right" },
             ]}
           />
         </div>

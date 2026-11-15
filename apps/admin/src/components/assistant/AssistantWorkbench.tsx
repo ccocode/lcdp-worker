@@ -185,7 +185,7 @@ export default function AssistantWorkbench({
   /** 右侧正在查看的子代理详情（null = 任务详情 + 记忆速览） */
   const [delegationView, setDelegationView] =
     useState<DelegationViewTarget | null>(null);
-  /** 右栏选项卡：详情 / 记忆（2026-11-16 记忆与详情合一图标后按类型分开展示） */
+  /** 右栏选项卡：任务 / 记忆（2026-11-16 记忆与详情合一图标后按类型分开展示；2026-11-16 详情页签改名任务） */
   const [rightTab, setRightTab] = useState<"detail" | "memory">("memory");
   /** 左栏悬停的会话 id（悬停时右侧显删除图标） */
   const [hoverCid, setHoverCid] = useState<string | null>(null);
@@ -622,7 +622,7 @@ export default function AssistantWorkbench({
           items={[
             {
               key: "detail",
-              label: "详情",
+              label: "任务",
               children: delegationView ? (
                 <DelegationDetail
                   appId={appId}
