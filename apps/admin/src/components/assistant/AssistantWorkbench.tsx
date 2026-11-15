@@ -484,6 +484,28 @@ export default function AssistantWorkbench({
     setTurnProcess(null);
   }, []);
 
+  /**
+   * 2026-11-16 切换应用状态残留修复：顶栏选择器换应用时，中栏回到
+   * 空白会话（旧会话不跟到新应用），会话与任务列表重拉一份。
+   * 跑任务中切换已有 AppShell 侧提示拦截，点取消不换应用、本
+   * effect 不触发；首挂载跳过（不因初始值误重置）。
+   */
+  const selectorAppIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (selectorAppIdRef.current === undefined) {
+      selectorAppIdRef.current = selectorAppId;
+      return;
+    }
+    if (selectorAppIdRef.current === selectorAppId) return;
+    selectorAppIdRef.current = selectorAppId;
+    startNew();
+    setRightTab("memory");
+    void loadConversations();
+    void loadAllTasks();
+    // 仅以选择器当前应用变化为触发信号
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectorAppId]);
+
   /** 软删除单条会话（只标记）：删的是当前会话时中栏回到全新会话 */
   const deleteConversation = useCallback(
     async (cid: string) => {
