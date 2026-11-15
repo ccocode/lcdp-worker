@@ -25,6 +25,8 @@ export interface TurnStep {
   status: "running" | "done" | "failed" | "unknown";
   startedAt: string | null;
   endedAt: string | null;
+  /** 工具回执原文（服务端 result，截断 1000 字内；失败步即错误文本） */
+  result?: string;
 }
 
 function normStepStatus(raw: string | undefined): TurnStep["status"] {
@@ -68,24 +70,64 @@ function toStep(raw: AdminAssistantToolCall, idx: number): TurnStep {
     status: normStepStatus(raw.status),
     startedAt: raw.startedAt ?? raw.createdAt ?? null,
     endedAt: raw.endedAt ?? null,
+    result: raw.result ?? undefined,
   };
+}
+
+/** 步骤开始时刻（毫秒；无时间戳为 null）——时序排序用 */
+function stepStartMs(step: TurnStep): number | null {
+  if (!step.startedAt) return null;
+  const ms = Date.parse(step.startedAt);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * 步骤的有效状态（2026-11-16：状态显示及时——服务端已落库的步自带
+ * running/done/failed；缺失状态的旧行按时间戳派生：已开始未收口且
+ * 回合仍在进行 = 执行中（不许灰着），已收口 = 已完成，其余才是
+ * 真未开始。turnLive=false（回合已结束）时不虚构执行中。
+ */
+export function effectiveStepStatus(
+  step: TurnStep,
+  turnLive: boolean,
+): TurnStep["status"] {
+  if (step.status !== "unknown") return step.status;
+  if (step.endedAt) return "done";
+  if (step.startedAt && turnLive) return "running";
+  return "unknown";
 }
 
 /**
  * 取某条助手消息的回合步骤流：消息自带 toolCalls 优先；
  * 否则从详情顶层 toolCalls 按 messageId 过滤。皆无返回空数组
  * （界面回落为只有耗时与中止的过程区，不报错）。
+ *
+ * 2026-11-16：按开始时间稳定升序（自上而下按时序流转；无时间戳
+ * 的步排最后、保持原序），与来源的数组顺序无关——新步只能追加
+ * 在末尾，已有步的位置一旦确定不再跳动。
  */
 export function turnStepsOf(
   message: AdminAssistantMessage,
   detailToolCalls?: AdminAssistantToolCall[] | null,
 ): TurnStep[] {
   const own = Array.isArray(message.toolCalls) ? message.toolCalls : [];
-  if (own.length > 0) return own.map(toStep);
-  const pool = Array.isArray(detailToolCalls) ? detailToolCalls : [];
-  return pool
-    .filter((t) => t.messageId === message.id)
-    .map(toStep);
+  const steps =
+    own.length > 0
+      ? own.map(toStep)
+      : (Array.isArray(detailToolCalls) ? detailToolCalls : [])
+          .filter((t) => t.messageId === message.id)
+          .map(toStep);
+  return steps
+    .map((step, idx) => ({ step, idx }))
+    .sort((a, b) => {
+      const ta = stepStartMs(a.step);
+      const tb = stepStartMs(b.step);
+      if (ta !== null && tb !== null && ta !== tb) return ta - tb;
+      if (ta !== null && tb === null) return -1;
+      if (ta === null && tb !== null) return 1;
+      return a.idx - b.idx;
+    })
+    .map(({ step }) => step);
 }
 
 /** 已耗时文案：<60s 记「N 秒」，否则「M 分 S 秒」 */

@@ -22,7 +22,7 @@ import {
  * 去助手查看）；不传则只展示待决、不给入口。
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge, Button, message, Progress, Spin, Tag, Typography } from "antd";
+import { Badge, Button, message, Spin, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
   api,
@@ -477,24 +477,7 @@ export default function TaskDetail({
       {themeLine && (
         <Typography.Text style={{ fontSize: 12 }}>{themeLine}</Typography.Text>
       )}
-      {checklist.length > 0 && (
-        <div style={{ margin: "6px 0 4px 0" }}>
-          <Progress
-            percent={Math.round((countPassed(activeTask) / checklist.length) * 100)}
-            size="small"
-            status={
-              headerRunStatus === "failed" || activeTask.status === "failed"
-                ? "exception"
-                : countPassed(activeTask) === checklist.length
-                  ? "success"
-                  : isRunning
-                    ? "active"
-                    : "normal"
-            }
-            format={() => `${countPassed(activeTask)}/${checklist.length} (${Math.round((countPassed(activeTask) / checklist.length) * 100)}%)`}
-          />
-        </div>
-      )}
+      {/* 2026-11-16：取消详情内的进度条（进度仍以清单各项状态呈现） */}
       {checklist.length > 0 && (
         <div
           style={{

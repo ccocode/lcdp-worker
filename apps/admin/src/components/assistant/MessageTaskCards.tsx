@@ -13,7 +13,7 @@ import {
  * 卡片随之翻状态，不往父会话插消息。
  */
 import { useEffect, useRef, useState } from "react";
-import { Button, Card, Progress, Spin, Tag, Typography } from "antd";
+import { Button, Card, Spin, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
 import {
   api,
@@ -587,22 +587,7 @@ export function PlanMessageCard({
             目标：{humanizeOpsCopy(task.goal)}
           </Typography.Text>
         )}
-        {list.length > 0 && (
-          <div style={{ margin: "2px 0 2px 0" }}>
-            <Progress
-              percent={Math.round((passed / list.length) * 100)}
-              size={["100%", 5]}
-              status={
-                runStatus === "failed"
-                  ? "exception"
-                  : passed === list.length
-                    ? "success"
-                    : "active"
-              }
-              format={() => `${passed}/${list.length} 步 (${Math.round((passed / list.length) * 100)}%)`}
-            />
-          </div>
-        )}
+        {/* 2026-11-16：取消计划卡内的进度条（进度仍以「展开清单（x/y）」文字呈现） */}
         {!showChecklist && list.length > 0 && (() => {
           const current = list.find((it) => it.status === "active") ?? list.find((it) => it.status === "pending");
           if (!current || runStatus === "failed" || runStatus === "paused") return null;

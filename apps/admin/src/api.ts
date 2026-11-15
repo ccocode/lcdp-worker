@@ -683,6 +683,8 @@ export interface AdminAssistantToolCall {
   startedAt?: string | null;
   endedAt?: string | null;
   createdAt?: string | null;
+  /** 工具回执原文（服务端 result；失败步即错误文本） */
+  result?: string | null;
 }
 
 /** 助手长期记忆类别（第 91 步线 B · B1：偏好 / 决定 / 长期事项 / 事实） */

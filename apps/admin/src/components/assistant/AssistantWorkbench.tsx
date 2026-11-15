@@ -17,7 +17,11 @@ import {
   type AdminAssistantTask,
 } from "../../api";
 import { fmtTime } from "../../helpers";
-import ChatPane, { type AssistantPageContext } from "./ChatPane";
+import ChatPane, {
+  TurnProcess,
+  type AssistantPageContext,
+  type TurnProcessSnapshot,
+} from "./ChatPane";
 import TaskDetail from "./TaskDetail";
 import type { DelegationViewTarget } from "./MessageTaskCards";
 import { MEMORY_CATEGORY_LABELS } from "./AssistantMemoryPanel";
@@ -187,6 +191,15 @@ export default function AssistantWorkbench({
     useState<DelegationViewTarget | null>(null);
   /** 右栏选项卡：任务 / 记忆（2026-11-16 记忆与详情合一图标后按类型分开展示；2026-11-16 详情页签改名任务） */
   const [rightTab, setRightTab] = useState<"detail" | "memory">("memory");
+  /** 2026-11-16：最新回合执行过程快照（ChatPane 上报；右侧任务页签顶部渲染，执行步骤与执行过程只在此处显示） */
+  const [turnProcess, setTurnProcess] = useState<TurnProcessSnapshot | null>(null);
+  /** 2026-11-16：回合开始执行时切到任务页签，让执行过程可见（只在进入执行中那一刻切一次，不反复抢页签） */
+  const wasGeneratingRef = useRef(false);
+  useEffect(() => {
+    const generating = !!turnProcess && !turnProcess.completed;
+    if (generating && !wasGeneratingRef.current) setRightTab("detail");
+    wasGeneratingRef.current = generating;
+  }, [turnProcess]);
   /** 左栏悬停的会话 id（悬停时右侧显删除图标） */
   const [hoverCid, setHoverCid] = useState<string | null>(null);
   /**
@@ -320,6 +333,7 @@ export default function AssistantWorkbench({
     setDelegationView(null);
     setSelectedTaskId(null);
     setRightTab("memory");
+    setTurnProcess(null);
   };
 
   /** 派发卡片“查看详情”：右侧切到子代理详情（并把右侧展开；
@@ -382,6 +396,7 @@ export default function AssistantWorkbench({
     setSession({ key: `new:${Date.now()}`, cid: null, fresh: true });
     setDelegationView(null);
     setSelectedTaskId(null);
+    setTurnProcess(null);
   }, []);
 
   /** 软删除单条会话（只标记）：删的是当前会话时中栏回到全新会话 */
@@ -593,6 +608,7 @@ export default function AssistantWorkbench({
           onTasksSync={() => {
             void loadAllTasks();
           }}
+          onTurnProcessChange={setTurnProcess}
           onConversationChange={(cid) => {
             setCurrentCid(cid);
             void loadConversations();
@@ -623,26 +639,42 @@ export default function AssistantWorkbench({
             {
               key: "detail",
               label: "任务",
-              children: delegationView ? (
-                <DelegationDetail
-                  appId={appId}
-                  target={delegationView}
-                />
-              ) : selectedTask ? (
-                <TaskDetail
-                  task={selectedTask}
-                  appId={appId}
-                  onHandlePending={
-                    selectedTask.conversationId
-                      ? () => openConversation(selectedTask.conversationId as string)
-                      : undefined
-                  }
-                />
-              ) : (
-                <Empty
-                  description="点消息内的任务卡查看详情"
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                />
+              children: (
+                <>
+                  {/* 2026-11-16：最新回合执行过程（步骤按时序自上而下，失败步行内跟错误文本） */}
+                  {turnProcess && (
+                    <TurnProcess
+                      steps={turnProcess.steps}
+                      elapsedMs={turnProcess.elapsedMs}
+                      completed={turnProcess.completed}
+                      defaultCollapsed={false}
+                      onCancel={turnProcess.onCancel}
+                      cancelling={turnProcess.cancelling}
+                      cancelDisabled={turnProcess.cancelDisabled}
+                    />
+                  )}
+                  {delegationView ? (
+                    <DelegationDetail
+                      appId={appId}
+                      target={delegationView}
+                    />
+                  ) : selectedTask ? (
+                    <TaskDetail
+                      task={selectedTask}
+                      appId={appId}
+                      onHandlePending={
+                        selectedTask.conversationId
+                          ? () => openConversation(selectedTask.conversationId as string)
+                          : undefined
+                      }
+                    />
+                  ) : (
+                    <Empty
+                      description="点消息内的任务卡查看详情"
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    />
+                  )}
+                </>
               ),
             },
             {

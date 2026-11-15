@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Button,
   Card,
@@ -23,6 +23,7 @@ import {
 } from "../../api";
 import { fmtTime, resolveLocalPreviewHref } from "../../helpers";
 import {
+  effectiveStepStatus,
   fmtElapsed,
   stepDurationMs,
   turnStepsOf,
@@ -64,10 +65,13 @@ import {
  *   （服务端收 pageContext；顶部明示行已于 103-6 用户修订中删
  *   除）；应用上下文另有进行中任务卡横条（A5，工作台形态以
  *   hideTaskBar 关闭——右栏已有任务详情）。
- * - 过程可见（第 91 步 A2）：生成中消息下方呈现步骤流（助手文本
- *   即 say 行 + 工具调用摘要〔turnSteps 适配点归一〕+ 已耗时），
- *   并给「中止」按钮（调线 B 取消端点，失败静默降级不崩）；
- *   failed 消息给「重试本步」入口（重发上一条用户消息承接续办）。
+ * - 过程可见（第 91 步 A2；2026-11-16 改：执行步骤与执行过程改在
+ *   右侧详情里显示）：ChatPane 把最新回合的过程快照经
+ *   onTurnProcessChange 上报父级（工作台在右侧任务页签渲染
+ *   TurnProcess，含已耗时与「中止」按钮）；对话框内只留正文、卡片
+ *   消息与交互按钮消息（failed 消息的「重试本步」仍在对话框内，
+ *   底部「正在处理 / 后台任务执行中」状态条亦随过程一并移出）。
+ *   未传 onTurnProcessChange 时保留旧行为（对话框内渲染过程）。
  */
 
 /** 页面上下文（第 90 步 A4）：字段能拿到才带，拿不到不硬造 */
@@ -99,6 +103,8 @@ export interface ChatPaneProps {
   onOpenTask?: (taskId: string) => void;
   /** 工作台：后台任务进展变化时通知父容器刷新右侧详情 */
   onTasksSync?: () => void;
+  /** 工作台：接管最新回合执行过程显示（传了即由父级在右侧详情里渲染，ChatPane 内不再重复渲染；不传则保持旧行为） */
+  onTurnProcessChange?: (snap: TurnProcessSnapshot | null) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -300,7 +306,10 @@ function PayloadCard({
 /* 过程可见（第 91 步 A2）：步骤流 + 已耗时 + 中止                        */
 /* ------------------------------------------------------------------ */
 
-function StepRow({ step }: { step: TurnStep }) {
+function StepRow({ step, live }: { step: TurnStep; live: boolean }) {
+  // 2026-11-16：状态显示及时——缺失状态的行按时间戳派生（已开始未
+  // 收口且回合进行中 = 执行中），不许执行中的步还灰着。
+  const status = effectiveStepStatus(step, live);
   const dur = stepDurationMs(step);
   const friendlyTool = humanizeToolName(step.tool);
   const friendlySummary = humanizeToolSummary(step.tool, step.summary);
@@ -308,41 +317,62 @@ function StepRow({ step }: { step: TurnStep }) {
     <div
       style={{
         display: "flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: 12,
-        color: tokens.colorTextSecondary,
+        flexDirection: "column",
+        gap: 2,
         minWidth: 0,
       }}
     >
-      {step.status === "running" ? (
-        <Spin size="small" />
-      ) : step.status === "done" ? (
-        <span style={{ color: tokens.colorSuccess, width: 14, textAlign: "center" }}>✓</span>
-      ) : step.status === "failed" ? (
-        <span style={{ color: tokens.colorErrorText, width: 14, textAlign: "center" }}>✕</span>
-      ) : (
-        <span style={{ color: tokens.colorTextTertiary, width: 14, textAlign: "center" }}>·</span>
-      )}
-      <Typography.Text
-        style={{ fontSize: 12, flexShrink: 0 }}
-        title={friendlyTool}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          fontSize: 12,
+          color: tokens.colorTextSecondary,
+          minWidth: 0,
+        }}
       >
-        {friendlyTool}
-      </Typography.Text>
-      {friendlySummary && (
+        {status === "running" ? (
+          <Spin size="small" />
+        ) : status === "done" ? (
+          <span style={{ color: tokens.colorSuccess, width: 14, textAlign: "center" }}>✓</span>
+        ) : status === "failed" ? (
+          <span style={{ color: tokens.colorErrorText, width: 14, textAlign: "center" }}>✕</span>
+        ) : (
+          <span style={{ color: tokens.colorTextTertiary, width: 14, textAlign: "center" }}>·</span>
+        )}
         <Typography.Text
-          type="secondary"
-          ellipsis
-          style={{ fontSize: 12, minWidth: 0 }}
-          title={friendlySummary}
+          style={{ fontSize: 12, flexShrink: 0 }}
+          title={friendlyTool}
         >
-          {friendlySummary}
+          {friendlyTool}
         </Typography.Text>
-      )}
-      {dur !== null && (
-        <Typography.Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
-          {fmtElapsed(dur)}
+        {friendlySummary && (
+          <Typography.Text
+            type="secondary"
+            ellipsis
+            style={{ fontSize: 12, minWidth: 0 }}
+            title={friendlySummary}
+          >
+            {friendlySummary}
+          </Typography.Text>
+        )}
+        {dur !== null && (
+          <Typography.Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+            {fmtElapsed(dur)}
+          </Typography.Text>
+        )}
+      </div>
+      {/* 2026-11-16：失败步的错误文本按时序跟在该步下方（服务端
+          result 原文，悬停看全文），不另起位置、不沉底汇总 */}
+      {status === "failed" && step.result && (
+        <Typography.Text
+          type="danger"
+          ellipsis
+          style={{ fontSize: 12, paddingLeft: 20, minWidth: 0 }}
+          title={step.result}
+        >
+          {step.result}
         </Typography.Text>
       )}
     </div>
@@ -375,7 +405,26 @@ function totalStepsDurationMs(steps: TurnStep[]): number | null {
   return hasSingle ? sum : null;
 }
 
-function TurnProcess({
+/**
+ * 对话框向父级（工作台）上报的最新回合执行过程快照（2026-11-16：执行
+ * 步骤与执行过程改在右侧详情里显示，对话框只留正文、卡片与交互按钮
+ * 消息；父级传 onTurnProcessChange 即接管过程显示）。onCancel 经 ref
+ * 转调 ChatPane 的 handleCancel，避免闭包过期。
+ */
+export interface TurnProcessSnapshot {
+  steps: TurnStep[];
+  /** 本回合已耗时（毫秒；已结束为 0，TurnProcess 按步骤耗时汇总） */
+  elapsedMs: number;
+  /** true = 回合已结束，呈现可折叠的过程汇总 */
+  completed: boolean;
+  /** 进行中且可取消时给出的取消回调 */
+  onCancel?: () => void;
+  cancelling: boolean;
+  /** 取消端点调用失败过：本回合不再让点（静默降级） */
+  cancelDisabled: boolean;
+}
+
+export function TurnProcess({
   steps,
   elapsedMs,
   completed = false,
@@ -462,7 +511,7 @@ function TurnProcess({
           </Button>
         )}
       </div>
-      {expanded && steps.map((s) => <StepRow key={s.id} step={s} />)}
+      {expanded && steps.map((s) => <StepRow key={s.id} step={s} live={!completed} />)}
     </div>
   );
 }
@@ -513,6 +562,7 @@ export default function ChatPane({
   onOpenDelegation,
   onOpenTask,
   onTasksSync,
+  onTurnProcessChange,
 }: ChatPaneProps) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
@@ -1035,6 +1085,65 @@ export default function ChatPane({
     -1,
   );
 
+  /** 2026-11-16：最新回合执行过程快照（上报给工作台右侧详情） */
+  const handleCancelRef = useRef(handleCancel);
+  handleCancelRef.current = handleCancel;
+  const latestProcess: TurnProcessSnapshot | null = useMemo(() => {
+    if (latestStepMsgIndex < 0) return null;
+    const msg = messages[latestStepMsgIndex];
+    if (!msg) return null;
+    const steps = turnStepsOf(msg, detailToolCalls);
+    if (steps.length === 0) return null;
+    const generating = msg.status === "generating";
+    const startedAtMs = msg.createdAt
+      ? Date.parse(msg.createdAt)
+      : turnStartRef.current;
+    const elapsedMs =
+      generating && startedAtMs && !Number.isNaN(startedAtMs)
+        ? Math.max(0, nowMs - startedAtMs)
+        : 0;
+    return {
+      steps,
+      elapsedMs,
+      completed: !generating,
+      onCancel:
+        generating && conversationId
+          ? () => void handleCancelRef.current()
+          : undefined,
+      cancelling,
+      cancelDisabled: cancelUnavailable,
+    };
+  }, [
+    messages,
+    detailToolCalls,
+    latestStepMsgIndex,
+    nowMs,
+    conversationId,
+    cancelling,
+    cancelUnavailable,
+  ]);
+
+  const prevProcessRef = useRef<TurnProcessSnapshot | null>(null);
+  useEffect(() => {
+    if (!onTurnProcessChange) return;
+    const prev = prevProcessRef.current;
+    const cur = latestProcess;
+    if (
+      prev === cur ||
+      (prev &&
+        cur &&
+        prev.completed === cur.completed &&
+        prev.elapsedMs === cur.elapsedMs &&
+        prev.cancelling === cur.cancelling &&
+        prev.cancelDisabled === cur.cancelDisabled &&
+        prev.steps === cur.steps)
+    ) {
+      return;
+    }
+    prevProcessRef.current = cur;
+    onTurnProcessChange(cur);
+  }, [latestProcess, onTurnProcessChange]);
+
   const renderMessage = (msg: AdminAssistantMessage, index: number) => {
     if (msg.role === "system") {
       return (
@@ -1095,7 +1204,8 @@ export default function ChatPane({
           )}
           {generating && <Spin size="small" style={{ marginLeft: 8 }} />}
         </div>
-        {(generating || steps.length > 0) && (
+        {/* 2026-11-16：父级接管过程显示时对话框内不再渲染过程 */}
+        {!onTurnProcessChange && (generating || steps.length > 0) && (
           <TurnProcess
             steps={steps}
             elapsedMs={elapsedMs}
@@ -1245,37 +1355,6 @@ export default function ChatPane({
           />
         ) : (
           messages.map((m, i) => renderMessage(m, i))
-        )}
-        {((sending && !hasGenerating) || (!sending && bgRunning)) && (
-          <div
-            style={{
-              alignSelf: "flex-start",
-              color: tokens.colorTextTertiary,
-              fontSize: 13,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <Spin size="small" />
-            {sending ? "正在处理…" : "后台任务执行中…"}
-            {sending && turnStartRef.current && (
-              <span>已耗时 {fmtElapsed(nowMs - turnStartRef.current)}</span>
-            )}
-            {sending && conversationId && (
-              <Button
-                size="small"
-                danger
-                type="text"
-                loading={cancelling}
-                disabled={cancelUnavailable}
-                style={{ height: "auto", padding: "0 4px", fontSize: 12 }}
-                onClick={() => void handleCancel()}
-              >
-                中止
-              </Button>
-            )}
-          </div>
         )}
         {turnError && (
           <Typography.Text type="danger" style={{ fontSize: 13 }}>
