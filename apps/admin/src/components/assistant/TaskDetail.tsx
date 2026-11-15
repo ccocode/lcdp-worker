@@ -8,22 +8,23 @@ import {
   summarizeArtifactFiles,
 } from "./semanticLabels";
 /**
- * 任务详情体（工作台右栏与任务记录页抽屉共用）：
- * 只展示本实体自己的数据，不跨实体取数——统一壳 = 标题 +
- * 种类标 + 状态标 + 目标；任务头下面是步骤清单（✓ + 文字，
- * 当前步骤默认展开显示执行动作、已完成默认收起、全部完成
- * 末尾显示执行完成；中间不显示时间）。
- * 预览卡与绑定审批卡不在此显示，只在对话框里（对话框是
- * 唯一操作面）；详情里只留暂停 / 终审未达标的状态行（对
- * 话框里没有继续运行 / 重试失败节点入口）。
- * 底部不放时间与继续入口（详情只展示，操作走对话框）；
- * 任务记录页仍可由调用方以 footer 注入去助手查看。待决事项的处理入口由调用方以
+ * 任务步骤框（工作台右栏每任务一只框，与任务记录页抽屉共用）：
+ * 与「执行过程」同一只框（StepsBox）——标题行 = 任务名 + 共 N
+ * 个步骤 + 种类标 + 状态标 + 展开/收起；框内只显示本任务自己
+ * 的执行步骤（清单 ✓ + 文字，当前步骤默认展开显示执行动作、
+ * 已完成默认收起、全部完成末尾显示执行完成；中间不显示时间）。
+ * 预览卡与绑定审批卡不在此显示，只在对话框里（对话框是唯一
+ * 操作面）；详情里只留暂停 / 终审未达标的状态行（对话框里没
+ * 有继续运行 / 重试失败节点入口）。底部不放时间与继续入口
+ * （详情只展示，操作走对话框）；任务记录页仍可由调用方以
+ * footer 注入去助手查看。待决事项的处理入口由调用方以
  * onHandlePending 注入（工作台：切到本任务会话；任务记录页：
  * 去助手查看）；不传则只展示待决、不给入口。
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Badge, Button, message, Spin, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
+import StepsBox from "./StepsBox";
 import {
   api,
   type AdminAssistantTask,
@@ -143,6 +144,11 @@ export default function TaskDetail({
   footer,
   appId,
   onHandlePending,
+  /** 受控展开态（工作台多框用）；不传则内部管理，默认展开 */
+  expanded,
+  onExpandedChange,
+  /** 非受控时的默认折叠（工作台：非焦点任务默认收起） */
+  defaultCollapsed = false,
 }: {
   task: AdminAssistantTask;
   footer?: ReactNode;
@@ -150,6 +156,9 @@ export default function TaskDetail({
   appId?: string | null;
   /** 待决事项的处理入口（不传则只展示） */
   onHandlePending?: () => void;
+  expanded?: boolean;
+  onExpandedChange?: (v: boolean) => void;
+  defaultCollapsed?: boolean;
 }) {
   const [runDetail, setRunDetail] = useState<AdminTaskRunDetail | null>(null);
   const [runLoading, setRunLoading] = useState(false);
@@ -199,27 +208,10 @@ export default function TaskDetail({
     return () => window.clearInterval(id);
   }, [task.status, appId, task.runId]);
   /**
-   * 详情自动滚到底部（2026-10-29 用户定）：内容变化（清单 /
-   * 执行动作 / 终态重拉、切任务）后，把最近的可滚动祖先（工作台右栏
-   * 或任务记录页抽屉体）滚到底部，最新内容始终可见。
+   * 2026-11-16 详情改版：右栏多只任务框并列，不再自动滚到底部
+   * （多框时滚到底会抢走用户正在看的框）；最新内容由最新一只
+   * 框默认展开呈现，点卡片查看详情时由工作台滚到对应框。
    */
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    let p: HTMLElement | null = el.parentElement;
-    while (p) {
-      const overflowY = window.getComputedStyle(p).overflowY;
-      if (
-        (overflowY === "auto" || overflowY === "scroll") &&
-        p.scrollHeight > p.clientHeight
-      ) {
-        p.scrollTop = p.scrollHeight;
-        break;
-      }
-      p = p.parentElement;
-    }
-  }, [runDetail, task.id]);
   /**
    * 详情实时刷新（2026-10-29 用户定）：详情开着时订阅同一条
    * run SSE，流里有动静（执行动作 / 终态）就重拉一次详情，
@@ -279,11 +271,15 @@ export default function TaskDetail({
   };
   // 始终以服务端最新返回的 runDetail.task 为准，防止左侧计划卡已推进（1/5、3/5）而右侧仍滞后为 0/5
   const activeTask = runDetail?.task ?? task;
-  const arts = activeTask.artifacts as Record<string, unknown> | null | undefined;
-  const themeLine =
-    activeTask.kind === "theme_build" && typeof arts?.themeId === "string"
-      ? `主题：${arts.themeId}${typeof arts.version === "string" ? `@${arts.version}` : ""}`
-      : null;
+  /** 框折叠态（受控时由父级管；非受控默认展开，任务记录页抽屉即此态） */
+  const [userBoxExpanded, setUserBoxExpanded] = useState<boolean | null>(null);
+  const boxExpanded =
+    expanded !== undefined ? expanded : (userBoxExpanded ?? !defaultCollapsed);
+  const toggleBox = () => {
+    const next = !boxExpanded;
+    if (onExpandedChange) onExpandedChange(next);
+    else setUserBoxExpanded(next);
+  };
 
   /** 步骤清单（任务头下面的唯一正文）：✓ + 文字。 */
   type StepState = "passed" | "failed" | "skipped" | "pending";
@@ -447,36 +443,58 @@ export default function TaskDetail({
     }
     return <StatusDot status="waiting" />;
   };
+  const headerText = `${humanizeTaskTitle(activeTask.title)}${
+    checklist.length > 0 ? ` · 共 ${checklist.length} 个步骤` : ""
+  }`;
   return (
-    <div
-      ref={rootRef}
-      style={{ display: "flex", flexDirection: "column", gap: 8 }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <Typography.Text
-          style={{ fontSize: 13, flex: 1 }}
-          ellipsis
-          title={humanizeTaskTitle(activeTask.title)}
-        >
-          {humanizeTaskTitle(activeTask.title)}
-        </Typography.Text>
-        {activeTask.kind && (
-          <Tag style={{ marginInlineEnd: 0 }}>
-            {TASK_KIND_LABELS[activeTask.kind] ?? activeTask.kind}
+    <StepsBox
+      header={
+        <>
+          <Button
+            type="text"
+            size="small"
+            onClick={toggleBox}
+            style={{
+              height: "auto",
+              padding: 0,
+              fontSize: 12,
+              color: tokens.colorTextSecondary,
+              flex: 1,
+              textAlign: "left",
+              justifyContent: "flex-start",
+              minWidth: 0,
+            }}
+          >
+            <Typography.Text
+              ellipsis
+              style={{ fontSize: 12, flex: 1, minWidth: 0 }}
+              title={headerText}
+            >
+              {headerText}
+            </Typography.Text>
+            <span
+              style={{
+                marginLeft: 8,
+                color: tokens.colorPrimary,
+                flexShrink: 0,
+              }}
+            >
+              {boxExpanded ? "收起" : "展开"}
+            </span>
+          </Button>
+          {activeTask.kind && (
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {TASK_KIND_LABELS[activeTask.kind] ?? activeTask.kind}
+            </Tag>
+          )}
+          <Tag style={{ marginInlineEnd: 0 }} color={headerStatusColor}>
+            {headerStatusLabel}
           </Tag>
-        )}
-        <Tag style={{ marginInlineEnd: 0 }} color={headerStatusColor}>
-          {headerStatusLabel}
-        </Tag>
-      </div>
-      {activeTask.goal && (
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          目标：{humanizeOpsCopy(activeTask.goal)}
-        </Typography.Text>
-      )}
-      {themeLine && (
-        <Typography.Text style={{ fontSize: 12 }}>{themeLine}</Typography.Text>
-      )}
+        </>
+      }
+    >
+      {boxExpanded && (
+        <>
       {/* 2026-11-16：取消详情内的进度条（进度仍以清单各项状态呈现） */}
       {checklist.length > 0 && (
         <div
@@ -834,7 +852,8 @@ export default function TaskDetail({
       {footer && (
         <div style={{ display: "flex", gap: 8, marginTop: 4 }}>{footer}</div>
       )}
-
-    </div>
+        </>
+      )}
+    </StepsBox>
   );
 }

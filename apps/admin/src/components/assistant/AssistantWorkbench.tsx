@@ -15,6 +15,7 @@ import {
   type AdminAssistantMemory,
   type AdminAssistantMessage,
   type AdminAssistantTask,
+  type AdminAssistantToolCall,
 } from "../../api";
 import { fmtTime } from "../../helpers";
 import ChatPane, {
@@ -25,7 +26,7 @@ import ChatPane, {
 import TaskDetail from "./TaskDetail";
 import type { DelegationViewTarget } from "./MessageTaskCards";
 import { MEMORY_CATEGORY_LABELS } from "./AssistantMemoryPanel";
-import { isPendingMemory } from "./turnSteps";
+import { isPendingMemory, turnStepsOf } from "./turnSteps";
 import { humanizeOpsCopy, humanizeStepLabel } from "./semanticLabels";
 
 /**
@@ -53,9 +54,10 @@ interface PaneSession {
   fresh: boolean;
 }
 
-/** 右侧子代理详情：顶部 = 步骤名 + 目标，下方 = 子代理对话记录
- * （只读）。只展示派发自己的数据，不回链父任务；返回靠中栏
- * 重选卡片（左到右展开，不设回链）。 */
+/** 右侧子代理详情（2026-11-16 详情改版）：与「执行过程」同一只框——
+ * 框内只显示子代理的执行步骤（子会话各消息的工具调用按时序汇总），
+ * 标题行 = 步骤名 + 共 N 个步骤；无工具调用时回落为对话记录（只读）。
+ * 只展示派发自己的数据，不回链父任务；返回靠中栏重选卡片。 */
 function DelegationDetail({
   appId,
   target,
@@ -64,6 +66,7 @@ function DelegationDetail({
   target: DelegationViewTarget;
 }) {
   const [messages, setMessages] = useState<AdminAssistantMessage[]>([]);
+  const [toolCalls, setToolCalls] = useState<AdminAssistantToolCall[]>([]);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -75,7 +78,10 @@ function DelegationDetail({
               target.childConversationId,
             )
           : await api.assistant.conversation(target.childConversationId);
-        if (alive) setMessages(detail.messages);
+        if (alive) {
+          setMessages(detail.messages);
+          setToolCalls(detail.toolCalls ?? []);
+        }
       } catch {
         if (alive) setFailed(true);
       }
@@ -84,13 +90,24 @@ function DelegationDetail({
       alive = false;
     };
   }, [appId, target.childConversationId]);
+  const steps = useMemo(() => {
+    const all = messages.flatMap((m) => turnStepsOf(m, toolCalls));
+    return all
+      .map((step, idx) => ({ step, idx }))
+      .sort((a, b) => {
+        const ta = a.step.startedAt ? Date.parse(a.step.startedAt) : null;
+        const tb = b.step.startedAt ? Date.parse(b.step.startedAt) : null;
+        if (ta !== null && tb !== null && ta !== tb) return ta - tb;
+        if (ta !== null && tb === null) return -1;
+        if (ta === null && tb !== null) return 1;
+        return a.idx - b.idx;
+      })
+      .map(({ step }) => step);
+  }, [messages, toolCalls]);
   const roleLabel = (role: string) =>
     role === "user" ? "用户" : role === "system" ? "系统" : "助手";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <Typography.Text strong style={{ fontSize: 13 }}>
-        {humanizeStepLabel(target.stepLabel)}
-      </Typography.Text>
       {target.goal && (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           目标：{humanizeOpsCopy(target.goal)}
@@ -101,19 +118,29 @@ function DelegationDetail({
           {target.roundLabel}
         </Typography.Text>
       )}
-      <Typography.Text strong style={{ fontSize: 13 }}>
-        对话记录
-      </Typography.Text>
       {failed ? (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          子代理对话记录暂不可用
+          子代理执行记录暂不可用
         </Typography.Text>
+      ) : steps.length > 0 ? (
+        <TurnProcess
+          steps={steps}
+          elapsedMs={0}
+          completed
+          defaultCollapsed={false}
+          title={humanizeStepLabel(target.stepLabel)}
+          cancelling={false}
+          cancelDisabled={false}
+        />
       ) : messages.length === 0 ? (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
           暂无对话记录
         </Typography.Text>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            对话记录
+          </Typography.Text>
           {messages.map((m) => (
             <div key={m.id}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -193,6 +220,10 @@ export default function AssistantWorkbench({
   const [rightTab, setRightTab] = useState<"detail" | "memory">("memory");
   /** 2026-11-16：最新回合执行过程快照（ChatPane 上报；右侧任务页签顶部渲染，执行步骤与执行过程只在此处显示） */
   const [turnProcess, setTurnProcess] = useState<TurnProcessSnapshot | null>(null);
+  /** 2026-11-16 详情改版：右栏任务框的展开集（受控；切会话时重置为最新一只，新任务落成时自动展开它） */
+  const [expandedTaskIds, setExpandedTaskIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   /** 2026-11-16：回合开始执行时切到任务页签，让执行过程可见（只在进入执行中那一刻切一次，不反复抢页签） */
   const wasGeneratingRef = useRef(false);
   useEffect(() => {
@@ -278,6 +309,7 @@ export default function AssistantWorkbench({
       });
     }
     setSelectedTaskId(taskId);
+    setExpandedTaskIds((prev) => new Set(prev).add(taskId));
     setDelegationView(null);
     onExpandRight?.();
     if (!found) {
@@ -324,6 +356,52 @@ export default function AssistantWorkbench({
   );
 
   /**
+   * 2026-11-16 详情改版：当前会话的任务框（按创建时间升序）；
+   * 被选中的任务即使不在当前会话也追加一只框（建议深链直达兜底）。
+   */
+  const conversationTasks = useMemo(() => {
+    const list = tasks.filter(
+      (t) => currentCid && t.conversationId === currentCid,
+    );
+    const sorted = [...list].sort((a, b) => {
+      const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
+      const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
+      return ta - tb;
+    });
+    if (selectedTask && !sorted.some((t) => t.id === selectedTask.id)) {
+      sorted.push(selectedTask);
+    }
+    return sorted;
+  }, [tasks, currentCid, selectedTask]);
+
+  /** 切会话重置展开集、新任务落成自动展开：只认会话切换与最新任务变化，用户手动收起不被任务重拉打回 */
+  const boxResetCidRef = useRef<string | null | undefined>(undefined);
+  const boxLatestIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const latest = conversationTasks[conversationTasks.length - 1] ?? null;
+    if (boxResetCidRef.current !== currentCid) {
+      boxResetCidRef.current = currentCid;
+      boxLatestIdRef.current = latest?.id ?? null;
+      setExpandedTaskIds(latest ? new Set([latest.id]) : new Set());
+      return;
+    }
+    if (latest && boxLatestIdRef.current !== latest.id) {
+      boxLatestIdRef.current = latest.id;
+      setExpandedTaskIds((prev) => new Set(prev).add(latest.id));
+    }
+    // 仅以会话与任务列表变化为触发信号
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCid, conversationTasks]);
+
+  const toggleTaskBox = (id: string, v: boolean) =>
+    setExpandedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (v) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  /**
    * 左栏选会话（左到右展开的起点）：中栏切到该会话，右栏重置
    * （详情属于旧会话的卡片，不跟到新会话）；右栏回到记忆页签。
    */
@@ -352,8 +430,15 @@ export default function AssistantWorkbench({
     setSelectedTaskId(taskId);
     setDelegationView(null);
     setRightTab("detail");
+    setExpandedTaskIds((prev) => new Set(prev).add(taskId));
     void loadAllTasks();
     onExpandRight?.();
+    // 框渲染后滚到该任务框（卡片在对话框里，框在右栏）
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`task-box-${taskId}`)
+        ?.scrollIntoView({ block: "start" });
+    });
   };
 
   /**
@@ -640,7 +725,13 @@ export default function AssistantWorkbench({
               key: "detail",
               label: "任务",
               children: (
-                <>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                  }}
+                >
                   {/* 2026-11-16：最新回合执行过程（步骤按时序自上而下，失败步行内跟错误文本） */}
                   {turnProcess && (
                     <TurnProcess
@@ -653,28 +744,40 @@ export default function AssistantWorkbench({
                       cancelDisabled={turnProcess.cancelDisabled}
                     />
                   )}
+                  {/* 2026-11-16 详情改版：只显示执行步骤——每任务一只
+                      执行过程样式的框（子代理详情同样式）；任务列表
+                      与对话框计划卡重复的头部/目标/清单展示已去掉 */}
                   {delegationView ? (
                     <DelegationDetail
                       appId={appId}
                       target={delegationView}
                     />
-                  ) : selectedTask ? (
-                    <TaskDetail
-                      task={selectedTask}
-                      appId={appId}
-                      onHandlePending={
-                        selectedTask.conversationId
-                          ? () => openConversation(selectedTask.conversationId as string)
-                          : undefined
-                      }
-                    />
+                  ) : conversationTasks.length > 0 ? (
+                    conversationTasks.map((t) => (
+                      <div key={t.id} id={`task-box-${t.id}`}>
+                        <TaskDetail
+                          task={t}
+                          appId={appId}
+                          expanded={expandedTaskIds.has(t.id)}
+                          onExpandedChange={(v) => toggleTaskBox(t.id, v)}
+                          onHandlePending={
+                            t.conversationId
+                              ? () =>
+                                  openConversation(t.conversationId as string)
+                              : undefined
+                          }
+                        />
+                      </div>
+                    ))
                   ) : (
-                    <Empty
-                      description="点消息内的任务卡查看详情"
-                      image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    />
+                    !turnProcess && (
+                      <Empty
+                        description="点消息内的任务卡查看详情"
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      />
+                    )
                   )}
-                </>
+                </div>
               ),
             },
             {

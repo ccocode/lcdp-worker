@@ -36,6 +36,7 @@ import {
   type DelegationViewTarget,
 } from "./MessageTaskCards";
 import { hasRunningAssistantTask } from "./assistantRunning";
+import StepsBox from "./StepsBox";
 import {
   humanizeOpsCopy,
   humanizeTaskTitle,
@@ -432,6 +433,8 @@ export function TurnProcess({
   onCancel,
   cancelling,
   cancelDisabled,
+  /** 框标题（不传即「执行过程」；子代理执行记录传步骤名） */
+  title,
 }: {
   steps: TurnStep[];
   /** 本回合已耗时（毫秒） */
@@ -444,6 +447,7 @@ export function TurnProcess({
   cancelling: boolean;
   /** 取消端点调用失败过：本回合不再让点（静默降级） */
   cancelDisabled: boolean;
+  title?: string;
 }) {
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
   const expanded = !completed
@@ -454,65 +458,60 @@ export function TurnProcess({
   const totalMs = completed ? totalStepsDurationMs(steps) : elapsedMs;
   const hasFailed = steps.some((s) => s.status === "failed");
   const headerText = completed
-    ? `${hasFailed ? "执行过程（含异常）" : "执行过程"} · 共 ${steps.length} 个步骤${
+    ? `${title ?? (hasFailed ? "执行过程（含异常）" : "执行过程")} · 共 ${steps.length} 个步骤${
         totalMs !== null ? ` · 耗时 ${fmtElapsed(totalMs)}` : ""
       }`
-    : `执行中 · 已耗时 ${fmtElapsed(elapsedMs)}`;
+    : title
+      ? `${title} · 已耗时 ${fmtElapsed(elapsedMs)}`
+      : `执行中 · 已耗时 ${fmtElapsed(elapsedMs)}`;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        padding: "6px 10px",
-        border: `1px solid ${tokens.colorDivider}`,
-        borderRadius: 8,
-        background: tokens.colorBgContainer,
-      }}
+    <StepsBox
+      header={
+        <>
+          {completed ? (
+            <Button
+              type="text"
+              size="small"
+              onClick={() => setUserExpanded(!expanded)}
+              style={{
+                height: "auto",
+                padding: 0,
+                fontSize: 12,
+                color: tokens.colorTextSecondary,
+                flex: 1,
+                textAlign: "left",
+                justifyContent: "flex-start",
+              }}
+            >
+              <span>{headerText}</span>
+              <span style={{ marginLeft: 8, color: tokens.colorPrimary }}>
+                {expanded ? "收起" : "展开"}
+              </span>
+            </Button>
+          ) : (
+            <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
+              {headerText}
+            </Typography.Text>
+          )}
+          {!completed && onCancel && (
+            <Button
+              size="small"
+              danger
+              type="text"
+              loading={cancelling}
+              disabled={cancelDisabled}
+              style={{ height: "auto", padding: "0 4px", fontSize: 12 }}
+              onClick={onCancel}
+            >
+              中止
+            </Button>
+          )}
+        </>
+      }
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {completed ? (
-          <Button
-            type="text"
-            size="small"
-            onClick={() => setUserExpanded(!expanded)}
-            style={{
-              height: "auto",
-              padding: 0,
-              fontSize: 12,
-              color: tokens.colorTextSecondary,
-              flex: 1,
-              textAlign: "left",
-              justifyContent: "flex-start",
-            }}
-          >
-            <span>{headerText}</span>
-            <span style={{ marginLeft: 8, color: tokens.colorPrimary }}>
-              {expanded ? "收起" : "展开"}
-            </span>
-          </Button>
-        ) : (
-          <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
-            {headerText}
-          </Typography.Text>
-        )}
-        {!completed && onCancel && (
-          <Button
-            size="small"
-            danger
-            type="text"
-            loading={cancelling}
-            disabled={cancelDisabled}
-            style={{ height: "auto", padding: "0 4px", fontSize: 12 }}
-            onClick={onCancel}
-          >
-            中止
-          </Button>
-        )}
-      </div>
       {expanded && steps.map((s) => <StepRow key={s.id} step={s} live={!completed} />)}
-    </div>
+    </StepsBox>
   );
 }
 
