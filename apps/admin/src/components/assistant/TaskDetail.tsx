@@ -1,18 +1,16 @@
 import {
   humanizeNodeName,
   humanizeStepLabel,
-  humanizeTaskTitle,
   humanizeTechnicalDetail,
   humanizeTimelineSummary,
   summarizeArtifactFiles,
 } from "./semanticLabels";
 /**
  * 任务执行轨迹（工作台右栏每任务一段，与任务记录页抽屉共用）：
- * 详情只显示、不操作——这里是本任务的执行轨迹。任务头只是一行
- * plain 文字：任务名 + 共 N 个执行动作 + 种类标 + 状态标 + 展开/
- * 收起；其下步骤框直接顶格平铺，不再包进一只带边框的计划框
- * （2026-11-16 用户定：去掉计划框，步骤框直接平铺）。步骤框内
- * 只显示任务执行动作，按执行时序从上往下排列（2026-11-16 用户定）。
+ * 详情只显示、不操作——这里是本任务的执行轨迹。计划标题不列在
+ * 详情里（2026-11-16 用户定）：任务头（标题 + 种类 + 状态 +
+ * 收起/展开）整个去掉，步骤框直接顶格平铺、内容始终展开；
+ * 计划本身只在对话框计划卡里。步骤框内只显示任务执行动作，按执行时序从上往下排列（2026-11-16 用户定）。
  * 计划任务：每一步一只框（2026-11-16 用户定：计划任务中规划的
  * 步骤就是一个框），框里是这一步具体执行了哪些动作（自然语言，
  * 不出现程序化描述），哪一步报错就写在哪一步；执行到哪一步就显
@@ -181,18 +179,10 @@ function dedupeTimeline(
 export default function TaskDetail({
   task,
   appId,
-  /** 受控展开态（工作台多框用）；不传则内部管理，默认展开 */
-  expanded,
-  onExpandedChange,
-  /** 非受控时的默认折叠（工作台：非焦点任务默认收起） */
-  defaultCollapsed = false,
 }: {
   task: AdminAssistantTask;
   /** 传了且任务有 runId 时才取 run 详情（不传则不取数；传 null 走平台侧） */
   appId?: string | null;
-  expanded?: boolean;
-  onExpandedChange?: (v: boolean) => void;
-  defaultCollapsed?: boolean;
 }) {
   const [runDetail, setRunDetail] = useState<AdminTaskRunDetail | null>(null);
   const [runLoading, setRunLoading] = useState(false);
@@ -281,47 +271,9 @@ export default function TaskDetail({
   }, [appId, task.id, task.runId]);
   // 始终以服务端最新返回的 runDetail.task 为准，防止左侧计划卡已推进（1/5、3/5）而右侧仍滞后为 0/5
   const activeTask = runDetail?.task ?? task;
-  /** 框折叠态（受控时由父级管；非受控默认展开，任务记录页抽屉即此态） */
-  const [userBoxExpanded, setUserBoxExpanded] = useState<boolean | null>(null);
-  const boxExpanded =
-    expanded !== undefined ? expanded : (userBoxExpanded ?? !defaultCollapsed);
-  const toggleBox = () => {
-    const next = !boxExpanded;
-    if (onExpandedChange) onExpandedChange(next);
-    else setUserBoxExpanded(next);
-  };
-
   const runStatus = runDetail?.run?.runStatus ?? null;
   /** 详情头状态跟 runStatus（收尾1）：等验收/等确认首页等态不再只显示“进行中”，与对话框卡角标同口径；run 详情未到时回落任务行 runStatus。 */
   const headerRunStatus = runStatus ?? activeTask.runStatus ?? null;
-  /** C 批（状态口径统一）：审批前 run_status 为 null 时详情栏显示“待审批”，
-   * 不许回落到 task.status 的“进行中”（与计划卡同口径，见 MessageTaskCards）。 */
-  const headerStatusLabel =
-    headerRunStatus === null
-      ? "待审批"
-      : headerRunStatus === "failed"
-        ? "已失败"
-        : headerRunStatus === "paused"
-          ? "已暂停"
-          : headerRunStatus === "awaiting_preview"
-            ? "等你验收预览"
-            : headerRunStatus === "awaiting_bind"
-              ? "等你确认绑定"
-              : headerRunStatus === "awaiting_home"
-                ? "等你确认首页"
-                : (TASK_STATUS_LABELS[activeTask.status] ?? activeTask.status);
-  const headerStatusColor =
-    headerRunStatus === "failed"
-      ? "red"
-      : headerRunStatus === "paused"
-        ? "orange"
-        : headerRunStatus === "awaiting_preview"
-          ? "blue"
-          : headerRunStatus === "awaiting_bind"
-            ? "purple"
-            : headerRunStatus === "awaiting_home"
-              ? "cyan"
-              : undefined;
   /** C 批（状态口径统一）：在跑必须由 run_status 正面确立（pending/running）。
    * 旧口径以 task.status === "active" 为主、runStatus 只做排除，run_status 为
    * null（审批前、run 未创建）时会漏网成“在跑”，首步误显“正在执行…”。
@@ -352,7 +304,6 @@ export default function TaskDetail({
     isRunning,
     lastEvent,
   });
-  const traceCount = nodes.length + orphanRows.length;
   /** 计划任务：节点按 phase=plan:<序号> 归属到计划步骤，每一步一只框；
    * 步骤按计划顺序（即执行顺序）从上往下排；无 phase 或序号越界的节点
    * 不分组，仍平铺在步骤框之后。 */
@@ -583,53 +534,11 @@ export default function TaskDetail({
   const hasTrace =
     nodes.length > 0 || timeline.length > 0 || otherPendings.length > 0;
 
-  const headerText = `${humanizeTaskTitle(activeTask.title)}${
-    traceCount > 0 ? ` · 共 ${traceCount} 个执行动作` : ""
-  }`;
   return (
-    // 详情不套计划框（2026-11-16 用户定：去掉计划框，步骤框直接平铺）：
-    // 任务头只是一行 plain 文字（标题 + 种类 + 状态），步骤框直接顶格平铺，
-    // 不再包进一只带边框的 StepsBox。收起/展开仍由标题行控制（多任务时父级管）。
+    // 详情只放执行内容（2026-11-16 用户定：计划标题不列在详情里）：
+    // 任务头（标题 + 种类 + 状态 + 收起/展开）整个去掉，步骤框直接
+    // 顶格平铺、内容始终展开。计划本身只在对话框计划卡里。
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div
-          onClick={toggleBox}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            alignItems: "center",
-            cursor: "pointer",
-          }}
-        >
-          <Typography.Text
-            ellipsis
-            style={{ fontSize: 12, flex: 1, minWidth: 0 }}
-            title={headerText}
-          >
-            {headerText}
-          </Typography.Text>
-          <span
-            style={{
-              marginLeft: 8,
-              color: tokens.colorPrimary,
-              flexShrink: 0,
-            }}
-          >
-            {boxExpanded ? "收起" : "展开"}
-          </span>
-        </div>
-        {activeTask.kind && (
-          <Tag style={{ marginInlineEnd: 0 }}>
-            {TASK_KIND_LABELS[activeTask.kind] ?? activeTask.kind}
-          </Tag>
-        )}
-        <Tag style={{ marginInlineEnd: 0 }} color={headerStatusColor}>
-          {headerStatusLabel}
-        </Tag>
-      </div>
-      {boxExpanded && (
-        <>
           {runLoading && (
             <div style={{ padding: "8px 0" }}>
               <Spin size="small" />
@@ -793,8 +702,6 @@ export default function TaskDetail({
               ))}
             </div>
           )}
-        </>
-      )}
     </div>
   );
 }

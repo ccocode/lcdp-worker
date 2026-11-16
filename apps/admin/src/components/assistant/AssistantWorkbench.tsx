@@ -218,10 +218,6 @@ export default function AssistantWorkbench({
   const [rightTab, setRightTab] = useState<"detail" | "memory">("memory");
   /** 2026-11-16：最新回合执行过程快照（ChatPane 上报；右侧任务页签顶部渲染，执行步骤与执行过程只在此处显示） */
   const [turnProcess, setTurnProcess] = useState<TurnProcessSnapshot | null>(null);
-  /** 2026-11-16 详情改版：右栏任务框的展开集（受控；切会话时重置为最新一只，新任务落成时自动展开它） */
-  const [expandedTaskIds, setExpandedTaskIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
   /** 2026-11-16：回合开始执行时切到任务页签，让执行过程可见（只在进入执行中那一刻切一次，不反复抢页签） */
   const wasGeneratingRef = useRef(false);
   useEffect(() => {
@@ -307,7 +303,6 @@ export default function AssistantWorkbench({
       });
     }
     setSelectedTaskId(taskId);
-    setExpandedTaskIds((prev) => new Set(prev).add(taskId));
     setDelegationView(null);
     onExpandRight?.();
     if (!found) {
@@ -373,32 +368,6 @@ export default function AssistantWorkbench({
   }, [tasks, currentCid, selectedTask]);
 
   /** 切会话重置展开集、新任务落成自动展开：只认会话切换与最新任务变化，用户手动收起不被任务重拉打回 */
-  const boxResetCidRef = useRef<string | null | undefined>(undefined);
-  const boxLatestIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    const latest = conversationTasks[conversationTasks.length - 1] ?? null;
-    if (boxResetCidRef.current !== currentCid) {
-      boxResetCidRef.current = currentCid;
-      boxLatestIdRef.current = latest?.id ?? null;
-      setExpandedTaskIds(latest ? new Set([latest.id]) : new Set());
-      return;
-    }
-    if (latest && boxLatestIdRef.current !== latest.id) {
-      boxLatestIdRef.current = latest.id;
-      setExpandedTaskIds((prev) => new Set(prev).add(latest.id));
-    }
-    // 仅以会话与任务列表变化为触发信号
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentCid, conversationTasks]);
-
-  const toggleTaskBox = (id: string, v: boolean) =>
-    setExpandedTaskIds((prev) => {
-      const next = new Set(prev);
-      if (v) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-
   /**
    * 左栏选会话（左到右展开的起点）：中栏切到该会话，右栏重置
    * （详情属于旧会话的卡片，不跟到新会话）；右栏回到记忆页签。
@@ -428,7 +397,6 @@ export default function AssistantWorkbench({
     setSelectedTaskId(taskId);
     setDelegationView(null);
     setRightTab("detail");
-    setExpandedTaskIds((prev) => new Set(prev).add(taskId));
     void loadAllTasks();
     onExpandRight?.();
     // 框渲染后滚到该任务框（卡片在对话框里，框在右栏）
@@ -773,12 +741,7 @@ export default function AssistantWorkbench({
                   ) : conversationTasks.length > 0 ? (
                     conversationTasks.map((t) => (
                       <div key={t.id} id={`task-box-${t.id}`}>
-                        <TaskDetail
-                          task={t}
-                          appId={appId}
-                          expanded={expandedTaskIds.has(t.id)}
-                          onExpandedChange={(v) => toggleTaskBox(t.id, v)}
-                        />
+                        <TaskDetail task={t} appId={appId} />
                       </div>
                     ))
                   ) : (
