@@ -14,16 +14,18 @@ import {
  * 时序从上往下排列（2026-11-16 用户定）。
  * 计划任务：每一步一只框（2026-11-16 用户定：计划任务中规划的
  * 步骤就是一个框），框里是这一步具体执行了哪些动作（自然语言，
- * 不出现程序化描述），哪一步报错就写在哪一步；步骤按计划顺序
- * （即执行顺序）从上往下排，框内动作按创建时间排；无动作的步骤
- * 只显一条结果说明（清单 evidence）。这不是计划清单的重复——框
- * 的标题是步骤名，内容是动作；计划清单本身只在对话框计划卡里。
+ * 不出现程序化描述），哪一步报错就写在哪一步；执行到哪一步就显
+ * 示哪一步的框，已完成的不隐藏，未执行到的不显示；步骤按计划顺
+ * 序（即执行顺序）从上往下排，框内动作按创建时间排；无动作的步
+ * 骤只显一条结果说明（清单 evidence）。框内动作与完成记录放平
+ * （同级行，各带时间，不再一上一下嵌套）。这不是计划清单的重
+ * 复——框的标题是步骤名，内容是动作；计划清单本身只在对话框计
+ * 划卡里。
  * 非计划任务、或无 phase 的节点仍按创建顺序平铺；无归属的时间线
- * 事件按 seq 排在末尾，每行之下挂其时间线事件（阶段完成记录、
- * 错误文本、终审未达标跟待完善项）。预览/绑定/首页确认卡只在
- * 对话框里，详情里不出现；详情里没有任何按钮——继续运行、重试、
- * 去处理等操作一律走对话框，详情不给入口。底部不放时间与继续
- * 入口（详情只展示，操作走对话框）。
+ * 事件按 seq 排在末尾。预览/绑定/首页确认卡只在对话框里，详情里
+ * 不出现；详情里没有任何按钮——继续运行、重试、去处理等操作一律
+ * 走对话框，详情不给入口。底部不放时间与继续入口（详情只展示，
+ * 操作走对话框）。
  */
 import { useEffect, useRef, useState } from "react";
 import { Badge, Spin, Tag, Typography } from "antd";
@@ -383,7 +385,17 @@ export default function TaskDetail({
     if (item && CHECK_FAILED.has(item.status)) return "failed";
     return "waiting";
   };
-  /** 节点行：圆点 + 动作名 + 错误/产物 + 挂在其下的时间线事件。 */
+  /** 步骤是否已执行到：有执行动作，或清单状态已离开待开始（进行中/
+   * 已完成/已失败）。执行到哪一步就显示哪一步的框，已完成的不隐藏，
+   * 未执行到的步骤（无动作且清单仍为 pending）不显示框。 */
+  const isStepReached = (idx: number): boolean => {
+    if ((stepNodeMap.get(idx) ?? []).length > 0) return true;
+    const item = checklist[idx];
+    return !!item && item.status !== "pending";
+  };
+  /** 节点行：动作与完成记录放平（同级行，各带时间）——动作行、错误/
+   * 产物行、时间线事件行一律不缩进，不再一上一下嵌套（2026-11-16
+   * 用户定：动作和完成记录放平）。 */
   const renderNode = (n: AdminTaskRunNode) => {
     const rawNodeEvents = eventsByNode.get(n.nodeId) ?? [];
     const nodeEvents = dedupeTimeline(rawNodeEvents, {
@@ -436,7 +448,6 @@ export default function TaskDetail({
             style={{
               fontSize: 12,
               display: "block",
-              marginLeft: 22,
               wordBreak: "break-word",
             }}
           >
@@ -449,7 +460,6 @@ export default function TaskDetail({
             style={{
               fontSize: 12,
               display: "block",
-              marginLeft: 22,
               wordBreak: "break-word",
             }}
           >
@@ -465,7 +475,7 @@ export default function TaskDetail({
               display: "flex",
               alignItems: "center",
               gap: 6,
-              padding: "2px 0 2px 22px",
+              padding: "2px 0",
               wordBreak: "break-word",
             }}
           >
@@ -486,11 +496,15 @@ export default function TaskDetail({
       </div>
     );
   };
-  /** 计划步骤框：标题 = 步骤名（自然语言）+ 执行态圆点；框里是这一步
+  /** 计划步骤框：只显示已执行到的步骤（未执行到的不显示，已完成的
+   * 不隐藏）；标题 = 步骤名（自然语言）+ 执行态圆点；框里是这一步
    * 的执行动作（按创建时间排）；无动作的步骤只显一条结果说明。 */
   const renderStepBox = (idx: number) => {
     const item = checklist[idx];
     if (!item) return null;
+    // 执行到哪一步就显示哪一步的框（2026-11-16 用户定）；未执行到
+    // 的步骤不显示框，已完成的不隐藏。
+    if (!isStepReached(idx)) return null;
     const stepNodes = stepNodeMap.get(idx) ?? [];
     const evidence = typeof item.evidence === "string" ? item.evidence.trim() : "";
     return (
