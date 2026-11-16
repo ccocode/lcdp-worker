@@ -438,12 +438,18 @@ export default function TaskDetail({
     const lastRawEvent =
       rawNodeEvents.length > 0 ? rawNodeEvents[rawNodeEvents.length - 1]! : null;
     const nodeTime = formatClock(lastRawEvent?.createdAt);
+    // 报错只在节点真正失败时才红字跟在动作行下方（2026-11-16 用户
+    // 定）：重试中的节点（网关 503 等瞬时错、attempts>1）只显示
+    // 「正在优化调整」与时间线里的「本阶段生成遇阻」，不把上一次
+    // 尝试的原始报错顶在动作最上面——否则一个还没失败的节点顶着
+    // 一行红字，夹在执行动作中间，看着像已经失败了。
+    const nodeFailed = CHECK_FAILED.has(n.status);
     return (
       <div key={n.nodeId} style={{ fontSize: 12 }}>
         <DetailActionRow
           time={nodeTime}
           status={nodeDot(n.status)}
-          error={n.error ? humanizeTechnicalDetail(n.error) : null}
+          error={nodeFailed && n.error ? humanizeTechnicalDetail(n.error) : null}
         >
           {humanizeNodeName(n.nodeId, n.kind)}
           {n.attempts > 1 ? "，正在优化调整" : ""}
