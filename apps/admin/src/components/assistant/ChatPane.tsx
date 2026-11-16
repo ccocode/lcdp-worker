@@ -36,7 +36,12 @@ import {
   type DelegationViewTarget,
 } from "./MessageTaskCards";
 import { hasRunningAssistantTask } from "./assistantRunning";
-import StepsBox from "./StepsBox";
+import {
+  DetailActionRow,
+  DetailBox,
+  formatClock,
+  type DetailStatus,
+} from "./DetailBox";
 import {
   humanizeOpsCopy,
   humanizeTaskTitle,
@@ -307,79 +312,6 @@ function PayloadCard({
 /* 过程可见（第 91 步 A2）：步骤流 + 已耗时 + 中止                        */
 /* ------------------------------------------------------------------ */
 
-function StepRow({ step, live }: { step: TurnStep; live: boolean }) {
-  // 2026-11-16：状态显示及时——缺失状态的行按时间戳派生（已开始未
-  // 收口且回合进行中 = 执行中），不许执行中的步还灰着。
-  const status = effectiveStepStatus(step, live);
-  const dur = stepDurationMs(step);
-  const friendlyTool = humanizeToolName(step.tool);
-  const friendlySummary = humanizeToolSummary(step.tool, step.summary);
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        minWidth: 0,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          fontSize: 12,
-          color: tokens.colorTextSecondary,
-          minWidth: 0,
-        }}
-      >
-        {status === "running" ? (
-          <Spin size="small" />
-        ) : status === "done" ? (
-          <span style={{ color: tokens.colorSuccess, width: 14, textAlign: "center" }}>✓</span>
-        ) : status === "failed" ? (
-          <span style={{ color: tokens.colorErrorText, width: 14, textAlign: "center" }}>✕</span>
-        ) : (
-          <span style={{ color: tokens.colorTextTertiary, width: 14, textAlign: "center" }}>·</span>
-        )}
-        <Typography.Text
-          style={{ fontSize: 12, flexShrink: 0 }}
-          title={friendlyTool}
-        >
-          {friendlyTool}
-        </Typography.Text>
-        {friendlySummary && (
-          <Typography.Text
-            type="secondary"
-            ellipsis
-            style={{ fontSize: 12, minWidth: 0 }}
-            title={friendlySummary}
-          >
-            {friendlySummary}
-          </Typography.Text>
-        )}
-        {dur !== null && (
-          <Typography.Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
-            {fmtElapsed(dur)}
-          </Typography.Text>
-        )}
-      </div>
-      {/* 2026-11-16：失败步的错误文本按时序跟在该步下方（服务端
-          result 原文，悬停看全文），不另起位置、不沉底汇总 */}
-      {status === "failed" && step.result && (
-        <Typography.Text
-          type="danger"
-          ellipsis
-          style={{ fontSize: 12, paddingLeft: 20, minWidth: 0 }}
-          title={step.result}
-        >
-          {step.result}
-        </Typography.Text>
-      )}
-    </div>
-  );
-}
-
 function totalStepsDurationMs(steps: TurnStep[]): number | null {
   const starts: number[] = [];
   const ends: number[] = [];
@@ -425,67 +357,53 @@ export function TurnProcess({
   steps,
   elapsedMs,
   completed = false,
-  defaultCollapsed = false,
   /** 框标题（不传即「执行过程」；子代理执行记录传步骤名） */
   title,
 }: {
   steps: TurnStep[];
   /** 本回合已耗时（毫秒） */
   elapsedMs: number;
-  /** true = 回合已结束，呈现可折叠的过程汇总 */
+  /** true = 回合已结束 */
   completed?: boolean;
-  /** completed 时默认是否折叠（历史回合折叠、最新回合展开） */
-  defaultCollapsed?: boolean;
   title?: string;
 }) {
-  const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
-  const expanded = !completed
-    ? true
-    : userExpanded !== null
-      ? userExpanded
-      : !defaultCollapsed;
   const totalMs = completed ? totalStepsDurationMs(steps) : elapsedMs;
   const hasFailed = steps.some((s) => s.status === "failed");
-  const headerText = completed
-    ? `${title ?? (hasFailed ? "执行过程（含异常）" : "执行过程")} · 共 ${steps.length} 个步骤${
-        totalMs !== null ? ` · 耗时 ${fmtElapsed(totalMs)}` : ""
-      }`
-    : title
-      ? `${title} · 已耗时 ${fmtElapsed(elapsedMs)}`
-      : `执行中 · 已耗时 ${fmtElapsed(elapsedMs)}`;
-
+  const boxTitle = title ?? (hasFailed ? "执行过程（含异常）" : "执行过程");
+  const boxStatus: DetailStatus = hasFailed
+    ? "failed"
+    : !completed
+      ? "running"
+      : "completed";
+  const secondary = completed
+    ? `共 ${steps.length} 个步骤${totalMs !== null ? ` · 耗时 ${fmtElapsed(totalMs)}` : ""}`
+    : `已耗时 ${fmtElapsed(elapsedMs)}`;
   return (
-    <StepsBox
-      header={
-        <>
-          {completed ? (
-            <div
-              onClick={() => setUserExpanded(!expanded)}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                display: "flex",
-                alignItems: "center",
-                cursor: "pointer",
-                fontSize: 12,
-                color: tokens.colorTextSecondary,
-              }}
-            >
-              <span style={{ flex: 1, minWidth: 0 }}>{headerText}</span>
-              <span style={{ marginLeft: 8, color: tokens.colorPrimary, flexShrink: 0 }}>
-                {expanded ? "收起" : "展开"}
-              </span>
-            </div>
-          ) : (
-            <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
-              {headerText}
-            </Typography.Text>
-          )}
-        </>
-      }
-    >
-      {expanded && steps.map((s) => <StepRow key={s.id} step={s} live={!completed} />)}
-    </StepsBox>
+    <DetailBox title={boxTitle} status={boxStatus} secondary={secondary}>
+      {steps.map((s) => {
+        const st = effectiveStepStatus(s, !completed);
+        const dotStatus: DetailStatus =
+          st === "running"
+            ? "running"
+            : st === "done"
+              ? "completed"
+              : st === "failed"
+                ? "failed"
+                : "waiting";
+        const toolText = humanizeToolName(s.tool);
+        const summaryText = humanizeToolSummary(s.tool, s.summary);
+        return (
+          <DetailActionRow
+            key={s.id}
+            time={formatClock(s.startedAt)}
+            status={dotStatus}
+            error={st === "failed" && s.result ? s.result : null}
+          >
+            {summaryText ? `${toolText}：${summaryText}` : toolText}
+          </DetailActionRow>
+        );
+      })}
+    </DetailBox>
   );
 }
 
@@ -1171,7 +1089,6 @@ export default function ChatPane({
             steps={steps}
             elapsedMs={elapsedMs}
             completed={!generating}
-            defaultCollapsed={!generating && index !== latestStepMsgIndex}
           />
         )}
         {failed && !sending && (

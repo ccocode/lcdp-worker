@@ -127,7 +127,6 @@ function DelegationDetail({
           steps={steps}
           elapsedMs={0}
           completed
-          defaultCollapsed={false}
           title={humanizeStepLabel(target.stepLabel)}
         />
       ) : messages.length === 0 ? (
@@ -726,7 +725,6 @@ export default function AssistantWorkbench({
                       steps={turnProcess.steps}
                       elapsedMs={turnProcess.elapsedMs}
                       completed={turnProcess.completed}
-                      defaultCollapsed={false}
                     />
                   )}
                   {/* 2026-11-16 详情彻底改版：详情只显示执行轨迹——每任务

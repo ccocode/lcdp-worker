@@ -1,8 +1,12 @@
 import {
   humanizeNodeName,
+  humanizeOpsCopy,
   humanizeStepLabel,
+  humanizeTaskTitle,
   humanizeTechnicalDetail,
   humanizeTimelineSummary,
+  humanizeToolName,
+  humanizeToolSummary,
   summarizeArtifactFiles,
 } from "./semanticLabels";
 /**
@@ -17,64 +21,46 @@ import {
  * 执行、收尾消息等）作无边框行，与步骤框按时间从上往下混排；
  * ③执行完成行、待决事项。没有执行动作的步骤不在详情里占位
  * （其完成状态在计划卡里），不放证据文案作填充。步骤框内只显示
- * 任务执行动作，按执行时序从上往下排列（2026-11-16 用户定）。按执行时序从上往下排列（2026-11-16 用户定）。
+ * 任务执行动作，按执行时序从上往下排列（2026-11-16 用户定）。
  * 计划任务：每一步一只框（2026-11-16 用户定：计划任务中规划的
  * 步骤就是一个框），框里是这一步具体执行了哪些动作（自然语言，
  * 不出现程序化描述），哪一步报错就写在哪一步；执行到哪一步就显
  * 示哪一步的框，已完成的不隐藏，未执行到的不显示；步骤按计划顺
  * 序（即执行顺序）从上往下排，框内动作按创建时间排；无动作的步
- * 骤只显一条结果说明（清单 evidence）。框内动作与完成记录放平
- * （同级行，各带时间，不再一上一下嵌套）。这不是计划清单的重
+ * 骤不在详情里占位。这不是计划清单的重
  * 复——框的标题是步骤名，内容是动作；计划清单本身只在对话框计
  * 划卡里。
- * 非计划任务、或无 phase 的节点仍按创建顺序平铺；无归属的时间线
- * 事件按 seq 排在末尾。预览/绑定/首页确认卡只在对话框里，详情里
+ * 非计划任务：全部节点动作归入一只盒子（标题 = 任务名）。
+ * 子代理派发：每个派发一只盒子（标题 = 派发步骤名/目标，内含子
+ * 代理的执行步骤动作行），按时间与父任务的盒子混排。
+ * 无归属的时间线事件作无边框行，按时间混排。预览/绑定/首页确认卡只在对话框里，详情里
  * 不出现；详情里没有任何按钮——继续运行、重试、去处理等操作一律
  * 走对话框，详情不给入口。底部不放时间与继续入口（详情只展示，
  * 操作走对话框）。
  */
 import { useEffect, useRef, useState } from "react";
-import { Badge, Spin, Tag, Typography } from "antd";
-import { tokens } from "@lcdp/ui";
+import { Spin, Typography } from "antd";
 import {
   api,
+  type AdminAssistantMessage,
   type AdminAssistantTask,
+  type AdminAssistantToolCall,
   type AdminTaskRunDetail,
   type AdminTaskRunNode,
   type AdminTaskRunTimelineEvent,
 } from "../../api";
-
-/** 状态圆点：等待灰、执行中蓝闪、完成绿、失败红（Badge 原生圆点，processing 自带闪烁）。 */
-function StatusDot({
-  status,
-}: {
-  status: "waiting" | "running" | "completed" | "failed";
-}) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 16,
-        height: 16,
-        flexShrink: 0,
-      }}
-    >
-      <Badge
-        status={
-          status === "running"
-            ? "processing"
-            : status === "completed"
-              ? "success"
-              : status === "failed"
-                ? "error"
-                : "default"
-        }
-      />
-    </span>
-  );
-}
+import {
+  DetailActionRow,
+  DetailBox,
+  DetailPlainRow,
+  formatClock,
+  type DetailStatus,
+} from "./DetailBox";
+import {
+  effectiveStepStatus,
+  turnStepsOf,
+  type TurnStep,
+} from "./turnSteps";
 
 export const TASK_STATUS_LABELS: Record<string, string> = {
   active: "进行中",
@@ -150,18 +136,6 @@ function nodeDot(status: string): "waiting" | "running" | "completed" | "failed"
 }
 
 /** HH:MM:SS（24 小时制），与时间线事件同一口径。 */
-function formatClock(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString("zh-CN", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 /** 时间线事件去重：连续相同文案合并计数，保留最晚时间 */
 function dedupeTimeline(
   events: AdminTaskRunTimelineEvent[],
@@ -282,6 +256,79 @@ export default function TaskDetail({
   // 始终以服务端最新返回的 runDetail.task 为准，防止左侧计划卡已推进（1/5、3/5）而右侧仍滞后为 0/5
   const activeTask = runDetail?.task ?? task;
   const runStatus = runDetail?.run?.runStatus ?? null;
+
+  /** 子代理派发（2026-11-16 统一详情格式）：派发记在任务行
+   * artifacts.delegations[]（后端第 103 步步骤 5），每条带
+   * childConversationId。子代理的执行步骤此前只在点开派发卡才见
+   * DelegationDetail、从未进任务详情——此处把它取出来，在父任务
+   * 详情里按时间混排成一只盒子。 */
+  interface DelegationLike {
+    childConversationId: string;
+    stepLabel?: string;
+    goal?: string;
+    status?: string;
+  }
+  const delegations: DelegationLike[] = (() => {
+    const a = activeTask.artifacts as { delegations?: unknown } | null | undefined;
+    const list = a?.delegations;
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter(
+        (d): d is DelegationLike =>
+          !!d && typeof d === "object" && typeof (d as DelegationLike).childConversationId === "string",
+      )
+      .map((d) => ({
+        childConversationId: d.childConversationId,
+        stepLabel: typeof d.stepLabel === "string" ? d.stepLabel : undefined,
+        goal: typeof d.goal === "string" ? d.goal : undefined,
+        status: typeof d.status === "string" ? d.status : undefined,
+      }));
+  })();
+  const delegationIdsKey = delegations.map((d) => d.childConversationId).join(",");
+  const [delegationSteps, setDelegationSteps] = useState<
+    Record<string, { steps: TurnStep[]; failed: boolean }>
+  >({});
+  useEffect(() => {
+    if (delegationIdsKey === "") {
+      setDelegationSteps({});
+      return;
+    }
+    let alive = true;
+    (async () => {
+      const ids = delegationIdsKey.split(",");
+      const next: Record<string, { steps: TurnStep[]; failed: boolean }> = {};
+      await Promise.all(
+        ids.map(async (cid) => {
+          try {
+            const detail =
+              appId === null
+                ? await api.assistant.conversation(cid)
+                : await api.assistant.app.conversation(appId ?? "", cid);
+            const steps = (detail.messages ?? []).flatMap((m: AdminAssistantMessage) =>
+              turnStepsOf(m, detail.toolCalls ?? []),
+            );
+            steps.sort((a, b) => {
+              const ta = a.startedAt ? Date.parse(a.startedAt) : null;
+              const tb = b.startedAt ? Date.parse(b.startedAt) : null;
+              if (ta !== null && tb !== null && ta !== tb) return ta - tb;
+              if (ta !== null && tb === null) return -1;
+              if (ta === null && tb !== null) return 1;
+              return 0;
+            });
+            next[cid] = { steps, failed: false };
+          } catch {
+            next[cid] = { steps: [], failed: true };
+          }
+        }),
+      );
+      if (alive) setDelegationSteps(next);
+    })();
+    return () => {
+      alive = false;
+    };
+    // 派发集合变化时重取（子会话 id 集作 key）；appId 变化时重取。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, delegationIdsKey]);
   /** 详情头状态跟 runStatus（收尾1）：等验收/等确认首页等态不再只显示“进行中”，与对话框卡角标同口径；run 详情未到时回落任务行 runStatus。 */
   const headerRunStatus = runStatus ?? activeTask.runStatus ?? null;
   /** C 批（状态口径统一）：在跑必须由 run_status 正面确立（pending/running）。
@@ -397,50 +444,14 @@ export default function TaskDetail({
     const nodeTime = formatClock(lastRawEvent?.createdAt);
     return (
       <div key={n.nodeId} style={{ fontSize: 12 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
+        <DetailActionRow
+          time={nodeTime}
+          status={nodeDot(n.status)}
+          error={n.error ? humanizeTechnicalDetail(n.error) : null}
         >
-          <StatusDot status={nodeDot(n.status)} />
-          {nodeTime && (
-            <span
-              style={{
-                fontSize: 11,
-                opacity: 0.6,
-                flexShrink: 0,
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {nodeTime}
-            </span>
-          )}
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              color:
-                nodeDot(n.status) === "failed" ? "#ff4d4f" : undefined,
-            }}
-          >
-            {humanizeNodeName(n.nodeId, n.kind)}
-            {n.attempts > 1 ? "，正在优化调整" : ""}
-          </span>
-        </div>
-        {n.error && (
-          <Typography.Text
-            type="danger"
-            style={{
-              fontSize: 12,
-              display: "block",
-              wordBreak: "break-word",
-            }}
-          >
-            {humanizeTechnicalDetail(n.error)}
-          </Typography.Text>
-        )}
+          {humanizeNodeName(n.nodeId, n.kind)}
+          {n.attempts > 1 ? "，正在优化调整" : ""}
+        </DetailActionRow>
         {n.outputArtifacts.length > 0 && (
           <Typography.Text
             type="secondary"
@@ -454,52 +465,16 @@ export default function TaskDetail({
           </Typography.Text>
         )}
         {nodeEvents.map((item, j) => (
-          <div
-            key={j}
-            style={{
-              fontSize: 12,
-              color: tokens.colorTextSecondary,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "2px 0",
-              wordBreak: "break-word",
-            }}
-          >
-            {/* 完成记录圆点与动作行 StatusDot 同宽 16（2026-11-16 补：旧版
-             * 蓝点仅 8px 宽，动作行与完成记录的文字错开 8px、视觉上仍嵌套；
-             * 此处与 StatusDot 同结构，圆点、时间、文字三者才真正对齐） */}
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 16,
-                height: 16,
-                flexShrink: 0,
-              }}
-            >
-              <span style={{ color: "#1677ff", fontSize: 8, lineHeight: 1 }}>●</span>
-            </span>
-            {item.time && (
-              <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                {item.time}
-              </span>
-            )}
-            <span style={{ flex: 1 }}>{item.text}</span>
-            {item.count > 1 && (
-              <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
-                x{item.count}
-              </Tag>
-            )}
-          </div>
+          <DetailPlainRow key={j} time={item.time} count={item.count}>
+            {item.text}
+          </DetailPlainRow>
         ))}
       </div>
     );
   };
   /** 计划步骤框：只显示已执行到的步骤（未执行到的不显示，已完成的
    * 不隐藏）；标题 = 步骤名（自然语言）+ 执行态圆点；框里是这一步
-   * 的执行动作（按创建时间排）；无动作的步骤只显一条结果说明。 */
+   * 的执行动作（按创建时间排）。 */
   const renderStepBox = (idx: number) => {
     const item = checklist[idx];
     if (!item) return null;
@@ -508,38 +483,13 @@ export default function TaskDetail({
     if (!isStepReached(idx)) return null;
     const stepNodes = stepNodeMap.get(idx) ?? [];
     return (
-      <div
+      <DetailBox
         key={idx}
-        style={{
-          border: `1px solid ${tokens.colorBorder}`,
-          borderRadius: 8,
-          padding: "8px 10px",
-        }}
+        title={humanizeStepLabel(item.label)}
+        status={stepDot(idx)}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 12,
-            fontWeight: 600,
-          }}
-        >
-          <StatusDot status={stepDot(idx)} />
-          <span style={{ flex: 1, minWidth: 0 }}>{humanizeStepLabel(item.label)}</span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            marginTop: 4,
-            paddingLeft: 22,
-          }}
-        >
-          {stepNodes.map(renderNode)}
-        </div>
-      </div>
+        {stepNodes.map(renderNode)}
+      </DetailBox>
     );
   };
   const runningNodes = nodes.filter(
@@ -564,47 +514,14 @@ export default function TaskDetail({
   const hasTrace =
     nodes.length > 0 || timeline.length > 0 || otherPendings.length > 0;
 
-  /** 无归属时间线行（圆点与 StatusDot 同宽 16，见 renderNode 处注释）。 */
+  /** 无归属时间线行。 */
   const renderOrphanRow = (
     item: { text: string; time: string | null; count: number },
     key: string | number,
   ) => (
-    <div
-      key={key}
-      style={{
-        fontSize: 12,
-        color: tokens.colorTextSecondary,
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "2px 0",
-        wordBreak: "break-word",
-      }}
-    >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 16,
-          height: 16,
-          flexShrink: 0,
-        }}
-      >
-        <span style={{ color: "#1677ff", fontSize: 8, lineHeight: 1 }}>●</span>
-      </span>
-      {item.time && (
-        <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-          {item.time}
-        </span>
-      )}
-      <span style={{ flex: 1 }}>{item.text}</span>
-      {item.count > 1 && (
-        <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
-          x{item.count}
-        </Tag>
-      )}
-    </div>
+    <DetailPlainRow key={key} time={item.time} count={item.count}>
+      {item.text}
+    </DetailPlainRow>
   );
 
   /** 详情块按时间从上往下排（2026-11-16 用户定）：步骤框、无归属节点、
@@ -631,8 +548,97 @@ export default function TaskDetail({
         push(stepBoxTs(idx), renderStepBox(idx));
       }
       for (const n of ungroupedNodes) push(nodeTs(n), renderNode(n));
-    } else {
-      for (const n of nodes) push(nodeTs(n), renderNode(n));
+    } else if (nodes.length > 0) {
+      // 非计划任务（2026-11-16 统一详情格式）：全部节点动作归入一
+      // 只盒子（标题 = 任务名），与其他类型同格式，不再裸铺节点。
+      const nonPlanStatus: DetailStatus = nodes.some(
+        (n) => nodeDot(n.status) === "failed",
+      )
+        ? "failed"
+        : runningNodes.length > 0 || isRunning
+          ? "running"
+          : showDoneRow
+            ? "completed"
+            : "waiting";
+      const nonPlanTs = nodes.reduce<number | null>((min, n) => {
+        const t = nodeTs(n);
+        return t !== null && (min === null || t < min) ? t : min;
+      }, null);
+      push(
+        nonPlanTs,
+        <DetailBox
+          key="nonplan"
+          title={humanizeTaskTitle(activeTask.title)}
+          status={nonPlanStatus}
+        >
+          {nodes.map(renderNode)}
+        </DetailBox>,
+      );
+    }
+    // 子代理派发盒（2026-11-16 统一详情格式）：每个派发一只盒子，
+    // 标题 = 派发步骤名/目标，内含子代理的执行步骤动作行，按时间与
+    // 父任务的盒子混排。子会话尚未取到、或无步骤时不占位。
+    for (const d of delegations) {
+      const entry = delegationSteps[d.childConversationId];
+      if (!entry) continue;
+      const steps = entry.steps;
+      if (!entry.failed && steps.length === 0) continue;
+      const firstTs =
+        steps.length > 0 && steps[0]!.startedAt
+          ? Date.parse(steps[0]!.startedAt)
+          : null;
+      const depTitle = d.stepLabel
+        ? humanizeOpsCopy(d.stepLabel)
+        : d.goal
+          ? humanizeOpsCopy(d.goal)
+          : "子代理执行";
+      const depStatus: DetailStatus =
+        d.status === "failed"
+          ? "failed"
+          : d.status === "done"
+            ? "completed"
+            : d.status === "running"
+              ? "running"
+              : "waiting";
+      push(
+        Number.isNaN(firstTs) ? null : firstTs,
+        <DetailBox
+          key={`delegation-${d.childConversationId}`}
+          title={depTitle}
+          status={depStatus}
+          secondary="子代理"
+        >
+          {entry.failed ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              子代理执行记录暂不可用
+            </Typography.Text>
+          ) : (
+            steps.map((s) => {
+              const st = effectiveStepStatus(s, false);
+              const dotStatus: DetailStatus =
+                st === "running"
+                  ? "running"
+                  : st === "done"
+                    ? "completed"
+                    : st === "failed"
+                      ? "failed"
+                      : "waiting";
+              const toolText = humanizeToolName(s.tool);
+              const summaryText = humanizeToolSummary(s.tool, s.summary);
+              return (
+                <DetailActionRow
+                  key={s.id}
+                  time={formatClock(s.startedAt)}
+                  status={dotStatus}
+                  error={st === "failed" && s.result ? s.result : null}
+                >
+                  {summaryText ? `${toolText}：${summaryText}` : toolText}
+                </DetailActionRow>
+              );
+            })
+          )}
+        </DetailBox>,
+      );
     }
     for (const [j, row] of orphanRows.entries()) {
       push(row.ts, renderOrphanRow(row, `orphan-${j}`));
