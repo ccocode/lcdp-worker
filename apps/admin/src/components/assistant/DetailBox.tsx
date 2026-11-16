@@ -229,7 +229,9 @@ export function DetailActionRow({
   );
 }
 
-/** 无边框行：时间线/完成记录行（蓝色圆点＋时间＋文字），与盒子内动作行同左缘。 */
+/** 无边框行：时间线/完成记录行（蓝色圆点＋时间＋文字），与盒子内动作行同左缘。
+ * 文字单行显示、超长省略，鼠标移入悬停显示完整信息（2026-11-16 用户定，
+ * 与动作行同口径——「阶段完成：…」类完成记录也会很长）。 */
 export function DetailPlainRow({
   time,
   children,
@@ -239,6 +241,7 @@ export function DetailPlainRow({
   children: ReactNode;
   count?: number;
 }) {
+  const fullText = reactNodeToText(children);
   return (
     <div
       style={{
@@ -248,7 +251,6 @@ export function DetailPlainRow({
         alignItems: "center",
         gap: 6,
         padding: "2px 0",
-        wordBreak: "break-word",
       }}
     >
       <DetailInfoDot />
@@ -264,7 +266,18 @@ export function DetailPlainRow({
           {time}
         </span>
       )}
-      <span style={{ flex: 1 }}>{children}</span>
+      <span
+        title={fullText || undefined}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {children}
+      </span>
       {count !== undefined && count > 1 && (
         <Tag
           style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}
