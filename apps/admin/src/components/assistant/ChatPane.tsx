@@ -1166,23 +1166,34 @@ export default function ChatPane({
             !!msg.payload.title) && (
             <PayloadCard payload={msg.payload} appId={appId ?? pageContext?.appId} onClose={onClose} />
           )}
-        {!isUser && msg.payload?.planCard && (
-          <PlanMessageCard
-            appId={appId}
-            taskId={msg.payload.planCard.taskId}
-            onOpenTask={onOpenTask}
-            onTaskUpdated={() => {
-              triggerBgCheckRef.current?.();
-              onTasksSync?.();
-            }}
-            // 执行中自动打开详情：只对本会话最新一张计划卡生效，
-            // 历史卡不抢详情（2026-10-29 用户定）。
-            autoOpen={messages.reduce(
-              (last, m, i) => (m.payload?.planCard ? i : last),
-              -1,
-            ) === index}
-          />
-        )}
+        {!isUser && msg.payload?.planCard && (() => {
+          // 计划卡去重（2026-11-16 用户报预览卡/计划卡双份）：同一任务
+          // 的计划卡只渲染第一张——后端收尾函数每轮都给收据消息挂
+          // planCard，历史消息里可能已有同一任务的计划卡；只渲染
+          // 第一张，既有卡经任务轮询自动显示预览/绑定状态。
+          const tid = msg.payload.planCard.taskId;
+          const firstIdx = messages.findIndex(
+            (m) => m.payload?.planCard?.taskId === tid,
+          );
+          if (firstIdx !== index) return null;
+          return (
+            <PlanMessageCard
+              appId={appId}
+              taskId={tid}
+              onOpenTask={onOpenTask}
+              onTaskUpdated={() => {
+                triggerBgCheckRef.current?.();
+                onTasksSync?.();
+              }}
+              // 执行中自动打开详情：只对本会话最新一张计划卡生效，
+              // 历史卡不抢详情（2026-10-29 用户定）。
+              autoOpen={messages.reduce(
+                (last, m, i) => (m.payload?.planCard ? i : last),
+                -1,
+              ) === index}
+            />
+          );
+        })()}
         {!isUser && msg.payload?.delegationCard && (
           <DelegationMessageCard
             appId={appId}
