@@ -165,6 +165,12 @@ export function humanizeNodeName(nodeId: string): string {
   if (id === "theme-generate-home" || id.includes("home")) return "首页视觉与布局设计";
   if (id === "theme-assemble-preview" || id.includes("assemble")) return "全站页面补齐与效果整合";
   if (id === "theme-design-blueprint" || id === "theme-design-package") return "整站主题方案设计";
+  // 组合式执行节点（2026-11-16 详情框执行细节修复）：组合式路径自记的执行步骤
+  if (id === "combo-catalog") return "查看可用风格与板块库";
+  if (id === "combo-style") return "匹配视觉风格与版式结构";
+  if (id === "combo-apply") return "设计并保存主题方案";
+  if (id === "combo-check") return "静态检查设计效果";
+  if (id === "combo-preview") return "签发完整预览";
   if (id.includes("audit") || id.includes("survey")) return "站点结构梳理";
   return "主题设计步骤";
 }
