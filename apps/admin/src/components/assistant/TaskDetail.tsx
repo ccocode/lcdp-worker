@@ -479,7 +479,21 @@ export default function TaskDetail({
               wordBreak: "break-word",
             }}
           >
-            <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
+            {/* 完成记录圆点与动作行 StatusDot 同宽 16（2026-11-16 补：旧版
+             * 蓝点仅 8px 宽，动作行与完成记录的文字错开 8px、视觉上仍嵌套；
+             * 此处与 StatusDot 同结构，圆点、时间、文字三者才真正对齐） */}
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 16,
+                height: 16,
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ color: "#1677ff", fontSize: 8, lineHeight: 1 }}>●</span>
+            </span>
             {item.time && (
               <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
                 {item.time}
@@ -674,7 +688,19 @@ export default function TaskDetail({
                     wordBreak: "break-word",
                   }}
                 >
-                  <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
+                  {/* 圆点与 StatusDot 同宽 16，见 renderNode 处注释 */}
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 16,
+                      height: 16,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span style={{ color: "#1677ff", fontSize: 8, lineHeight: 1 }}>●</span>
+                  </span>
                   {item.time && (
                     <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
                       {item.time}
