@@ -9,10 +9,14 @@ import {
  * 任务执行轨迹框（工作台右栏每任务一只框，与任务记录页抽屉共用）：
  * 详情只显示、不操作——框内是本任务的执行轨迹，与「执行过程」
  * 同一只框（StepsBox）：标题行 = 任务名 + 共 N 个执行动作 + 种
- * 类标 + 状态标 + 展开/收起；框内只有智能体实际执行的动作（节
- * 点动作按执行顺序，时间线事件挂在所属节点行下、无归属的按顺
- * 序号排在末尾），失败行内跟错误文本，终审未达标跟待完善项。
- * 计划清单只在对话框计划卡里，详情里不重复；预览/绑定/首页
+ * 类标 + 状态标 + 展开/收起；框内只有智能体实际执行的动作。
+ * 计划任务按计划的每一项任务分组（2026-11-16 用户定：计划是
+ * 排列任务，详情展示每个任务需要执行哪些动作）：计划项作组头，
+ * 其下挂该任务执行的节点动作与时间线事件；无动作的计划项只
+ * 显示任务行与状态。无归属的节点（非计划任务、旧数据）不分
+ * 组、接在分组之后；无归属的时间线事件按 seq 排在末尾。失败
+ * 行内跟错误文本，终审未达标跟待完善项。计划卡本身（目标、
+ * 进度、审批）只在对话框里，详情里不重复；预览/绑定/首页
  * 确认卡只在对话框里，详情里不出现；详情里没有任何按钮——
  * 继续运行、重试、去处理等操作一律走对话框，详情不给入口。
  * 底部不放时间与继续入口（详情只展示，操作走对话框）。
@@ -25,6 +29,7 @@ import {
   api,
   type AdminAssistantTask,
   type AdminTaskRunDetail,
+  type AdminTaskRunNode,
   type AdminTaskRunTimelineEvent,
 } from "../../api";
 
@@ -336,6 +341,113 @@ export default function TaskDetail({
     lastEvent,
   });
   const traceCount = nodes.length + orphanRows.length;
+  /** 计划任务分组（2026-11-16 用户定）：节点 phase=plan:<序号>
+   * 归属对应计划项；无归属的节点不分组、接在分组之后。 */
+  const checklist = activeTask.checklist ?? [];
+  const isPlanTask = activeTask.kind === "plan" && checklist.length > 0;
+  const planStepOf = (n: AdminTaskRunNode): number | null => {
+    if (!isPlanTask || !n.phase || !n.phase.startsWith("plan:")) return null;
+    const idx = Number(n.phase.slice(5));
+    return Number.isInteger(idx) && idx >= 0 && idx < checklist.length
+      ? idx
+      : null;
+  };
+  const groupedNodes = new Map<number, AdminTaskRunNode[]>();
+  const ungroupedNodes: AdminTaskRunNode[] = [];
+  for (const n of nodes) {
+    const idx = planStepOf(n);
+    if (idx === null) {
+      ungroupedNodes.push(n);
+    } else {
+      const arr = groupedNodes.get(idx) ?? [];
+      arr.push(n);
+      groupedNodes.set(idx, arr);
+    }
+  }
+  /** 节点行：圆点 + 动作名 + 错误/产物 + 挂在其下的时间线事件。 */
+  const renderNode = (n: AdminTaskRunNode) => {
+    const nodeEvents = dedupeTimeline(eventsByNode.get(n.nodeId) ?? [], {
+      isRunning,
+      lastEvent,
+    });
+    return (
+      <div key={n.nodeId} style={{ fontSize: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <StatusDot status={nodeDot(n.status)} />
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              color:
+                nodeDot(n.status) === "failed" ? "#ff4d4f" : undefined,
+            }}
+          >
+            {humanizeNodeName(n.nodeId)}
+            {n.attempts > 1 ? "，正在优化调整" : ""}
+          </span>
+        </div>
+        {n.error && (
+          <Typography.Text
+            type="danger"
+            style={{
+              fontSize: 12,
+              display: "block",
+              marginLeft: 22,
+              wordBreak: "break-word",
+            }}
+          >
+            {humanizeTechnicalDetail(n.error)}
+          </Typography.Text>
+        )}
+        {n.outputArtifacts.length > 0 && (
+          <Typography.Text
+            type="secondary"
+            style={{
+              fontSize: 12,
+              display: "block",
+              marginLeft: 22,
+              wordBreak: "break-word",
+            }}
+          >
+            {summarizeArtifactFiles(n.outputArtifacts)}
+          </Typography.Text>
+        )}
+        {nodeEvents.map((item, j) => (
+          <div
+            key={j}
+            style={{
+              fontSize: 12,
+              color: tokens.colorTextSecondary,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "2px 0 2px 22px",
+              wordBreak: "break-word",
+            }}
+          >
+            <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
+            {item.time && (
+              <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                {item.time}
+              </span>
+            )}
+            <span style={{ flex: 1 }}>{item.text}</span>
+            {item.count > 1 && (
+              <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
+                x{item.count}
+              </Tag>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
   const runningNodes = nodes.filter(
     (n) => n.status === "active" || n.status === "running",
   );
@@ -415,7 +527,7 @@ export default function TaskDetail({
               暂无执行记录
             </Typography.Text>
           )}
-          {nodes.length > 0 && (
+          {isPlanTask && (
             <div
               style={{
                 display: "flex",
@@ -424,13 +536,10 @@ export default function TaskDetail({
                 marginTop: 4,
               }}
             >
-              {nodes.map((n) => {
-                const nodeEvents = dedupeTimeline(eventsByNode.get(n.nodeId) ?? [], {
-                  isRunning,
-                  lastEvent,
-                });
+              {checklist.map((item, idx) => {
+                const stepNodes = groupedNodes.get(idx) ?? [];
                 return (
-                  <div key={n.nodeId} style={{ fontSize: 12 }}>
+                  <div key={idx} style={{ fontSize: 12 }}>
                     <div
                       style={{
                         display: "flex",
@@ -438,75 +547,39 @@ export default function TaskDetail({
                         gap: 6,
                       }}
                     >
-                      <StatusDot status={nodeDot(n.status)} />
-                      <span
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          color:
-                            nodeDot(n.status) === "failed" ? "#ff4d4f" : undefined,
-                        }}
-                      >
-                        {humanizeNodeName(n.nodeId)}
-                        {n.attempts > 1 ? "，正在优化调整" : ""}
+                      <StatusDot status={nodeDot(item.status)} />
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        {idx + 1}. {item.label}
                       </span>
                     </div>
-                    {n.error && (
-                      <Typography.Text
-                        type="danger"
-                        style={{
-                          fontSize: 12,
-                          display: "block",
-                          marginLeft: 22,
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {humanizeTechnicalDetail(n.error)}
-                      </Typography.Text>
-                    )}
-                    {n.outputArtifacts.length > 0 && (
-                      <Typography.Text
-                        type="secondary"
-                        style={{
-                          fontSize: 12,
-                          display: "block",
-                          marginLeft: 22,
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {summarizeArtifactFiles(n.outputArtifacts)}
-                      </Typography.Text>
-                    )}
-                    {nodeEvents.map((item, j) => (
+                    {stepNodes.length > 0 && (
                       <div
-                        key={j}
                         style={{
-                          fontSize: 12,
-                          color: tokens.colorTextSecondary,
                           display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "2px 0 2px 22px",
-                          wordBreak: "break-word",
+                          flexDirection: "column",
+                          gap: 4,
+                          marginTop: 4,
+                          marginLeft: 22,
                         }}
                       >
-                        <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
-                        {item.time && (
-                          <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                            {item.time}
-                          </span>
-                        )}
-                        <span style={{ flex: 1 }}>{item.text}</span>
-                        {item.count > 1 && (
-                          <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
-                            x{item.count}
-                          </Tag>
-                        )}
+                        {stepNodes.map(renderNode)}
                       </div>
-                    ))}
+                    )}
                   </div>
                 );
               })}
+            </div>
+          )}
+          {ungroupedNodes.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 4,
+              }}
+            >
+              {ungroupedNodes.map(renderNode)}
             </div>
           )}
           {orphanRows.length > 0 && (
