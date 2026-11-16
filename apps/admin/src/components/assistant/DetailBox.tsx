@@ -130,7 +130,27 @@ export function DetailBox({
   );
 }
 
-/** 动作行：时间＋圆点＋文字，平铺；count>1 时显 xN；error 记在行下方（红色）。 */
+/** ReactNode → 纯文本（动作行悬停提示用）：字符串/数字直接取，数组
+ * 与片段递归拼，元素只取其文本子节点。 */
+function reactNodeToText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return "";
+  }
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(reactNodeToText).join("");
+  }
+  if (typeof node === "object" && "props" in node) {
+    const props = (node as { props?: { children?: ReactNode } }).props;
+    return reactNodeToText(props?.children);
+  }
+  return "";
+}
+
+/** 动作行：时间＋圆点＋文字，平铺；count>1 时显 xN；error 记在行下方（红色）。
+ * 文字单行显示、超长省略，鼠标移入悬停显示完整信息（2026-11-16 用户定）。 */
 export function DetailActionRow({
   time,
   status,
@@ -145,6 +165,7 @@ export function DetailActionRow({
   error?: string | null;
   count?: number;
 }) {
+  const fullText = reactNodeToText(children);
   return (
     <div style={{ fontSize: 12 }}>
       <div
@@ -172,10 +193,14 @@ export function DetailActionRow({
           </span>
         )}
         <span
+          title={fullText || undefined}
           style={{
             flex: 1,
             minWidth: 0,
             color: status === "failed" ? "#ff4d4f" : undefined,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           }}
         >
           {children}

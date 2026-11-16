@@ -497,12 +497,6 @@ export default function TaskDetail({
   /** 全部完成行：任务已关闭，或 run 已完成；终审结论并入。 */
   const taskDone = activeTask.status === "done" || activeTask.status === "closed";
   const showDoneRow = taskDone || runStatus === "completed";
-  const doneVerdictText =
-    runDetail?.latestVerdict === "pass"
-      ? "（终审已通过）"
-      : runDetail?.latestVerdict === "fail"
-        ? "（终审未通过）"
-        : "";
   /** 预览卡与绑定卡不在此显示；只留暂停 / 终审未达标行（纯展示，无按钮、无处置入口，处置走对话框）。 */
   const otherPendings = (runDetail?.pendingItems ?? []).filter(
     (p) => p.type !== "theme-preview" && p.type !== "theme-bind" && p.type !== "theme-home",
@@ -663,35 +657,6 @@ export default function TaskDetail({
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               正在执行…
             </Typography.Text>
-          )}
-          {showDoneRow && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 12,
-                marginTop: 4,
-              }}
-            >
-              <span
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 16,
-                  height: 16,
-                  borderRadius: "50%",
-                  border: "1px solid #52c41a",
-                  color: "#52c41a",
-                  fontSize: 10,
-                  flexShrink: 0,
-                }}
-              >
-                ✓
-              </span>
-              <span>执行完成{doneVerdictText}</span>
-            </div>
           )}
           {(latestFailedVerdict?.acceptanceGaps.length ?? 0) > 0 && (
             <Typography.Text
