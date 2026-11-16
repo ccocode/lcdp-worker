@@ -159,18 +159,21 @@ function formatClock(iso: string | null | undefined): string | null {
 function dedupeTimeline(
   events: AdminTaskRunTimelineEvent[],
   opts: { isRunning: boolean; lastEvent: AdminTaskRunTimelineEvent | null },
-): { text: string; time: string | null; count: number }[] {
-  const deduped: { text: string; time: string | null; count: number }[] = [];
+): { text: string; time: string | null; count: number; ts: number | null }[] {
+  const deduped: { text: string; time: string | null; count: number; ts: number | null }[] = [];
   for (const ev of events) {
     const isLastAndRunning = opts.isRunning && ev === opts.lastEvent;
     const text = humanizeTimelineSummary(ev.summary, { isLastAndRunning });
     if (!text) continue;
     const time = formatClock(ev.createdAt);
+    const ts = ev.createdAt ? Date.parse(ev.createdAt) : NaN;
+    const tsVal = Number.isNaN(ts) ? null : ts;
     if (deduped.length > 0 && deduped[deduped.length - 1]!.text === text) {
       deduped[deduped.length - 1]!.count++;
       if (time) deduped[deduped.length - 1]!.time = time;
+      if (tsVal !== null) deduped[deduped.length - 1]!.ts = tsVal;
     } else {
-      deduped.push({ text, time, count: 1 });
+      deduped.push({ text, time, count: 1, ts: tsVal });
     }
   }
   return deduped;
@@ -343,6 +346,32 @@ export default function TaskDetail({
     if ((stepNodeMap.get(idx) ?? []).length > 0) return true;
     const item = checklist[idx];
     return !!item && item.status !== "pending";
+  };
+  /** 详情按时间从上往下排（2026-11-16 用户定：20:57 的记录不许排到
+   * 20:58 的步骤框后面）：步骤框/节点的排序时间取其事件的最早时间；
+   * 无事件的沿用上一项的时间，保证仍按计划顺序排、不乱序。 */
+  const eventTs = (ev: AdminTaskRunTimelineEvent): number | null => {
+    if (!ev.createdAt) return null;
+    const t = Date.parse(ev.createdAt);
+    return Number.isNaN(t) ? null : t;
+  };
+  const stepBoxTs = (idx: number): number | null => {
+    let min: number | null = null;
+    for (const n of stepNodeMap.get(idx) ?? []) {
+      for (const ev of eventsByNode.get(n.nodeId) ?? []) {
+        const t = eventTs(ev);
+        if (t !== null && (min === null || t < min)) min = t;
+      }
+    }
+    return min;
+  };
+  const nodeTs = (n: AdminTaskRunNode): number | null => {
+    let min: number | null = null;
+    for (const ev of eventsByNode.get(n.nodeId) ?? []) {
+      const t = eventTs(ev);
+      if (t !== null && (min === null || t < min)) min = t;
+    }
+    return min;
   };
   /** 节点行：动作与完成记录放平（同级行，各带时间）——动作行、错误/
    * 产物行、时间线事件行一律不缩进，不再一上一下嵌套（2026-11-16
@@ -534,6 +563,76 @@ export default function TaskDetail({
   const hasTrace =
     nodes.length > 0 || timeline.length > 0 || otherPendings.length > 0;
 
+  /** 无归属时间线行（圆点与 StatusDot 同宽 16，见 renderNode 处注释）。 */
+  const renderOrphanRow = (
+    item: { text: string; time: string | null; count: number },
+    key: string | number,
+  ) => (
+    <div
+      key={key}
+      style={{
+        fontSize: 12,
+        color: tokens.colorTextSecondary,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "2px 0",
+        wordBreak: "break-word",
+      }}
+    >
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 16,
+          height: 16,
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ color: "#1677ff", fontSize: 8, lineHeight: 1 }}>●</span>
+      </span>
+      {item.time && (
+        <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+          {item.time}
+        </span>
+      )}
+      <span style={{ flex: 1 }}>{item.text}</span>
+      {item.count > 1 && (
+        <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
+          x{item.count}
+        </Tag>
+      )}
+    </div>
+  );
+
+  /** 详情块按时间从上往下排（2026-11-16 用户定）：步骤框、无归属节点、
+   * 无归属时间线行按各自最早时间合并排序，不再把无归属行一律堆在末尾
+   * （旧口径使 20:57 的「任务已创建」排到 20:58 的步骤框后面）。 */
+  const detailBlocks: { ts: number; order: number; el: React.ReactNode }[] = [];
+  {
+    let order = 0;
+    let lastTs = 0;
+    const push = (ts: number | null, el: React.ReactNode) => {
+      const t = ts ?? lastTs;
+      lastTs = t;
+      detailBlocks.push({ ts: t, order: order++, el });
+    };
+    if (isPlanTask && checklist.length > 0 && nodes.length > 0) {
+      for (let idx = 0; idx < checklist.length; idx++) {
+        if (!isStepReached(idx)) continue;
+        push(stepBoxTs(idx), renderStepBox(idx));
+      }
+      for (const n of ungroupedNodes) push(nodeTs(n), renderNode(n));
+    } else {
+      for (const n of nodes) push(nodeTs(n), renderNode(n));
+    }
+    for (const [j, row] of orphanRows.entries()) {
+      push(row.ts, renderOrphanRow(row, `orphan-${j}`));
+    }
+    detailBlocks.sort((a, b) => a.ts - b.ts || a.order - b.order);
+  }
+
   return (
     // 详情只放执行内容（2026-11-16 用户定：计划标题不列在详情里）：
     // 任务头（标题 + 种类 + 状态 + 收起/展开）整个去掉，步骤框直接
@@ -549,7 +648,7 @@ export default function TaskDetail({
               暂无执行记录
             </Typography.Text>
           )}
-          {isPlanTask && checklist.length > 0 && nodes.length > 0 ? (
+          {detailBlocks.length > 0 && (
             <div
               style={{
                 display: "flex",
@@ -558,71 +657,7 @@ export default function TaskDetail({
                 marginTop: 4,
               }}
             >
-              {checklist.map((_it, idx) => renderStepBox(idx))}
-              {ungroupedNodes.map(renderNode)}
-            </div>
-          ) : (
-            nodes.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                  marginTop: 4,
-                }}
-              >
-                {nodes.map(renderNode)}
-              </div>
-            )
-          )}
-          {orphanRows.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 4,
-              }}
-            >
-              {orphanRows.map((item, j) => (
-                <div
-                  key={j}
-                  style={{
-                    fontSize: 12,
-                    color: tokens.colorTextSecondary,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "2px 0",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {/* 圆点与 StatusDot 同宽 16，见 renderNode 处注释 */}
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 16,
-                      height: 16,
-                      flexShrink: 0,
-                    }}
-                  >
-                    <span style={{ color: "#1677ff", fontSize: 8, lineHeight: 1 }}>●</span>
-                  </span>
-                  {item.time && (
-                    <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                      {item.time}
-                    </span>
-                  )}
-                  <span style={{ flex: 1 }}>{item.text}</span>
-                  {item.count > 1 && (
-                    <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
-                      x{item.count}
-                    </Tag>
-                  )}
-                </div>
-              ))}
+              {detailBlocks.map((b) => b.el)}
             </div>
           )}
           {isRunning && runningNodes.length === 0 && timeline.length === 0 && (
