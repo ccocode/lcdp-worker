@@ -159,9 +159,14 @@ export function humanizeTimelineSummary(
 /**
  * 将内部节点 ID 转为运营/管理员可读的步骤名称
  */
-export function humanizeNodeName(nodeId: string): string {
+export function humanizeNodeName(nodeId: string, kind?: string | null): string {
   const id = (nodeId || "").trim().toLowerCase();
   if (!id) return "主题设计步骤";
+  // 组合式子调用节点（2026-11-16 详情执行细节改版）：节点 id 形如
+  // combo-call-<工具名>-<序号>，名取工具的业务中文（kind 即工具名）。
+  if (id.startsWith("combo-call-") && kind) {
+    return humanizeToolName(kind);
+  }
   if (id === "theme-generate-home" || id.includes("home")) return "首页视觉与布局设计";
   if (id === "theme-assemble-preview" || id.includes("assemble")) return "全站页面补齐与效果整合";
   if (id === "theme-design-blueprint" || id === "theme-design-package") return "整站主题方案设计";

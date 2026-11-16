@@ -1,5 +1,6 @@
 import {
   humanizeNodeName,
+  humanizeStepLabel,
   humanizeTaskTitle,
   humanizeTechnicalDetail,
   humanizeTimelineSummary,
@@ -10,14 +11,19 @@ import {
  * 详情只显示、不操作——框内是本任务的执行轨迹，与「执行过程」
  * 同一只框（StepsBox）：标题行 = 任务名 + 共 N 个执行动作 + 种
  * 类标 + 状态标 + 展开/收起。框内只显示任务执行动作，按执行
- * 时序从上往下排列（2026-11-16 用户定）：节点动作按创建顺序
- * （即执行顺序）平铺，每行之下挂其时间线事件（阶段完成记录、
- * 错误文本、终审未达标跟待完善项）；无归属的时间线事件按 seq
- * 排在末尾。计划清单只在对话框计划卡里，详情里不重复、不显
- * 示计划项组头；预览/绑定/首页确认卡只在对话框里，详情里不
- * 出现；详情里没有任何按钮——继续运行、重试、去处理等操作
- * 一律走对话框，详情不给入口。底部不放时间与继续入口（详情
- * 只展示，操作走对话框）。
+ * 时序从上往下排列（2026-11-16 用户定）。
+ * 计划任务：每一步一只框（2026-11-16 用户定：计划任务中规划的
+ * 步骤就是一个框），框里是这一步具体执行了哪些动作（自然语言，
+ * 不出现程序化描述），哪一步报错就写在哪一步；步骤按计划顺序
+ * （即执行顺序）从上往下排，框内动作按创建时间排；无动作的步骤
+ * 只显一条结果说明（清单 evidence）。这不是计划清单的重复——框
+ * 的标题是步骤名，内容是动作；计划清单本身只在对话框计划卡里。
+ * 非计划任务、或无 phase 的节点仍按创建顺序平铺；无归属的时间线
+ * 事件按 seq 排在末尾，每行之下挂其时间线事件（阶段完成记录、
+ * 错误文本、终审未达标跟待完善项）。预览/绑定/首页确认卡只在
+ * 对话框里，详情里不出现；详情里没有任何按钮——继续运行、重试、
+ * 去处理等操作一律走对话框，详情不给入口。底部不放时间与继续
+ * 入口（详情只展示，操作走对话框）。
  */
 import { useEffect, useRef, useState } from "react";
 import { Badge, Spin, Tag, Typography } from "antd";
@@ -339,6 +345,38 @@ export default function TaskDetail({
     lastEvent,
   });
   const traceCount = nodes.length + orphanRows.length;
+  /** 计划任务：节点按 phase=plan:<序号> 归属到计划步骤，每一步一只框；
+   * 步骤按计划顺序（即执行顺序）从上往下排；无 phase 或序号越界的节点
+   * 不分组，仍平铺在步骤框之后。 */
+  const isPlanTask = activeTask.kind === "plan";
+  const checklist = activeTask.checklist ?? [];
+  const stepNodeMap = new Map<number, AdminTaskRunNode[]>();
+  const ungroupedNodes: AdminTaskRunNode[] = [];
+  for (const n of nodes) {
+    const m = typeof n.phase === "string" ? n.phase.match(/^plan:(\d+)$/) : null;
+    if (isPlanTask && m) {
+      const idx = Number(m[1]);
+      if (idx >= 0 && idx < checklist.length) {
+        const arr = stepNodeMap.get(idx) ?? [];
+        arr.push(n);
+        stepNodeMap.set(idx, arr);
+        continue;
+      }
+    }
+    ungroupedNodes.push(n);
+  }
+  /** 步骤执行态：有失败动作 → 失败；有进行中 → 进行中；全完成 → 完成；
+   * 无动作时看清单状态（done → 完成，failed → 失败，其余 → 等待）。 */
+  const stepDot = (idx: number): "waiting" | "running" | "completed" | "failed" => {
+    const ns = stepNodeMap.get(idx) ?? [];
+    if (ns.some((n) => CHECK_FAILED.has(n.status))) return "failed";
+    if (ns.some((n) => n.status === "active" || n.status === "running")) return "running";
+    if (ns.length > 0 && ns.every((n) => CHECK_PASSED.has(n.status))) return "completed";
+    const item = checklist[idx];
+    if (item && CHECK_PASSED.has(item.status)) return "completed";
+    if (item && CHECK_FAILED.has(item.status)) return "failed";
+    return "waiting";
+  };
   /** 节点行：圆点 + 动作名 + 错误/产物 + 挂在其下的时间线事件。 */
   const renderNode = (n: AdminTaskRunNode) => {
     const nodeEvents = dedupeTimeline(eventsByNode.get(n.nodeId) ?? [], {
@@ -363,7 +401,7 @@ export default function TaskDetail({
                 nodeDot(n.status) === "failed" ? "#ff4d4f" : undefined,
             }}
           >
-            {humanizeNodeName(n.nodeId)}
+            {humanizeNodeName(n.nodeId, n.kind)}
             {n.attempts > 1 ? "，正在优化调整" : ""}
           </span>
         </div>
@@ -420,6 +458,53 @@ export default function TaskDetail({
             )}
           </div>
         ))}
+      </div>
+    );
+  };
+  /** 计划步骤框：标题 = 步骤名（自然语言）+ 执行态圆点；框里是这一步
+   * 的执行动作（按创建时间排）；无动作的步骤只显一条结果说明。 */
+  const renderStepBox = (idx: number) => {
+    const item = checklist[idx];
+    if (!item) return null;
+    const stepNodes = stepNodeMap.get(idx) ?? [];
+    const evidence = typeof item.evidence === "string" ? item.evidence.trim() : "";
+    return (
+      <div
+        key={idx}
+        style={{
+          border: `1px solid ${tokens.colorBorder}`,
+          borderRadius: 8,
+          padding: "8px 10px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          <StatusDot status={stepDot(idx)} />
+          <span style={{ flex: 1, minWidth: 0 }}>{humanizeStepLabel(item.label)}</span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            marginTop: 4,
+            paddingLeft: 22,
+          }}
+        >
+          {stepNodes.map(renderNode)}
+          {stepNodes.length === 0 && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {evidence ? humanizeStepLabel(evidence) : "暂无执行记录"}
+            </Typography.Text>
+          )}
+        </div>
       </div>
     );
   };
@@ -502,7 +587,7 @@ export default function TaskDetail({
               暂无执行记录
             </Typography.Text>
           )}
-          {nodes.length > 0 && (
+          {isPlanTask && checklist.length > 0 && nodes.length > 0 ? (
             <div
               style={{
                 display: "flex",
@@ -511,8 +596,22 @@ export default function TaskDetail({
                 marginTop: 4,
               }}
             >
-              {nodes.map(renderNode)}
+              {checklist.map((_it, idx) => renderStepBox(idx))}
+              {ungroupedNodes.map(renderNode)}
             </div>
+          ) : (
+            nodes.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  marginTop: 4,
+                }}
+              >
+                {nodes.map(renderNode)}
+              </div>
+            )
           )}
           {orphanRows.length > 0 && (
             <div
