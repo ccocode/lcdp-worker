@@ -10,7 +10,14 @@ import {
  * 详情只显示、不操作——这里是本任务的执行轨迹。计划标题不列在
  * 详情里（2026-11-16 用户定）：任务头（标题 + 种类 + 状态 +
  * 收起/展开）整个去掉，步骤框直接顶格平铺、内容始终展开；
- * 计划本身只在对话框计划卡里。步骤框内只显示任务执行动作，按执行时序从上往下排列（2026-11-16 用户定）。
+ * 计划本身只在对话框计划卡里。详情只放执行（2026-11-16 用户定，
+ * 详情数据模型定稿）：①有执行动作的计划步骤，一步一只框，框里是
+ * 这一步具体执行了哪些动作（自然语言，不出现程序化描述），哪一步
+ * 报错就写在哪一步；②不属于任何步骤的时间线事件（任务创建、开始
+ * 执行、收尾消息等）作无边框行，与步骤框按时间从上往下混排；
+ * ③执行完成行、待决事项。没有执行动作的步骤不在详情里占位
+ * （其完成状态在计划卡里），不放证据文案作填充。步骤框内只显示
+ * 任务执行动作，按执行时序从上往下排列（2026-11-16 用户定）。按执行时序从上往下排列（2026-11-16 用户定）。
  * 计划任务：每一步一只框（2026-11-16 用户定：计划任务中规划的
  * 步骤就是一个框），框里是这一步具体执行了哪些动作（自然语言，
  * 不出现程序化描述），哪一步报错就写在哪一步；执行到哪一步就显
@@ -500,7 +507,6 @@ export default function TaskDetail({
     // 的步骤不显示框，已完成的不隐藏。
     if (!isStepReached(idx)) return null;
     const stepNodes = stepNodeMap.get(idx) ?? [];
-    const evidence = typeof item.evidence === "string" ? item.evidence.trim() : "";
     return (
       <div
         key={idx}
@@ -532,11 +538,6 @@ export default function TaskDetail({
           }}
         >
           {stepNodes.map(renderNode)}
-          {stepNodes.length === 0 && (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {evidence ? humanizeStepLabel(evidence) : "暂无执行记录"}
-            </Typography.Text>
-          )}
         </div>
       </div>
     );
@@ -621,6 +622,12 @@ export default function TaskDetail({
     if (isPlanTask && checklist.length > 0 && nodes.length > 0) {
       for (let idx = 0; idx < checklist.length; idx++) {
         if (!isStepReached(idx)) continue;
+        // 详情只放执行（2026-11-16 用户定）：没有执行动作的步骤不在
+        // 详情里占位——它的完成状态在对话框计划卡里，不必另开一只空框
+        // 只放一句证据文案。计划 6 步、执行只 4 个阶段（梳理/匹配/
+        // 生成/签发），「首页确认」「完成其余页面编排」两步的活本就记
+        // 在「生成主题方案」节点下，单开空框等于重复占位。
+        if ((stepNodeMap.get(idx) ?? []).length === 0) continue;
         push(stepBoxTs(idx), renderStepBox(idx));
       }
       for (const n of ungroupedNodes) push(nodeTs(n), renderNode(n));
