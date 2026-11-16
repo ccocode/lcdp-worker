@@ -432,12 +432,15 @@ export default function TaskDetail({
       isRunning,
       lastEvent,
     });
-    // 动作行时间（2026-11-16 用户定：动作行也带时间）：取该动作最新一条
-    // 时间线事件的时间（完成时即完成事件的时间，与其下完成记录同一口径）；
-    // 无事件的动作（尚未开始）不显示时间。
-    const lastRawEvent =
-      rawNodeEvents.length > 0 ? rawNodeEvents[rawNodeEvents.length - 1]! : null;
-    const nodeTime = formatClock(lastRawEvent?.createdAt);
+    // 动作行时间（2026-11-16 用户定：动作行也带时间）：取该动作最早一条
+    // 时间线事件的时间（即动作开始时间），动作行排在节点最前面、时间
+    // 也最早，整只节点自上而下按时间排。之前取最新一条事件的时间
+    // （完成时间），动作行顶着最晚的时间排在最前面、后面的事件反而
+    // 更早，顺序是反的（22:44 的动作排在 22:33 的事件前面）；无事件
+    // 的动作（尚未开始）不显示时间。
+    const firstRawEvent =
+      rawNodeEvents.length > 0 ? rawNodeEvents[0]! : null;
+    const nodeTime = formatClock(firstRawEvent?.createdAt);
     // 报错只在节点真正失败时才红字跟在动作行下方（2026-11-16 用户
     // 定）：重试中的节点（网关 503 等瞬时错、attempts>1）只显示
     // 「正在优化调整」与时间线里的「本阶段生成遇阻」，不把上一次
