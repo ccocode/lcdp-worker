@@ -142,6 +142,19 @@ function nodeDot(status: string): "waiting" | "running" | "completed" | "failed"
   return "waiting";
 }
 
+/** HH:MM:SS（24 小时制），与时间线事件同一口径。 */
+function formatClock(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 /** 时间线事件去重：连续相同文案合并计数，保留最晚时间 */
 function dedupeTimeline(
   events: AdminTaskRunTimelineEvent[],
@@ -152,14 +165,7 @@ function dedupeTimeline(
     const isLastAndRunning = opts.isRunning && ev === opts.lastEvent;
     const text = humanizeTimelineSummary(ev.summary, { isLastAndRunning });
     if (!text) continue;
-    const time = ev.createdAt
-      ? new Date(ev.createdAt).toLocaleTimeString("zh-CN", {
-          hour12: false,
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      : null;
+    const time = formatClock(ev.createdAt);
     if (deduped.length > 0 && deduped[deduped.length - 1]!.text === text) {
       deduped[deduped.length - 1]!.count++;
       if (time) deduped[deduped.length - 1]!.time = time;
@@ -379,10 +385,17 @@ export default function TaskDetail({
   };
   /** 节点行：圆点 + 动作名 + 错误/产物 + 挂在其下的时间线事件。 */
   const renderNode = (n: AdminTaskRunNode) => {
-    const nodeEvents = dedupeTimeline(eventsByNode.get(n.nodeId) ?? [], {
+    const rawNodeEvents = eventsByNode.get(n.nodeId) ?? [];
+    const nodeEvents = dedupeTimeline(rawNodeEvents, {
       isRunning,
       lastEvent,
     });
+    // 动作行时间（2026-11-16 用户定：动作行也带时间）：取该动作最新一条
+    // 时间线事件的时间（完成时即完成事件的时间，与其下完成记录同一口径）；
+    // 无事件的动作（尚未开始）不显示时间。
+    const lastRawEvent =
+      rawNodeEvents.length > 0 ? rawNodeEvents[rawNodeEvents.length - 1]! : null;
+    const nodeTime = formatClock(lastRawEvent?.createdAt);
     return (
       <div key={n.nodeId} style={{ fontSize: 12 }}>
         <div
@@ -393,6 +406,18 @@ export default function TaskDetail({
           }}
         >
           <StatusDot status={nodeDot(n.status)} />
+          {nodeTime && (
+            <span
+              style={{
+                fontSize: 11,
+                opacity: 0.6,
+                flexShrink: 0,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {nodeTime}
+            </span>
+          )}
           <span
             style={{
               flex: 1,
