@@ -7,11 +7,12 @@ import {
   summarizeArtifactFiles,
 } from "./semanticLabels";
 /**
- * 任务执行轨迹框（工作台右栏每任务一只框，与任务记录页抽屉共用）：
- * 详情只显示、不操作——框内是本任务的执行轨迹，与「执行过程」
- * 同一只框（StepsBox）：标题行 = 任务名 + 共 N 个执行动作 + 种
- * 类标 + 状态标 + 展开/收起。框内只显示任务执行动作，按执行
- * 时序从上往下排列（2026-11-16 用户定）。
+ * 任务执行轨迹（工作台右栏每任务一段，与任务记录页抽屉共用）：
+ * 详情只显示、不操作——这里是本任务的执行轨迹。任务头只是一行
+ * plain 文字：任务名 + 共 N 个执行动作 + 种类标 + 状态标 + 展开/
+ * 收起；其下步骤框直接顶格平铺，不再包进一只带边框的计划框
+ * （2026-11-16 用户定：去掉计划框，步骤框直接平铺）。步骤框内
+ * 只显示任务执行动作，按执行时序从上往下排列（2026-11-16 用户定）。
  * 计划任务：每一步一只框（2026-11-16 用户定：计划任务中规划的
  * 步骤就是一个框），框里是这一步具体执行了哪些动作（自然语言，
  * 不出现程序化描述），哪一步报错就写在哪一步；执行到哪一步就显
@@ -30,7 +31,6 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Badge, Spin, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
-import StepsBox from "./StepsBox";
 import {
   api,
   type AdminAssistantTask,
@@ -587,47 +587,47 @@ export default function TaskDetail({
     traceCount > 0 ? ` · 共 ${traceCount} 个执行动作` : ""
   }`;
   return (
-    <StepsBox
-      header={
-        <>
-          <div
-            onClick={toggleBox}
+    // 详情不套计划框（2026-11-16 用户定：去掉计划框，步骤框直接平铺）：
+    // 任务头只是一行 plain 文字（标题 + 种类 + 状态），步骤框直接顶格平铺，
+    // 不再包进一只带边框的 StepsBox。收起/展开仍由标题行控制（多任务时父级管）。
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div
+          onClick={toggleBox}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            alignItems: "center",
+            cursor: "pointer",
+          }}
+        >
+          <Typography.Text
+            ellipsis
+            style={{ fontSize: 12, flex: 1, minWidth: 0 }}
+            title={headerText}
+          >
+            {headerText}
+          </Typography.Text>
+          <span
             style={{
-              flex: 1,
-              minWidth: 0,
-              display: "flex",
-              alignItems: "center",
-              cursor: "pointer",
+              marginLeft: 8,
+              color: tokens.colorPrimary,
+              flexShrink: 0,
             }}
           >
-            <Typography.Text
-              ellipsis
-              style={{ fontSize: 12, flex: 1, minWidth: 0 }}
-              title={headerText}
-            >
-              {headerText}
-            </Typography.Text>
-            <span
-              style={{
-                marginLeft: 8,
-                color: tokens.colorPrimary,
-                flexShrink: 0,
-              }}
-            >
-              {boxExpanded ? "收起" : "展开"}
-            </span>
-          </div>
-          {activeTask.kind && (
-            <Tag style={{ marginInlineEnd: 0 }}>
-              {TASK_KIND_LABELS[activeTask.kind] ?? activeTask.kind}
-            </Tag>
-          )}
-          <Tag style={{ marginInlineEnd: 0 }} color={headerStatusColor}>
-            {headerStatusLabel}
+            {boxExpanded ? "收起" : "展开"}
+          </span>
+        </div>
+        {activeTask.kind && (
+          <Tag style={{ marginInlineEnd: 0 }}>
+            {TASK_KIND_LABELS[activeTask.kind] ?? activeTask.kind}
           </Tag>
-        </>
-      }
-    >
+        )}
+        <Tag style={{ marginInlineEnd: 0 }} color={headerStatusColor}>
+          {headerStatusLabel}
+        </Tag>
+      </div>
       {boxExpanded && (
         <>
           {runLoading && (
@@ -795,6 +795,6 @@ export default function TaskDetail({
           )}
         </>
       )}
-    </StepsBox>
+    </div>
   );
 }
