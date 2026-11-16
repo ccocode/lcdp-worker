@@ -643,7 +643,19 @@ export default function ChatPane({
     return () => window.clearInterval(t);
   }, [sending, bgRunning, hasGenerating]);
 
+  // 是否贴底跟随（2026-11-16 用户定）：对话框只在用户已在底部附近
+  // 时才自动滚到底部；用户往上翻历史时不抢滚动条。初值 true，
+  // 会话刚载入时滚到底部看最新消息；用户一滚动即按实际位置更新。
+  const stickToBottomRef = useRef(true);
+  const updateStickToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
+
   useEffect(() => {
+    if (!stickToBottomRef.current) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, sending]);
@@ -1266,6 +1278,7 @@ export default function ChatPane({
       )}
       <div
         ref={scrollRef}
+        onScroll={updateStickToBottom}
         style={{
           flex: 1,
           overflowY: "auto",
