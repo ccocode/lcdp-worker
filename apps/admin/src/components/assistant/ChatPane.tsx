@@ -1030,6 +1030,24 @@ export default function ChatPane({
     conversationId,
   ]);
 
+  /** 对话框「正在处理」条实时状态（2026-11-16 用户定）：执行进行中
+   * 时在加载动画处（正在处理条）实时显示当前动作、动态刷新；加载
+   * 动画消失（hasGenerating 结束）时执行动作消息一并隐藏——状态文
+   * 案只随正在处理条出现。优先取本回合正在执行的步骤，否则取任务
+   * runStatus 的生命周期文案。 */
+  const liveStatusText: string | null = useMemo(() => {
+    if (!hasGenerating) return null;
+    const steps = latestProcess?.steps ?? [];
+    const liveStep =
+      steps.find((s) => s.status === "running") ?? steps[steps.length - 1];
+    if (liveStep) {
+      const toolText = humanizeToolName(liveStep.tool);
+      const summaryText = humanizeToolSummary(liveStep.tool, liveStep.summary);
+      return summaryText ? `${toolText}：${summaryText}` : toolText;
+    }
+    return liveRunStatusText(activeTask?.runStatus);
+  }, [hasGenerating, latestProcess, activeTask]);
+
   const prevProcessRef = useRef<TurnProcessSnapshot | null>(null);
   useEffect(() => {
     if (!onTurnProcessChange) return;
@@ -1070,21 +1088,6 @@ export default function ChatPane({
     const generating = !isUser && msg.status === "generating";
     const failed = !isUser && msg.status === "failed";
     const steps = !isUser ? turnStepsOf(msg, detailToolCalls) : [];
-    // 对话框加载区实时状态（2026-11-16 用户定）：执行进行中时在加载
-    // 动画处实时显示当前动作、动态刷新；加载动画消失（generating
-    // 结束）时执行动作消息一并隐藏。优先取本回合正在执行的步骤，
-    // 否则取任务 runStatus 的生命周期文案。
-    const liveStep =
-      steps.find((s) => s.status === "running") ?? steps[steps.length - 1];
-    const liveStatusText: string | null = isUser
-      ? null
-      : liveStep
-        ? (() => {
-            const toolText = humanizeToolName(liveStep.tool);
-            const summaryText = humanizeToolSummary(liveStep.tool, liveStep.summary);
-            return summaryText ? `${toolText}：${summaryText}` : toolText;
-          })()
-        : liveRunStatusText(activeTask?.runStatus);
     const startedAtMs = msg.createdAt
       ? Date.parse(msg.createdAt)
       : turnStartRef.current;
@@ -1122,34 +1125,7 @@ export default function ChatPane({
           ) : (
             <MarkdownView content={humanizeOpsCopy(msg.text)} />
           )}
-          {generating && <Spin size="small" style={{ marginLeft: 8 }} />}
         </div>
-        {/* 2026-11-16：加载区实时状态——执行进行中时在加载动画处实时
-            显示当前动作、动态刷新；加载动画消失（generating 结束）
-            时执行动作消息一并隐藏。 */}
-        {generating && onTurnProcessChange && liveStatusText && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 12,
-              color: tokens.colorTextSecondary,
-              padding: "2px 4px",
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: tokens.colorPrimary,
-                flexShrink: 0,
-              }}
-            />
-            <span>{liveStatusText}</span>
-          </div>
-        )}
         {/* 2026-11-16：父级接管过程显示时对话框内不再渲染过程 */}
         {!onTurnProcessChange && (generating || steps.length > 0) && (
           <TurnProcess
@@ -1317,7 +1293,7 @@ export default function ChatPane({
         >
           <Spin size="small" />
           <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
-            正在处理
+            {liveStatusText ?? "正在处理"}
           </Typography.Text>
           <Button
             size="small"
