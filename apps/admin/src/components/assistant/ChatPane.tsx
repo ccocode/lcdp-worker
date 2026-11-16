@@ -353,6 +353,32 @@ export interface TurnProcessSnapshot {
   completed: boolean;
 }
 
+/** 任务 runStatus → 对话框加载区实时状态文案（2026-11-16 用户定：
+ * 生命周期状态在对话框加载动画处实时显示、动态刷新；加载动画消失
+ * 时执行动作消息一并隐藏）。 */
+function liveRunStatusText(runStatus: string | null | undefined): string | null {
+  switch (runStatus) {
+    case "pending":
+      return "设计任务已创建";
+    case "running":
+      return "开始执行设计步骤";
+    case "awaiting_home":
+      return "首页效果已生成，等待确认风格";
+    case "awaiting_preview":
+      return "全站效果预览已就绪，等待最终验收";
+    case "awaiting_bind":
+      return "预览验收已通过，等待确认上线";
+    case "completed":
+      return "设计任务全部完成";
+    case "failed":
+      return "当前步骤执行遇阻";
+    case "paused":
+      return "设计流程已暂停，等待处理";
+    default:
+      return null;
+  }
+}
+
 export function TurnProcess({
   steps,
   elapsedMs,
@@ -1044,6 +1070,21 @@ export default function ChatPane({
     const generating = !isUser && msg.status === "generating";
     const failed = !isUser && msg.status === "failed";
     const steps = !isUser ? turnStepsOf(msg, detailToolCalls) : [];
+    // 对话框加载区实时状态（2026-11-16 用户定）：执行进行中时在加载
+    // 动画处实时显示当前动作、动态刷新；加载动画消失（generating
+    // 结束）时执行动作消息一并隐藏。优先取本回合正在执行的步骤，
+    // 否则取任务 runStatus 的生命周期文案。
+    const liveStep =
+      steps.find((s) => s.status === "running") ?? steps[steps.length - 1];
+    const liveStatusText: string | null = isUser
+      ? null
+      : liveStep
+        ? (() => {
+            const toolText = humanizeToolName(liveStep.tool);
+            const summaryText = humanizeToolSummary(liveStep.tool, liveStep.summary);
+            return summaryText ? `${toolText}：${summaryText}` : toolText;
+          })()
+        : liveRunStatusText(activeTask?.runStatus);
     const startedAtMs = msg.createdAt
       ? Date.parse(msg.createdAt)
       : turnStartRef.current;
@@ -1083,6 +1124,32 @@ export default function ChatPane({
           )}
           {generating && <Spin size="small" style={{ marginLeft: 8 }} />}
         </div>
+        {/* 2026-11-16：加载区实时状态——执行进行中时在加载动画处实时
+            显示当前动作、动态刷新；加载动画消失（generating 结束）
+            时执行动作消息一并隐藏。 */}
+        {generating && onTurnProcessChange && liveStatusText && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 12,
+              color: tokens.colorTextSecondary,
+              padding: "2px 4px",
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: tokens.colorPrimary,
+                flexShrink: 0,
+              }}
+            />
+            <span>{liveStatusText}</span>
+          </div>
+        )}
         {/* 2026-11-16：父级接管过程显示时对话框内不再渲染过程 */}
         {!onTurnProcessChange && (generating || steps.length > 0) && (
           <TurnProcess

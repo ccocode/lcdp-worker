@@ -339,28 +339,24 @@ export default function TaskDetail({
     headerRunStatus === "pending" || headerRunStatus === "running";
 
   /** 执行轨迹：节点动作按执行顺序；时间线事件按 nodeId 挂到所属
-   * 节点行下，无归属的按 seq 排在末尾。节点无时间戳，不做跨组
-   * 混排——组内各自按序，组间节点在前、时间线在后。 */
+   * 节点行下。无归属的生命周期事件（任务已创建、开始执行、收尾
+   * 消息等）不在详情里展示——2026-11-16 用户定：它们在对话框
+   * 加载动画处实时显示，加载动画消失时一并隐藏。节点无时间戳，
+   * 不做跨组混排——组内各自按序，组间节点在前、时间线在后。 */
   const nodes = runDetail?.nodes ?? [];
   const timeline = [...(runDetail?.timeline ?? [])].sort(
     (a, b) => (a.seq ?? 0) - (b.seq ?? 0),
   );
   const lastEvent = timeline.length > 0 ? timeline[timeline.length - 1]! : null;
   const eventsByNode = new Map<string, AdminTaskRunTimelineEvent[]>();
-  const orphanEvents: AdminTaskRunTimelineEvent[] = [];
   for (const ev of timeline) {
     if (ev.nodeId && nodes.some((n) => n.nodeId === ev.nodeId)) {
       const arr = eventsByNode.get(ev.nodeId) ?? [];
       arr.push(ev);
       eventsByNode.set(ev.nodeId, arr);
-    } else {
-      orphanEvents.push(ev);
     }
+    // 无归属事件直接丢弃（不在详情里占位）。
   }
-  const orphanRows = dedupeTimeline(orphanEvents, {
-    isRunning,
-    lastEvent,
-  });
   /** 计划任务：节点按 phase=plan:<序号> 归属到计划步骤，每一步一只框；
    * 步骤按计划顺序（即执行顺序）从上往下排；无 phase 或序号越界的节点
    * 不分组，仍平铺在步骤框之后。 */
@@ -514,19 +510,8 @@ export default function TaskDetail({
   const hasTrace =
     nodes.length > 0 || timeline.length > 0 || otherPendings.length > 0;
 
-  /** 无归属时间线行。 */
-  const renderOrphanRow = (
-    item: { text: string; time: string | null; count: number },
-    key: string | number,
-  ) => (
-    <DetailPlainRow key={key} time={item.time} count={item.count}>
-      {item.text}
-    </DetailPlainRow>
-  );
-
-  /** 详情块按时间从上往下排（2026-11-16 用户定）：步骤框、无归属节点、
-   * 无归属时间线行按各自最早时间合并排序，不再把无归属行一律堆在末尾
-   * （旧口径使 20:57 的「任务已创建」排到 20:58 的步骤框后面）。 */
+  /** 详情块按时间从上往下排（2026-11-16 用户定）：步骤框、无归属节点
+   * 按各自最早时间合并排序。无归属的生命周期行已不再进详情（见上）。 */
   const detailBlocks: { ts: number; order: number; el: React.ReactNode }[] = [];
   {
     let order = 0;
@@ -640,9 +625,10 @@ export default function TaskDetail({
         </DetailBox>,
       );
     }
-    for (const [j, row] of orphanRows.entries()) {
-      push(row.ts, renderOrphanRow(row, `orphan-${j}`));
-    }
+    // 2026-11-16 用户定：无归属的生命周期行（任务已创建、开始执行、
+    // 收尾消息等）不进详情——详情只放执行盒子；生命周期状态在对话框
+    // 加载动画处实时显示、动态刷新。故此处不再把 orphanRows 推入
+    // detailBlocks。
     detailBlocks.sort((a, b) => a.ts - b.ts || a.order - b.order);
   }
 
