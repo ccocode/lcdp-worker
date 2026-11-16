@@ -1,34 +1,31 @@
 import {
   humanizeNodeName,
-  humanizeOpsCopy,
-  humanizeStepLabel,
   humanizeTaskTitle,
   humanizeTechnicalDetail,
   humanizeTimelineSummary,
   summarizeArtifactFiles,
 } from "./semanticLabels";
 /**
- * 任务步骤框（工作台右栏每任务一只框，与任务记录页抽屉共用）：
- * 与「执行过程」同一只框（StepsBox）——标题行 = 任务名 + 共 N
- * 个步骤 + 种类标 + 状态标 + 展开/收起；框内只显示本任务自己
- * 的执行步骤（清单 ✓ + 文字，当前步骤默认展开显示执行动作、
- * 已完成默认收起、全部完成末尾显示执行完成；中间不显示时间）。
- * 预览卡与绑定审批卡不在此显示，只在对话框里（对话框是唯一
- * 操作面）；详情里只留暂停 / 终审未达标的状态行（对话框里没
- * 有继续运行 / 重试失败节点入口）。底部不放时间与继续入口
- * （详情只展示，操作走对话框）；任务记录页仍可由调用方以
- * footer 注入去助手查看。待决事项的处理入口由调用方以
- * onHandlePending 注入（工作台：切到本任务会话；任务记录页：
- * 去助手查看）；不传则只展示待决、不给入口。
+ * 任务执行轨迹框（工作台右栏每任务一只框，与任务记录页抽屉共用）：
+ * 详情只显示、不操作——框内是本任务的执行轨迹，与「执行过程」
+ * 同一只框（StepsBox）：标题行 = 任务名 + 共 N 个执行动作 + 种
+ * 类标 + 状态标 + 展开/收起；框内只有智能体实际执行的动作（节
+ * 点动作按执行顺序，时间线事件挂在所属节点行下、无归属的按顺
+ * 序号排在末尾），失败行内跟错误文本，终审未达标跟待完善项。
+ * 计划清单只在对话框计划卡里，详情里不重复；预览/绑定/首页
+ * 确认卡只在对话框里，详情里不出现；详情里没有任何按钮——
+ * 继续运行、重试、去处理等操作一律走对话框，详情不给入口。
+ * 底部不放时间与继续入口（详情只展示，操作走对话框）。
  */
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Badge, Button, message, Spin, Tag, Typography } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Badge, Spin, Tag, Typography } from "antd";
 import { tokens } from "@lcdp/ui";
 import StepsBox from "./StepsBox";
 import {
   api,
   type AdminAssistantTask,
   type AdminTaskRunDetail,
+  type AdminTaskRunTimelineEvent,
 } from "../../api";
 
 /** 状态圆点：等待灰、执行中蓝闪、完成绿、失败红（Badge 原生圆点，processing 自带闪烁）。 */
@@ -90,7 +87,6 @@ const CHECK_PASSED = new Set([
   "checked",
 ]);
 const CHECK_FAILED = new Set(["failed", "error", "fail"]);
-const CHECK_SKIPPED = new Set(["skipped", "skip"]);
 
 /** 清单“已过”条数（与详情同一口径，跳过不算过） */
 export function countPassed(task: AdminAssistantTask): number {
@@ -129,21 +125,45 @@ export const PAUSE_REASON_LABELS: Record<string, string> = {
   "home-gate-stalled": "等待首页风格确认",
 };
 
-/** 暂停处置动作中文（与服务端通知正文同口径；未知键原样回落） */
-export const RECOVERY_ACTION_LABELS: Record<string, string> = {
-  "raise-budget": "提高调用上限",
-  abandon: "终止当前任务",
-  "fix-contract": "调整设计要求",
-  "start-successor-run": "重新开始生成",
-  "inspect-failures": "查看详细原因",
-  "retry-nodes": "重试未成功步骤",
-};
+/** 节点状态 → 圆点状态 */
+function nodeDot(status: string): "waiting" | "running" | "completed" | "failed" {
+  if (CHECK_FAILED.has(status)) return "failed";
+  if (status === "active" || status === "running") return "running";
+  if (CHECK_PASSED.has(status)) return "completed";
+  return "waiting";
+}
+
+/** 时间线事件去重：连续相同文案合并计数，保留最晚时间 */
+function dedupeTimeline(
+  events: AdminTaskRunTimelineEvent[],
+  opts: { isRunning: boolean; lastEvent: AdminTaskRunTimelineEvent | null },
+): { text: string; time: string | null; count: number }[] {
+  const deduped: { text: string; time: string | null; count: number }[] = [];
+  for (const ev of events) {
+    const isLastAndRunning = opts.isRunning && ev === opts.lastEvent;
+    const text = humanizeTimelineSummary(ev.summary, { isLastAndRunning });
+    if (!text) continue;
+    const time = ev.createdAt
+      ? new Date(ev.createdAt).toLocaleTimeString("zh-CN", {
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      : null;
+    if (deduped.length > 0 && deduped[deduped.length - 1]!.text === text) {
+      deduped[deduped.length - 1]!.count++;
+      if (time) deduped[deduped.length - 1]!.time = time;
+    } else {
+      deduped.push({ text, time, count: 1 });
+    }
+  }
+  return deduped;
+}
 
 export default function TaskDetail({
   task,
-  footer,
   appId,
-  onHandlePending,
   /** 受控展开态（工作台多框用）；不传则内部管理，默认展开 */
   expanded,
   onExpandedChange,
@@ -151,11 +171,8 @@ export default function TaskDetail({
   defaultCollapsed = false,
 }: {
   task: AdminAssistantTask;
-  footer?: ReactNode;
   /** 传了且任务有 runId 时才取 run 详情（不传则不取数；传 null 走平台侧） */
   appId?: string | null;
-  /** 待决事项的处理入口（不传则只展示） */
-  onHandlePending?: () => void;
   expanded?: boolean;
   onExpandedChange?: (v: boolean) => void;
   defaultCollapsed?: boolean;
@@ -163,7 +180,6 @@ export default function TaskDetail({
   const [runDetail, setRunDetail] = useState<AdminTaskRunDetail | null>(null);
   const [runLoading, setRunLoading] = useState(false);
   const [runTick, setRunTick] = useState(0);
-  const [acting, setActing] = useState<string | null>(null);
   // 收尾修复 7：已加载过的任务 id——周期刷新静默取数，不再闪加载动画。
   const loadedTaskRef = useRef<string | null>(null);
   useEffect(() => {
@@ -246,29 +262,6 @@ export default function TaskDetail({
       off();
     };
   }, [appId, task.id, task.runId]);
-  /**
-   * 详情内仅留的处置动作（暂停行的继续运行 / 重试失败节点）：
-   * 预览与绑定只在对话框里点，详情里不给入口。
-   */
-  const runAction = async (kind: "resume" | "retry-nodes") => {
-    if (appId === undefined || acting) return;
-    setActing(kind);
-    try {
-      if (kind === "resume") {
-        if (appId === null) await api.assistant.resumeRun(task.id);
-        else await api.assistant.app.resumeRun(appId, task.id);
-      } else {
-        if (appId === null) await api.assistant.retryRunNodes(task.id);
-        else await api.assistant.app.retryRunNodes(appId, task.id);
-      }
-      // 成功后重拉 run 详情，界面随重拉结果刷新。
-      setRunTick((t) => t + 1);
-    } catch {
-      message.error("操作失败，请稍后重试");
-    } finally {
-      setActing(null);
-    }
-  };
   // 始终以服务端最新返回的 runDetail.task 为准，防止左侧计划卡已推进（1/5、3/5）而右侧仍滞后为 0/5
   const activeTask = runDetail?.task ?? task;
   /** 框折叠态（受控时由父级管；非受控默认展开，任务记录页抽屉即此态） */
@@ -281,17 +274,6 @@ export default function TaskDetail({
     else setUserBoxExpanded(next);
   };
 
-  /** 步骤清单（任务头下面的唯一正文）：✓ + 文字。 */
-  type StepState = "passed" | "failed" | "skipped" | "pending";
-  const stepState = (status: string): StepState =>
-    CHECK_PASSED.has(status)
-      ? "passed"
-      : CHECK_FAILED.has(status)
-        ? "failed"
-        : CHECK_SKIPPED.has(status)
-          ? "skipped"
-          : "pending";
-  const checklist = activeTask.checklist ?? [];
   const runStatus = runDetail?.run?.runStatus ?? null;
   /** 详情头状态跟 runStatus（收尾1）：等验收/等确认首页等态不再只显示“进行中”，与对话框卡角标同口径；run 详情未到时回落任务行 runStatus。 */
   const headerRunStatus = runStatus ?? activeTask.runStatus ?? null;
@@ -329,140 +311,68 @@ export default function TaskDetail({
    * 用 headerRunStatus（含任务行 runStatus 回落），run 详情未到时也有口径。 */
   const isRunning =
     headerRunStatus === "pending" || headerRunStatus === "running";
-  const failedStepIndex = checklist.findIndex(
-    (it) => stepState(it.status) === "failed",
-  );
-  // 从最后一个已完成步骤之后寻找当前焦点步骤，避免历史前置项遗留导致步骤错挂到第 1 步
-  const lastDoneIndex = checklist.reduce(
-    (acc, it, idx) =>
-      stepState(it.status) === "passed" || stepState(it.status) === "skipped"
-        ? idx
-        : acc,
-    -1,
-  );
-  const firstOpenAfterDone = (() => {
-    const after = checklist.findIndex(
-      (it, idx) => idx > lastDoneIndex && stepState(it.status) === "pending",
-    );
-    return after >= 0
-      ? after
-      : checklist.findIndex((it) => stepState(it.status) === "pending");
-  })();
-  const currentStepIndex = isRunning
-    ? firstOpenAfterDone
-    : headerRunStatus === "awaiting_home" ||
-        headerRunStatus === "awaiting_preview" ||
-        headerRunStatus === "awaiting_bind" ||
-        headerRunStatus === "paused" ||
-        headerRunStatus === "failed"
-      ? (failedStepIndex >= 0 ? failedStepIndex : firstOpenAfterDone)
-      : -1;
-  // 默认展开：失败步骤优先（看错误），否则当前焦点步骤；切任务清零。
-  const defaultExpandedIndex =
-    failedStepIndex >= 0 ? failedStepIndex : currentStepIndex;
-  const [expandedOverride, setExpandedOverride] = useState<
-    Record<number, boolean>
-  >({});
-  useEffect(() => {
-    setExpandedOverride({});
-  }, [task.id]);
-  const isStepExpanded = (i: number) =>
-    expandedOverride[i] ?? (i === defaultExpandedIndex);
-  const toggleStep = (i: number) =>
-    setExpandedOverride((prev) => ({ ...prev, [i]: !isStepExpanded(i) }));
 
-  /** 执行动作（当前步骤展开区）：在跑的节点 + 最新报告流程，均去时间。 */
-  const runningNodes = (runDetail?.nodes ?? []).filter(
+  /** 执行轨迹：节点动作按执行顺序；时间线事件按 nodeId 挂到所属
+   * 节点行下，无归属的按 seq 排在末尾。节点无时间戳，不做跨组
+   * 混排——组内各自按序，组间节点在前、时间线在后。 */
+  const nodes = runDetail?.nodes ?? [];
+  const timeline = [...(runDetail?.timeline ?? [])].sort(
+    (a, b) => (a.seq ?? 0) - (b.seq ?? 0),
+  );
+  const lastEvent = timeline.length > 0 ? timeline[timeline.length - 1]! : null;
+  const eventsByNode = new Map<string, AdminTaskRunTimelineEvent[]>();
+  const orphanEvents: AdminTaskRunTimelineEvent[] = [];
+  for (const ev of timeline) {
+    if (ev.nodeId && nodes.some((n) => n.nodeId === ev.nodeId)) {
+      const arr = eventsByNode.get(ev.nodeId) ?? [];
+      arr.push(ev);
+      eventsByNode.set(ev.nodeId, arr);
+    } else {
+      orphanEvents.push(ev);
+    }
+  }
+  const orphanRows = dedupeTimeline(orphanEvents, {
+    isRunning,
+    lastEvent,
+  });
+  const traceCount = nodes.length + orphanRows.length;
+  const runningNodes = nodes.filter(
     (n) => n.status === "active" || n.status === "running",
   );
-  const failedNodes = (runDetail?.nodes ?? []).filter(
-    (n) => n.status === "failed",
-  );
-  const latestTimeline = (runDetail?.timeline ?? []).slice(-5);
   const latestFailedVerdict = (runDetail?.verdicts ?? []).find(
     (v) => v.verdict === "fail",
   );
-  /**
-   * 第二批（确认门）：某步骤对应的执行节点（按 nodeKind 匹配）。
-   * 步骤展开区优先显示本步骤的节点动作（状态／尝试／错误／产物），
-   * 而不是只在当前步骤下堆全部在跑节点；无 nodeKind 的旧步骤回落
-   * 原口径（当前步骤看在跑节点＋时间线）。
-   */
-  const stepNodes = (i: number) => {
-    const nk = checklist[i]?.nodeKind;
-    if (!nk) return [];
-    return (runDetail?.nodes ?? []).filter((n) => n.kind === nk);
-  };
-  /** 某行是否可展开：当前步骤、失败步骤（有错误可看）、已完成
-   *  步骤（有证据可看）才给展开；其余只显示标题。 */
-  const stepExpandable = (i: number): boolean => {
-    if (stepNodes(i).length > 0) return true;
-    const st = stepState(checklist[i].status);
-    if (i === currentStepIndex) return true;
-    if (st === "failed")
-      return (
-        failedNodes.length > 0 ||
-        (latestFailedVerdict?.acceptanceGaps.length ?? 0) > 0
-      );
-    if (st === "passed")
-      return (
-        typeof checklist[i].evidence === "string" &&
-        checklist[i].evidence.length > 0
-      );
-    return false;
-  };
-  /** 全部完成行：任务已关闭，或清单全过且 run 已完成；终审结论并入。 */
+  /** 全部完成行：任务已关闭，或 run 已完成；终审结论并入。 */
   const taskDone = activeTask.status === "done" || activeTask.status === "closed";
-  const showDoneRow =
-    taskDone ||
-    (checklist.length > 0 &&
-      checklist.every((it) => stepState(it.status) === "passed") &&
-      runStatus === "completed");
+  const showDoneRow = taskDone || runStatus === "completed";
   const doneVerdictText =
     runDetail?.latestVerdict === "pass"
       ? "（终审已通过）"
       : runDetail?.latestVerdict === "fail"
         ? "（终审未通过）"
         : "";
-  /** 预览卡与绑定卡不在此显示；只留暂停 / 终审未达标行。第三批：首页卡同理只在对话框。 */
+  /** 预览卡与绑定卡不在此显示；只留暂停 / 终审未达标行（纯展示，无按钮、无处置入口，处置走对话框）。 */
   const otherPendings = (runDetail?.pendingItems ?? []).filter(
     (p) => p.type !== "theme-preview" && p.type !== "theme-bind" && p.type !== "theme-home",
   );
+  const hasTrace =
+    nodes.length > 0 || timeline.length > 0 || otherPendings.length > 0;
 
-  /** 步骤状态圆点：等待灰、执行中蓝闪、完成绿、失败红；当前步骤不再用转圈动画（对话框外已有执行动画）。 */
-  const stepIcon = (st: StepState, isCurrent: boolean, i: number) => {
-    if (st === "passed") return <StatusDot status="completed" />;
-    if (st === "failed") return <StatusDot status="failed" />;
-    if (isCurrent) {
-      const nodes = stepNodes(i);
-      const running =
-        nodes.length > 0
-          ? nodes.some((n) => n.status === "active" || n.status === "running")
-          : runningNodes.length > 0;
-      return <StatusDot status={running ? "running" : "waiting"} />;
-    }
-    return <StatusDot status="waiting" />;
-  };
   const headerText = `${humanizeTaskTitle(activeTask.title)}${
-    checklist.length > 0 ? ` · 共 ${checklist.length} 个步骤` : ""
+    traceCount > 0 ? ` · 共 ${traceCount} 个执行动作` : ""
   }`;
   return (
     <StepsBox
       header={
         <>
-          <Button
-            type="text"
-            size="small"
+          <div
             onClick={toggleBox}
             style={{
-              height: "auto",
-              padding: 0,
-              fontSize: 12,
-              color: tokens.colorTextSecondary,
               flex: 1,
-              textAlign: "left",
-              justifyContent: "flex-start",
               minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              cursor: "pointer",
             }}
           >
             <Typography.Text
@@ -481,7 +391,7 @@ export default function TaskDetail({
             >
               {boxExpanded ? "收起" : "展开"}
             </span>
-          </Button>
+          </div>
           {activeTask.kind && (
             <Tag style={{ marginInlineEnd: 0 }}>
               {TASK_KIND_LABELS[activeTask.kind] ?? activeTask.kind}
@@ -495,252 +405,153 @@ export default function TaskDetail({
     >
       {boxExpanded && (
         <>
-      {/* 2026-11-16：取消详情内的进度条（进度仍以清单各项状态呈现） */}
-      {checklist.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            marginTop: 4,
-          }}
-        >
-          {checklist.map((it, i) => {
-            const st = stepState(it.status);
-            const isCurrent = i === currentStepIndex;
-            const expanded = isStepExpanded(i);
-            const expandable = stepExpandable(i);
-            // 第二批：本步骤的节点动作（有 nodeKind 匹配时优先），
-            // 无匹配时当前步骤回落全部在跑节点，其他步骤无动作。
-            const nodesForStep =
-              stepNodes(i).length > 0
-                ? stepNodes(i)
-                : isCurrent
-                  ? runningNodes
-                  : [];
-            const evidenceUrl =
-              typeof it.evidence === "string" &&
-              /^https?:\/\//.test(it.evidence)
-                ? it.evidence
-                : null;
-            return (
-              <div key={i} style={{ fontSize: 12 }}>
+          {runLoading && (
+            <div style={{ padding: "8px 0" }}>
+              <Spin size="small" />
+            </div>
+          )}
+          {!runLoading && !hasTrace && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              暂无执行记录
+            </Typography.Text>
+          )}
+          {nodes.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 4,
+              }}
+            >
+              {nodes.map((n) => {
+                const nodeEvents = dedupeTimeline(eventsByNode.get(n.nodeId) ?? [], {
+                  isRunning,
+                  lastEvent,
+                });
+                return (
+                  <div key={n.nodeId} style={{ fontSize: 12 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <StatusDot status={nodeDot(n.status)} />
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          color:
+                            nodeDot(n.status) === "failed" ? "#ff4d4f" : undefined,
+                        }}
+                      >
+                        {humanizeNodeName(n.nodeId)}
+                        {n.attempts > 1 ? "，正在优化调整" : ""}
+                      </span>
+                    </div>
+                    {n.error && (
+                      <Typography.Text
+                        type="danger"
+                        style={{
+                          fontSize: 12,
+                          display: "block",
+                          marginLeft: 22,
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {humanizeTechnicalDetail(n.error)}
+                      </Typography.Text>
+                    )}
+                    {n.outputArtifacts.length > 0 && (
+                      <Typography.Text
+                        type="secondary"
+                        style={{
+                          fontSize: 12,
+                          display: "block",
+                          marginLeft: 22,
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {summarizeArtifactFiles(n.outputArtifacts)}
+                      </Typography.Text>
+                    )}
+                    {nodeEvents.map((item, j) => (
+                      <div
+                        key={j}
+                        style={{
+                          fontSize: 12,
+                          color: tokens.colorTextSecondary,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "2px 0 2px 22px",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
+                        {item.time && (
+                          <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                            {item.time}
+                          </span>
+                        )}
+                        <span style={{ flex: 1 }}>{item.text}</span>
+                        {item.count > 1 && (
+                          <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
+                            x{item.count}
+                          </Tag>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {orphanRows.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 4,
+              }}
+            >
+              {orphanRows.map((item, j) => (
                 <div
+                  key={j}
                   style={{
+                    fontSize: 12,
+                    color: tokens.colorTextSecondary,
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
-                    cursor: expandable ? "pointer" : undefined,
+                    padding: "2px 0",
+                    wordBreak: "break-word",
                   }}
-                  onClick={expandable ? () => toggleStep(i) : undefined}
                 >
-                  {stepIcon(st, isCurrent, i)}
-                  <span
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      textDecoration:
-                        st === "skipped" ? "line-through" : undefined,
-                      color: st === "failed" ? "#ff4d4f" : undefined,
-                    }}
-                  >
-                    {humanizeStepLabel(it.label)}
-                  </span>
-                  {expandable && (
-                    <Typography.Text
-                      type="secondary"
-                      style={{ fontSize: 12, flexShrink: 0 }}
-                    >
-                      {expanded ? "收起" : "展开"}
-                    </Typography.Text>
+                  <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
+                  {item.time && (
+                    <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                      {item.time}
+                    </span>
+                  )}
+                  <span style={{ flex: 1 }}>{item.text}</span>
+                  {item.count > 1 && (
+                    <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
+                      x{item.count}
+                    </Tag>
                   )}
                 </div>
-                {expanded && (isCurrent || nodesForStep.length > 0) && (
-                  <div
-                    style={{
-                      marginLeft: 22,
-                      marginTop: 4,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {nodesForStep.map((n) => (
-                      <div key={n.nodeId}>
-                        <div>
-                          {humanizeNodeName(n.nodeId)}（
-                          {NODE_STATUS_LABELS[n.status] ?? n.status}
-                          {n.attempts > 1 ? "，正在优化调整" : ""}）
-                        </div>
-                        {n.error && (
-                          <Typography.Text
-                            type="danger"
-                            style={{
-                              fontSize: 12,
-                              display: "block",
-                              wordBreak: "break-word",
-                            }}
-                          >
-                            {humanizeTechnicalDetail(n.error)}
-                          </Typography.Text>
-                        )}
-                        {n.outputArtifacts.length > 0 && (
-                          <Typography.Text
-                            type="secondary"
-                            style={{
-                              fontSize: 12,
-                              display: "block",
-                              wordBreak: "break-word",
-                            }}
-                          >
-                            {summarizeArtifactFiles(n.outputArtifacts)}
-                          </Typography.Text>
-                        )}
-                      </div>
-                    ))}
-                    {isCurrent && (() => {
-                      const chronological = [...latestTimeline].sort(
-                        (a, b) => (a.seq ?? 0) - (b.seq ?? 0),
-                      );
-                      const deduped: { text: string; time: string | null; count: number }[] = [];
-                      for (let idx = 0; idx < chronological.length; idx++) {
-                        const ev = chronological[idx]!;
-                        const isLastAndRunning = isRunning && idx === chronological.length - 1;
-                        const text = humanizeTimelineSummary(ev.summary, { isLastAndRunning });
-                        if (!text) continue;
-                        const time = ev.createdAt
-                          ? new Date(ev.createdAt).toLocaleTimeString("zh-CN", {
-                              hour12: false,
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            })
-                          : null;
-                        if (deduped.length > 0 && deduped[deduped.length - 1]!.text === text) {
-                          deduped[deduped.length - 1]!.count++;
-                          if (time) deduped[deduped.length - 1]!.time = time;
-                        } else {
-                          deduped.push({ text, time, count: 1 });
-                        }
-                      }
-                      return deduped.map((item, j) => (
-                        <div
-                          key={j}
-                          style={{
-                            fontSize: 12,
-                            color: tokens.colorTextSecondary,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "2px 0",
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          <span style={{ color: "#1677ff", fontSize: 8, flexShrink: 0 }}>●</span>
-                          {item.time && (
-                            <span style={{ fontSize: 11, opacity: 0.6, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
-                              {item.time}
-                            </span>
-                          )}
-                          <span style={{ flex: 1 }}>{item.text}</span>
-                          {item.count > 1 && (
-                            <Tag style={{ margin: 0, fontSize: 10, padding: "0 4px", lineHeight: "16px" }}>
-                              x{item.count}
-                            </Tag>
-                          )}
-                        </div>
-                      ));
-                    })()}
-                    {isCurrent &&
-                      isRunning &&
-                      nodesForStep.length === 0 &&
-                      latestTimeline.length === 0 && (
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 12 }}
-                        >
-                          正在执行…
-                        </Typography.Text>
-                      )}
-                  </div>
-                )}
-                {expanded && !isCurrent && st === "failed" && (
-                  <div
-                    style={{
-                      marginLeft: 22,
-                      marginTop: 4,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {failedNodes.map((n) => (
-                      <div key={n.nodeId}>
-                        <div>{humanizeNodeName(n.nodeId)}</div>
-                        {n.error && (
-                          <Typography.Text
-                            type="danger"
-                            style={{
-                              fontSize: 12,
-                              display: "block",
-                              wordBreak: "break-word",
-                            }}
-                          >
-                            {humanizeTechnicalDetail(n.error)}
-                          </Typography.Text>
-                        )}
-                      </div>
-                    ))}
-                    {(latestFailedVerdict?.acceptanceGaps.length ?? 0) >
-                      0 && (
-                      <Typography.Text
-                        type="secondary"
-                        style={{
-                          fontSize: 12,
-                          display: "block",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        待完善项：
-                        {latestFailedVerdict?.acceptanceGaps
-                          .map(humanizeTechnicalDetail)
-                          .join("；")}
-                      </Typography.Text>
-                    )}
-                  </div>
-                )}
-                {expanded && !isCurrent && st === "passed" && it.evidence && (
-                  <div style={{ marginLeft: 22, marginTop: 4 }}>
-                    {evidenceUrl ? (
-                      <a
-                        href={evidenceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ fontSize: 12 }}
-                      >
-                        证据
-                      </a>
-                    ) : (
-                      <Typography.Text
-                        type="secondary"
-                        style={{
-                          fontSize: 12,
-                          display: "block",
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {typeof it.evidence === "string"
-                          ? humanizeOpsCopy(it.evidence)
-                          : ""}
-                      </Typography.Text>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          )}
+          {isRunning && runningNodes.length === 0 && timeline.length === 0 && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              正在执行…
+            </Typography.Text>
+          )}
           {showDoneRow && (
             <div
               style={{
@@ -748,6 +559,7 @@ export default function TaskDetail({
                 alignItems: "center",
                 gap: 6,
                 fontSize: 12,
+                marginTop: 4,
               }}
             >
               <span
@@ -769,89 +581,49 @@ export default function TaskDetail({
               <span>执行完成{doneVerdictText}</span>
             </div>
           )}
-        </div>
-      )}
-
-      {runLoading && (
-        <div style={{ padding: "8px 0" }}>
-          <Spin size="small" />
-        </div>
-      )}
-      {otherPendings.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            marginTop: 8,
-          }}
-        >
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            待决事项
-          </Typography.Text>
-          {otherPendings.map((p, i) => (
-            <div
-              key={i}
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
+          {(latestFailedVerdict?.acceptanceGaps.length ?? 0) > 0 && (
+            <Typography.Text
+              type="secondary"
+              style={{
+                fontSize: 12,
+                display: "block",
+                wordBreak: "break-word",
+                marginTop: 4,
+              }}
             >
-              <span style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
-                {p.type === "pause"
-                  ? PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理"
-                  : "终审未达标"}
-                {p.type === "pause" && p.detail
-                  ? `（${humanizeTechnicalDetail(p.detail)}）`
-                  : ""}
-                {p.type === "pause" &&
-                  p.recoveryActions.length > 0 &&
-                  `（可处置：${p.recoveryActions.map((a) => RECOVERY_ACTION_LABELS[a] ?? a).join("、")}）`}
-                {p.type === "critic" &&
-                  p.gaps.length > 0 &&
-                  `：${p.gaps.map(humanizeTechnicalDetail).join("；")}`}
-              </span>
-              {p.type === "pause" &&
-                runDetail?.run?.runStatus === "paused" && (
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0, height: "auto", fontSize: 12 }}
-                    loading={acting === "resume"}
-                    disabled={acting !== null}
-                    onClick={() => void runAction("resume")}
-                  >
-                    继续运行
-                  </Button>
-                )}
-              {p.type === "pause" &&
-                runDetail?.run?.runStatus === "paused" &&
-                p.recoveryActions.includes("retry-nodes") && (
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0, height: "auto", fontSize: 12 }}
-                    loading={acting === "retry-nodes"}
-                    disabled={acting !== null}
-                    onClick={() => void runAction("retry-nodes")}
-                  >
-                    重试失败节点
-                  </Button>
-                )}
-              {onHandlePending && (
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ padding: 0, height: "auto", fontSize: 12 }}
-                  onClick={onHandlePending}
-                >
-                  去处理
-                </Button>
-              )}
+              待完善项：
+              {latestFailedVerdict?.acceptanceGaps
+                .map(humanizeTechnicalDetail)
+                .join("；")}
+            </Typography.Text>
+          )}
+          {otherPendings.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 8,
+              }}
+            >
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                待决事项
+              </Typography.Text>
+              {otherPendings.map((p, i) => (
+                <div key={i} style={{ fontSize: 12 }}>
+                  {p.type === "pause"
+                    ? (PAUSE_REASON_LABELS[p.reason ?? ""] ?? "等你处理")
+                    : "终审未达标"}
+                  {p.type === "pause" && p.detail
+                    ? `（${humanizeTechnicalDetail(p.detail)}）`
+                    : ""}
+                  {p.type === "critic" &&
+                    p.gaps.length > 0 &&
+                    `：${p.gaps.map(humanizeTechnicalDetail).join("；")}`}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
-      {footer && (
-        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>{footer}</div>
-      )}
+          )}
         </>
       )}
     </StepsBox>

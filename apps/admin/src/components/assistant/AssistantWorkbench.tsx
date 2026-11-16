@@ -129,8 +129,6 @@ function DelegationDetail({
           completed
           defaultCollapsed={false}
           title={humanizeStepLabel(target.stepLabel)}
-          cancelling={false}
-          cancelDisabled={false}
         />
       ) : messages.length === 0 ? (
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -761,14 +759,12 @@ export default function AssistantWorkbench({
                       elapsedMs={turnProcess.elapsedMs}
                       completed={turnProcess.completed}
                       defaultCollapsed={false}
-                      onCancel={turnProcess.onCancel}
-                      cancelling={turnProcess.cancelling}
-                      cancelDisabled={turnProcess.cancelDisabled}
                     />
                   )}
-                  {/* 2026-11-16 详情改版：只显示执行步骤——每任务一只
-                      执行过程样式的框（子代理详情同样式）；任务列表
-                      与对话框计划卡重复的头部/目标/清单展示已去掉 */}
+                  {/* 2026-11-16 详情彻底改版：详情只显示执行轨迹——每任务
+                      一只执行过程样式的框（子代理详情同样式）；计划清单、
+                      预览/绑定/首页卡与全部操作入口只在对话框里，详情
+                      里不重复、不放按钮 */}
                   {delegationView ? (
                     <DelegationDetail
                       appId={appId}
@@ -782,12 +778,6 @@ export default function AssistantWorkbench({
                           appId={appId}
                           expanded={expandedTaskIds.has(t.id)}
                           onExpandedChange={(v) => toggleTaskBox(t.id, v)}
-                          onHandlePending={
-                            t.conversationId
-                              ? () =>
-                                  openConversation(t.conversationId as string)
-                              : undefined
-                          }
                         />
                       </div>
                     ))

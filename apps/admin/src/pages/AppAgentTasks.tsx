@@ -509,12 +509,6 @@ export default function AppAgentTasks({ appId }: { appId: string }) {
           <TaskDetail
             task={detail}
             appId={appId}
-            onHandlePending={() => goAssistant(detail)}
-            footer={
-              <Button type="primary" size="small" onClick={() => goAssistant(detail)}>
-                去助手查看
-              </Button>
-            }
           />
         )}
       </Drawer>

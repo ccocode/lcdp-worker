@@ -69,9 +69,9 @@ import {
  * - 过程可见（第 91 步 A2；2026-11-16 改：执行步骤与执行过程改在
  *   右侧详情里显示）：ChatPane 把最新回合的过程快照经
  *   onTurnProcessChange 上报父级（工作台在右侧任务页签渲染
- *   TurnProcess，含已耗时与「中止」按钮）；对话框内只留正文、卡片
+ *   TurnProcess，只显示、不操作）；对话框内只留正文、卡片
  *   消息与交互按钮消息（failed 消息的「重试本步」仍在对话框内，
- *   底部「正在处理 / 后台任务执行中」状态条亦随过程一并移出）。
+ *   回合进行中时输入区上方显示「正在处理」条与中止按钮）。
  *   未传 onTurnProcessChange 时保留旧行为（对话框内渲染过程）。
  */
 
@@ -409,8 +409,9 @@ function totalStepsDurationMs(steps: TurnStep[]): number | null {
 /**
  * 对话框向父级（工作台）上报的最新回合执行过程快照（2026-11-16：执行
  * 步骤与执行过程改在右侧详情里显示，对话框只留正文、卡片与交互按钮
- * 消息；父级传 onTurnProcessChange 即接管过程显示）。onCancel 经 ref
- * 转调 ChatPane 的 handleCancel，避免闭包过期。
+ * 消息；父级传 onTurnProcessChange 即接管过程显示）。
+ * 2026-11-16 详情彻底改版：详情只显示、不操作，TurnProcess 里不
+ * 再放中止按钮——中止回对话框底部（ChatPane 输入区上方正在处理条）。
  */
 export interface TurnProcessSnapshot {
   steps: TurnStep[];
@@ -418,11 +419,6 @@ export interface TurnProcessSnapshot {
   elapsedMs: number;
   /** true = 回合已结束，呈现可折叠的过程汇总 */
   completed: boolean;
-  /** 进行中且可取消时给出的取消回调 */
-  onCancel?: () => void;
-  cancelling: boolean;
-  /** 取消端点调用失败过：本回合不再让点（静默降级） */
-  cancelDisabled: boolean;
 }
 
 export function TurnProcess({
@@ -430,9 +426,6 @@ export function TurnProcess({
   elapsedMs,
   completed = false,
   defaultCollapsed = false,
-  onCancel,
-  cancelling,
-  cancelDisabled,
   /** 框标题（不传即「执行过程」；子代理执行记录传步骤名） */
   title,
 }: {
@@ -443,10 +436,6 @@ export function TurnProcess({
   completed?: boolean;
   /** completed 时默认是否折叠（历史回合折叠、最新回合展开） */
   defaultCollapsed?: boolean;
-  onCancel?: () => void;
-  cancelling: boolean;
-  /** 取消端点调用失败过：本回合不再让点（静默降级） */
-  cancelDisabled: boolean;
   title?: string;
 }) {
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
@@ -470,42 +459,27 @@ export function TurnProcess({
       header={
         <>
           {completed ? (
-            <Button
-              type="text"
-              size="small"
+            <div
               onClick={() => setUserExpanded(!expanded)}
               style={{
-                height: "auto",
-                padding: 0,
+                flex: 1,
+                minWidth: 0,
+                display: "flex",
+                alignItems: "center",
+                cursor: "pointer",
                 fontSize: 12,
                 color: tokens.colorTextSecondary,
-                flex: 1,
-                textAlign: "left",
-                justifyContent: "flex-start",
               }}
             >
-              <span>{headerText}</span>
-              <span style={{ marginLeft: 8, color: tokens.colorPrimary }}>
+              <span style={{ flex: 1, minWidth: 0 }}>{headerText}</span>
+              <span style={{ marginLeft: 8, color: tokens.colorPrimary, flexShrink: 0 }}>
                 {expanded ? "收起" : "展开"}
               </span>
-            </Button>
+            </div>
           ) : (
             <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
               {headerText}
             </Typography.Text>
-          )}
-          {!completed && onCancel && (
-            <Button
-              size="small"
-              danger
-              type="text"
-              loading={cancelling}
-              disabled={cancelDisabled}
-              style={{ height: "auto", padding: "0 4px", fontSize: 12 }}
-              onClick={onCancel}
-            >
-              中止
-            </Button>
           )}
         </>
       }
@@ -1085,8 +1059,6 @@ export default function ChatPane({
   );
 
   /** 2026-11-16：最新回合执行过程快照（上报给工作台右侧详情） */
-  const handleCancelRef = useRef(handleCancel);
-  handleCancelRef.current = handleCancel;
   const latestProcess: TurnProcessSnapshot | null = useMemo(() => {
     if (latestStepMsgIndex < 0) return null;
     const msg = messages[latestStepMsgIndex];
@@ -1105,12 +1077,6 @@ export default function ChatPane({
       steps,
       elapsedMs,
       completed: !generating,
-      onCancel:
-        generating && conversationId
-          ? () => void handleCancelRef.current()
-          : undefined,
-      cancelling,
-      cancelDisabled: cancelUnavailable,
     };
   }, [
     messages,
@@ -1118,8 +1084,6 @@ export default function ChatPane({
     latestStepMsgIndex,
     nowMs,
     conversationId,
-    cancelling,
-    cancelUnavailable,
   ]);
 
   const prevProcessRef = useRef<TurnProcessSnapshot | null>(null);
@@ -1133,8 +1097,6 @@ export default function ChatPane({
         cur &&
         prev.completed === cur.completed &&
         prev.elapsedMs === cur.elapsedMs &&
-        prev.cancelling === cur.cancelling &&
-        prev.cancelDisabled === cur.cancelDisabled &&
         prev.steps === cur.steps)
     ) {
       return;
@@ -1210,11 +1172,6 @@ export default function ChatPane({
             elapsedMs={elapsedMs}
             completed={!generating}
             defaultCollapsed={!generating && index !== latestStepMsgIndex}
-            onCancel={
-              generating && conversationId ? () => void handleCancel() : undefined
-            }
-            cancelling={cancelling}
-            cancelDisabled={cancelUnavailable}
           />
         )}
         {failed && !sending && (
@@ -1361,6 +1318,36 @@ export default function ChatPane({
           </Typography.Text>
         )}
       </div>
+      {/* 2026-11-16 详情彻底改版：中止回对话框——回合进行中时在输入区
+          上方显示正在处理条，详情里不再放任何按钮 */}
+      {hasGenerating && conversationId && (
+        <div
+          style={{
+            borderTop: `1px solid ${tokens.colorDivider}`,
+            padding: "8px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 12,
+          }}
+        >
+          <Spin size="small" />
+          <Typography.Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
+            正在处理
+          </Typography.Text>
+          <Button
+            size="small"
+            danger
+            type="text"
+            loading={cancelling}
+            disabled={cancelUnavailable}
+            style={{ height: "auto", padding: "0 4px", fontSize: 12 }}
+            onClick={() => void handleCancel()}
+          >
+            中止
+          </Button>
+        </div>
+      )}
       <div
         style={{
           borderTop: `1px solid ${tokens.colorDivider}`,
